@@ -33,7 +33,7 @@ export function renderOfflinePage(texts: readonly OfflineText[], siteName: strin
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="${THEME_COLORS.light}">
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="${THEME_COLORS.dark}">
 <title>${escapeHtml(siteName)}</title>
-<style>:root{color-scheme:light dark}body{margin:0 auto;max-width:40rem;padding:1.5rem 1rem;font:16px/1.6 system-ui,sans-serif;color:#171717;background:${THEME_COLORS.light};color:light-dark(#171717,#e4e1db);background:light-dark(${THEME_COLORS.light},${THEME_COLORS.dark})}.logomark{display:block;width:96px;height:96px;margin:0 0 1.5rem}h1{font-size:1.25rem;margin:0 0 .25rem}section{margin:0 0 2rem}a{color:inherit}</style>
+<style>:root{color-scheme:light dark}body{margin:0 auto;max-width:40rem;padding:1.5rem 1rem;font:16px/1.6 system-ui,sans-serif;color:#171717;background:${THEME_COLORS.light};color:light-dark(#171717,#e1e1e1);background:light-dark(${THEME_COLORS.light},${THEME_COLORS.dark})}.logomark{display:block;width:96px;height:96px;margin:0 0 1.5rem}h1{font-size:1.25rem;margin:0 0 .25rem}section{margin:0 0 2rem}a{color:inherit}</style>
 </head>
 <body>
 <main>

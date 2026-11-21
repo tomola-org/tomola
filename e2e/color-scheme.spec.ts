@@ -20,11 +20,12 @@ async function expectDocumentScheme(page: Page, scheme: ColorScheme | null) {
     await expect(page.locator('meta[name="theme-color"][media]')).toHaveCount(2);
   }
   const effectiveScheme = scheme ?? await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-  await expect(page.locator("body")).toHaveCSS("background-color", effectiveScheme === "dark" ? "rgb(26, 25, 23)" : "rgb(255, 255, 255)");
+  const ground = THEME_COLORS[effectiveScheme];
+  await expect(page.locator("body")).toHaveCSS("background-color", `rgb(${[1, 3, 5].map(index => parseInt(ground.slice(index, index + 2), 16)).join(", ")})`);
   const discussion = page.locator("[data-reading-discussion]");
   if (await discussion.count()) {
     await expect.poll(() => discussion.evaluate(element => getComputedStyle(element, "::before").backgroundColor))
-      .toBe(effectiveScheme === "dark" ? "rgb(35, 33, 30)" : "rgb(246, 245, 242)");
+      .toBe(effectiveScheme === "dark" ? "rgb(33, 33, 33)" : "rgb(246, 245, 242)");
   }
 }
 

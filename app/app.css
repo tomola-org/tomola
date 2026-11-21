@@ -169,10 +169,10 @@ main:focus {
 :root {
   color-scheme: light dark;
   --paper: #ffffff;
-  --dark-ground: #1a1917;
-  --dark-ink: #e4e1db;
-  --dark-surface: #2d2b27;
-  --dark-input: #7b756b;
+  --dark-ground: #191919;
+  --dark-ink: #e1e1e1;
+  --dark-surface: #2b2b2b;
+  --dark-input: #767676;
   /* Running text in the reading voice: Latin, Cyrillic and other scripts without a size of their own, and Japanese, Chinese and Korean. */
   --reading-latin-size: 1.125rem;
   --reading-cjk-size: 1.0625rem;
@@ -194,9 +194,9 @@ main:focus {
   --font-reading-ko: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", "Noto Sans CJK KR", var(--font-ui);
   --font-ui: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   --reading-ink: light-dark(#1f1f1f, var(--dark-ink));
-  --reading-ink-strong: light-dark(#111, #f1eee8);
-  --reading-counters: light-dark(#555, #b6b1a9);
-  --reading-bullets: light-dark(#888, #9f9991);
+  --reading-ink-strong: light-dark(#111, #eeeeee);
+  --reading-counters: light-dark(#555, #b2b2b2);
+  --reading-bullets: light-dark(#888, #9a9a9a);
   --background: light-dark(var(--paper), var(--dark-ground));
   --foreground: light-dark(oklch(0.145 0 0), var(--dark-ink));
   --card: var(--background);
@@ -208,10 +208,10 @@ main:focus {
   --secondary: light-dark(oklch(0.97 0 0), var(--dark-surface));
   --secondary-foreground: light-dark(oklch(0.205 0 0), var(--dark-ink));
   --muted: light-dark(oklch(0.97 0 0), var(--dark-surface));
-  --text-supporting: light-dark(#5f5f5f, #b7b1a7);
-  --rule: light-dark(#e4e2dd, #44413a);
+  --text-supporting: light-dark(#5f5f5f, #b2b2b2);
+  --rule: light-dark(#e4e2dd, #414141);
   /* A separate ground marks the discussion below the reading paper. */
-  --reading-discussion: light-dark(#f6f5f2, #23211e);
+  --reading-discussion: light-dark(#f6f5f2, #212121);
   --location-accent: light-dark(#7c2424, oklch(0.75 0.105 24.5));
   --muted-foreground: var(--text-supporting);
   --accent: light-dark(oklch(0.97 0 0), var(--dark-surface));
@@ -219,7 +219,7 @@ main:focus {
   --destructive: light-dark(oklch(0.55 0.245 27.325), oklch(0.87 0.13 45));
   --border: light-dark(oklch(0.922 0 0), var(--dark-input));
   --input: light-dark(oklch(0.922 0 0), var(--dark-input));
-  --ring: light-dark(oklch(0.708 0 0), #c4bdb1);
+  --ring: light-dark(oklch(0.708 0 0), #bebebe);
   --radius: 0.625rem;
   /* State colours by meaning. Components say "success", "notice" (a caution), "info" (a question, a stance mark, a new reply), "unread" or "selected", never a palette colour,
      so a designer can change a state in one place. State inks also meet AA on the discussion ground. */
