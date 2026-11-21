@@ -26,6 +26,7 @@ export const publicOnly = [
   ["personal-villages", ".*"],
   ["cross-language-touches", ".*"],
   ["share-card-language", "public preview requests|guest address hints"],
+  ["shared-invitations", ".*"],
   ["village-invite-signup", ".*"],
   ["ai-moderation", "chat assessments"],
   ["account-delete", "native account deletion"],
