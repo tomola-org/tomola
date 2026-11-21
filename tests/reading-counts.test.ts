@@ -312,7 +312,6 @@ it.skipIf(!PG_MODE)("uses the article and recent-day indexes with selective filt
   ] as const) {
     const result = await db.execute(sql`explain (analyze, buffers) ${query.getSQL()}`) as { rows: { "QUERY PLAN": string }[] };
     const plan = result.rows.map(row => row["QUERY PLAN"]).join("\n");
-    console.info(`${name}\n${plan}`);
     expect(plan, name).toContain(index);
     expect(plan, name).not.toMatch(/Seq Scan on entry_reading_counts/);
   }
