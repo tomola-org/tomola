@@ -2,7 +2,7 @@ import { addVillageMembership } from "./villages.server";
 import { createHash, randomUUID } from "node:crypto";
 import { and, asc, eq, gt, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db, Tx } from "~/lib/db/client.server";
-import { invitations, notifications, profiles, verification, villageDepartures, villageMembers, villages } from "~/lib/db/schema";
+import { invitations, notifications, profiles, sharedInvitationUses, sharedInvitations, verification, villageDepartures, villageMembers, villages } from "~/lib/db/schema";
 import { createInvitation, INVITATION_TTL_DAYS, type Invitation } from "~/lib/invitations.server";
 import { villagesEnabled } from "~/lib/villages-enabled.server";
 import { getWriter } from "~/lib/members.server";
@@ -19,16 +19,21 @@ export async function signupVillageChoices(db: Db, userId: string) {
     .where(and(eligible(), owner(userId))).orderBy(asc(villages.name), asc(villages.id));
 }
 
+// Callers acquire the owner's profile lock before locking a village.
+export async function lockSignupVillage(tx: Tx, userId: string, villageId: string) {
+  if (!villagesEnabled()) return false;
+  const [village] = await tx.select({ id: villages.id }).from(villages).where(and(eq(villages.id, villageId), eligible())).for("update");
+  if (!village) return false;
+  const [membership] = await tx.select({ id: villageMembers.userId }).from(villageMembers).where(and(eq(villageMembers.villageId, villageId), owner(userId)));
+  return !!membership;
+}
+
 export async function createSignupInvitation(db: Db, userId: string, email: string, villageId: string | null, note = "") {
   return db.transaction(async tx => {
     if (villageId) {
-      if (!villagesEnabled()) return null;
       // Match the profile -> village order used by ownership changes and ending.
       await tx.select({ id: profiles.userId }).from(profiles).where(eq(profiles.userId, userId)).for("update");
-      const [village] = await tx.select({ id: villages.id }).from(villages).where(and(eq(villages.id, villageId), eligible())).for("update");
-      if (!village) return null;
-      const [membership] = await tx.select({ id: villageMembers.userId }).from(villageMembers).where(and(eq(villageMembers.villageId, villageId), owner(userId)));
-      if (!membership) return null;
+      if (!await lockSignupVillage(tx, userId, villageId)) return null;
     }
     return createInvitation(tx, { email, createdBy: userId, villageId, note });
   });
@@ -61,8 +66,14 @@ export async function rememberSignupInvitation(db: Db, userId: string, invitatio
   await db.insert(verification).values({ id: randomUUID(), identifier: signupInvitationIdentifier(userId), value: invitationId, expiresAt: new Date(Date.now() + INVITATION_TTL_DAYS * 86400000) });
 }
 
-async function consumedInvitation(db: Db, userId: string) {
+type SignupDestination = Pick<Invitation, "id" | "villageId" | "createdBy">;
+
+async function consumedInvitation(db: Db, userId: string): Promise<SignupDestination | null> {
   if (!villagesEnabled()) return null;
+  const [shared] = await db.select({ id: sharedInvitations.id, villageId: sharedInvitations.villageId, createdBy: sharedInvitations.createdBy })
+    .from(sharedInvitationUses).innerJoin(sharedInvitations, eq(sharedInvitations.id, sharedInvitationUses.linkId))
+    .where(eq(sharedInvitationUses.usedBy, userId));
+  if (shared) return shared;
   const [invitation] = await db.select().from(invitations).where(and(
     eq(invitations.usedBy, userId), isNotNull(invitations.usedAt),
     eq(invitations.id, db.select({ id: verification.value }).from(verification).where(and(eq(verification.identifier, signupInvitationIdentifier(userId)), gt(verification.expiresAt, new Date()))).limit(1)),
@@ -94,7 +105,7 @@ export async function lockSignupInvitationOwner(db: Tx, userId: string) {
 
 // Called only inside the transaction inserting this member's first profile,
 // after lockSignupInvitationOwner and the normal language enrollment.
-export async function enrollFromSignupInvitation(db: Tx, userId: string, invitation: Invitation | null) {
+export async function enrollFromSignupInvitation(db: Tx, userId: string, invitation: SignupDestination | null) {
   if (!invitation?.createdBy || !invitation.villageId) return null;
   await db.select({ id: villages.id }).from(villages).where(eq(villages.id, invitation.villageId)).for("update");
   const { village, denied } = await signupInvitationDestination(db, invitation);

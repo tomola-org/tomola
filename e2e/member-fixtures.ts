@@ -12,6 +12,8 @@ export const LONG_SIGNUP_VILLAGE_NAME = `Signup ${"l".repeat(110)}`;
 
 // Independent scenarios own these members; serial steps share only their scenario.
 export const VILLAGE_MEMBER_FIXTURES: readonly SeedMember[] = [
+  { email: "shared_link_operator@example.com", handle: "shared_link_operator", homeArea: "ja", uiLocale: "ja" },
+  { email: "shared_link_existing@example.com", handle: "shared_link_existing", homeArea: "en", uiLocale: "en" },
   ...["zcn_flow_owner", "zcn_flow_caller", "zcn_flow_reader", "zcn_flow_mod"].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "en" as const, readLangs: ["en" as const], uiLocale: "en" as const })),
   ...["basic", "paging", "native"].flatMap(scenario => ["author", "reader"].map(role => ({ email: `cs_${scenario}_${role}@example.com`, handle: `cs_${scenario}_${role}`, homeArea: "en" as const, readLangs: ["en" as const], uiLocale: "en" as const }))),
   ...["author", "noagree", "outsider"].map(role => ({ email: `cs_gate_${role}@example.com`, handle: `cs_gate_${role}`, homeArea: "en" as const, readLangs: ["en" as const], uiLocale: "en" as const })),

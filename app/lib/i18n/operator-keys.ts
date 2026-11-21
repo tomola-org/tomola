@@ -1,5 +1,18 @@
 // Only used by operator screens, plus their header links. Shared and moderator strings still require review.
 export const OPERATOR_ONLY_KEYS: ReadonlySet<string> = new Set([
+  "shared_invites_create",
+  "shared_invites_title",
+  "shared_invites_label",
+  "shared_invites_label_help",
+  "shared_invites_max_uses",
+  "shared_invites_ttl",
+  "shared_invites_empty",
+  "shared_invites_usage",
+  "shared_invites_created_at",
+  "shared_invites_expires_at",
+  "shared_invites_status_full",
+  "shared_invites_rate_limited",
+  "shared_invites_invalid",
   "motion_delivery_counts",
   "motion_delivery_help",
   "motion_delivery_title",

@@ -3015,5 +3015,22 @@
   "metrics_article_reading_top_title": "읽기 수 상위 50개 글",
   "metrics_article_reading_village": "빌리지",
   "metrics_article_reading_villages_help": "각 글이 현재 속한 빌리지별로 집계합니다. 글을 옮기면 이전 읽기 수도 새 빌리지에 합산됩니다. 개인 빌리지는 모두 한 행으로 집계합니다.",
-  "metrics_article_reading_villages_title": "빌리지별 읽기"
+  "metrics_article_reading_villages_title": "빌리지별 읽기",
+  "shared_invite_unavailable": "이 초대 링크는 인원 한도에 도달했거나 더 이상 사용할 수 없습니다.",
+  "shared_invite_full": "이 초대 링크는 인원 한도에 도달했습니다.",
+  "shared_invite_signed_in": "@{handle}(으)로 로그인되어 있습니다.",
+  "shared_invite_switch_account": "다른 계정으로 가입하려면 로그아웃한 후 이 링크를 다시 열어 주세요.",
+  "shared_invites_create": "공유 초대 링크 만들기",
+  "shared_invites_title": "공유 초대 링크",
+  "shared_invites_label": "식별 라벨",
+  "shared_invites_label_help": "이 라벨은 운영자에게만 표시됩니다.",
+  "shared_invites_max_uses": "가입 인원 한도",
+  "shared_invites_ttl": "유효 기간(일)",
+  "shared_invites_empty": "아직 공유 초대 링크가 없습니다.",
+  "shared_invites_usage": "가입 인원",
+  "shared_invites_created_at": "생성 일시",
+  "shared_invites_expires_at": "만료 일시",
+  "shared_invites_status_full": "한도 도달",
+  "shared_invites_rate_limited": "하루에 공유 링크를 최대 10개까지 만들 수 있습니다.",
+  "shared_invites_invalid": "라벨은 1~80자, 가입 인원 한도는 1~100명, 유효 기간은 1~30일로 입력해 주세요."
 }

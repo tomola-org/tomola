@@ -4,12 +4,14 @@ import { googleLoginConfig } from "./google-config.server";
 import { safeLocalPath } from "~/lib/display-lang.server";
 import { googleInvitationContext } from "./google-policy.server";
 
+import type { InvitationRef } from "./invitation-ref.server";
+
 // Native navigation applies no-referrer to the provider redirect, including
 // when the page that started it contains an invitation token.
-export async function startGoogleSignIn(request: Request, next = "/", invitationId: string | null = null) {
+export async function startGoogleSignIn(request: Request, next = "/", invitation: InvitationRef | null = null) {
   if (!googleLoginConfig()) throw new Response("Not found", { status: 404 });
   const auth = await getAuth();
-  const { response, headers } = await googleInvitationContext.run(invitationId, () => auth.api.signInSocial({
+  const { response, headers } = await googleInvitationContext.run(invitation, () => auth.api.signInSocial({
     request, headers: request.headers, returnHeaders: true, asResponse: false,
     body: { provider: "google", callbackURL: safeLocalPath(next) },
   }));

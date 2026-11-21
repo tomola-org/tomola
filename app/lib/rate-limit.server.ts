@@ -81,6 +81,7 @@ export const MEMBER_RATE_LIMITS = {
   "translation-report": { limit: 30, windowSeconds: 3600 },
   report: { limit: 30, windowSeconds: 3600 },
   invitation: { limit: 20, windowSeconds: 86400 },
+  "shared-invitation": { limit: 10, windowSeconds: 86400 },
   stance: { limit: 30, windowSeconds: 3600 },
   vote: { limit: 30, windowSeconds: 3600 },
   // Posting from the screens (a topic from /t/new or the publishing of a draft; a reply from the thread page or the publishing of a draft): 20 topics

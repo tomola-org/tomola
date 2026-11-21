@@ -13,6 +13,9 @@ import { magicLinkNextIdentifier, readMagicLinkNext } from "./magic-link-next.se
 import { loginCodeIdentifier, loginCodeLinkIdentifier } from "./login-code.server";
 import { clearLoginCodeCookies } from "./login-code-cookie.server";
 import { clearReadingReturn } from "./reading-return.server";
+import { clearInvitationCookie, readInvitationCookie } from "./invitation-cookie.server";
+import { magicLinkInvitationContext, magicLinkInvitationIdentifier, parseInvitationRef, sameInvitation } from "./invitation-ref.server";
+import { usedSignupInvitation } from "./signup-invitation.server";
 import { hashMagicLinkToken } from "./plugins";
 export const LOGIN_HEADERS = { "Cache-Control": "no-store", "Referrer-Policy": "strict-origin", "X-Robots-Tag": "noindex" };
 export const magicLinkUsedIdentifier = (token: string) => `magic-link-used:${hashMagicLinkToken(token)}`;
@@ -28,7 +31,10 @@ export async function waitForMagicLinkCompletion(token: string): Promise<boolean
 
 // Both entry points use Better Auth's atomic token consumption. A simultaneous
 // link/code request can create only one session, even on separate connections.
-export async function completeMagicLink(request: Request, token: string): Promise<Response | null> {
+type Completion = { kind: "ok"; response: Response } | { kind: "invitation_unavailable" } | { kind: "invalid" };
+const invalid = { kind: "invalid" } as const;
+
+export async function completeMagicLink(request: Request, token: string): Promise<Completion> {
   // Serialize local confirmations through marker insertion as well as token use.
   // Better Auth still enforces atomic consumption across separate processes.
   const key = magicLinkUsedIdentifier(token);
@@ -45,27 +51,61 @@ export async function completeMagicLink(request: Request, token: string): Promis
   }
 }
 
-async function verifyMagicLink(request: Request, token: string): Promise<Response | null> {
+async function verifyMagicLink(request: Request, token: string): Promise<Completion> {
   const db = await getDb();
-  if (!(await matchesMagicLinkBrowser(db, request, token))) return null;
+  if (!(await matchesMagicLinkBrowser(db, request, token))) return invalid;
   const [credential] = await db.select({ expiresAt: verification.expiresAt }).from(verification)
     .where(eq(verification.identifier, `magic-link:${hashMagicLinkToken(token)}`));
-  if (!credential || credential.expiresAt <= new Date()) return null;
+  if (!credential || credential.expiresAt <= new Date()) return invalid;
+  const identifier = magicLinkInvitationIdentifier(token);
+  const [binding] = await db.select().from(verification).where(eq(verification.identifier, identifier));
+  let ref = null;
+  if (binding && binding.expiresAt > new Date()) {
+    try { ref = parseInvitationRef(JSON.parse(binding.value)); }
+    catch { /* A malformed server binding cannot authorize signup. */ }
+  }
+  const clean = async () => {
+    const mappings = await db.select().from(verification).where(eq(verification.identifier, loginCodeLinkIdentifier(token)));
+    await db.delete(verification).where(inArray(verification.identifier, [
+      identifier, browserBindingIdentifier(token), magicLinkNextIdentifier(token), loginCodeLinkIdentifier(token), ...mappings.map(row => loginCodeIdentifier(row.value)),
+    ]));
+  };
+  const verify = async () => (await getAuth()).api.magicLinkVerify({ query: { token }, headers: request.headers, request, asResponse: true });
   let res: Response;
   try {
-    res = await (await getAuth()).api.magicLinkVerify({ query: { token }, headers: request.headers, request, asResponse: true });
-  } catch (error) { if (isAPIError(error)) return null; throw error; }
-  if (res.status !== 200) return null;
+    res = await (binding ? magicLinkInvitationContext.run({ ref }, verify) : verify());
+  } catch (error) {
+    if (!isAPIError(error)) throw error;
+    if (error.body?.code === "INVITATION_REQUIRED") {
+      await clean();
+      return { kind: "invitation_unavailable" };
+    }
+    return invalid;
+  }
+  if (res.status !== 200) {
+    // Better Auth relays user creation errors as a redirect from the verifier.
+    const location = res.headers.get("location");
+    const reason = location && URL.parse(location, request.url)?.searchParams.get("error");
+    if (reason === "INVITATION_REQUIRED") {
+      await clean();
+      return { kind: "invitation_unavailable" };
+    }
+    return invalid;
+  }
   const body = await res.json() as { user?: { id?: unknown } };
-  if (typeof body.user?.id !== "string") return null;
+  if (typeof body.user?.id !== "string") return invalid;
   // Retain hashes for the token and its owner, without raw IDs or destinations.
   await db.insert(verification).values({ id: randomUUID(), identifier: magicLinkUsedIdentifier(token), value: magicLinkOwnerHash(body.user.id), expiresAt: new Date(credential.expiresAt.getTime() + 86_400_000) });
   const headers = new Headers(LOGIN_HEADERS);
   for (const cookie of res.headers.getSetCookie()) headers.append("Set-Cookie", cookie);
   clearLoginCodeCookies(request, headers);
   const next = await readMagicLinkNext(db, token);
-  const mappings = await db.select().from(verification).where(eq(verification.identifier, loginCodeLinkIdentifier(token)));
-  await db.delete(verification).where(inArray(verification.identifier, [browserBindingIdentifier(token), magicLinkNextIdentifier(token), loginCodeLinkIdentifier(token), ...mappings.map(row => loginCodeIdentifier(row.value))]));
+  await clean();
+  const current = readInvitationCookie(request);
+  if (sameInvitation(current, ref) || (!binding && current?.kind === "individual"
+    && await usedSignupInvitation(db, body.user.id, current))) {
+    clearInvitationCookie(request, headers);
+  }
   const profile = await getProfile(db, body.user.id);
   if (profile) clearReadingReturn(request, headers);
   const ui = negotiateUiLocale(request, enabledLangs(), null);
@@ -74,5 +114,6 @@ async function verifyMagicLink(request: Request, token: string): Promise<Respons
   }
   // Login may introduce an account language unknown to the guest's client runtime.
   const savedUi = negotiateUiLocale(request, enabledLangs(), profile?.uiLocale ?? null);
-  return (savedUi.locale !== ui.locale ? redirectDocument : redirect)(profile ? next : next === "/" ? "/onboarding" : `/onboarding?${new URLSearchParams({ next })}`, { status: 303, headers });
+  const response = (savedUi.locale !== ui.locale ? redirectDocument : redirect)(profile ? next : next === "/" ? "/onboarding" : `/onboarding?${new URLSearchParams({ next })}`, { status: 303, headers });
+  return { kind: "ok", response };
 }

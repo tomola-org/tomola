@@ -3,8 +3,16 @@ import type { BetterAuthOptions } from "better-auth";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { safeLocalPath } from "~/lib/display-lang.server";
 
+import { clearInvitationCookie, readInvitationCookie } from "./invitation-cookie.server";
+import { parseInvitationRef, sameInvitation, type InvitationRef } from "./invitation-ref.server";
+
 type BeforeContext = Parameters<typeof validateGoogleUser>[1];
-export const googleInvitationContext = new AsyncLocalStorage<string | null>();
+export const googleInvitationContext = new AsyncLocalStorage<InvitationRef | null>();
+
+export function googleInvitationRef(state: Awaited<ReturnType<typeof getOAuthState>>) {
+  const context = state?.serverContext;
+  return parseInvitationRef({ id: context?.invitationId, kind: context?.invitationKind === undefined ? "individual" : context.invitationKind });
+};
 
 // Only the server can bind an invitation to OAuth state. Client additionalData
 // and requestSignUp never establish eligibility to create a user.
@@ -25,8 +33,8 @@ export async function prepareGoogleFlow(ctx: BeforeContext, enabled: boolean) {
   if (!start) return;
   if (ctx.body?.idToken) throw new APIError("NOT_FOUND", { message: "ID token sign-in is disabled" });
   if (ctx.path === "/link-social") await freshSessionMiddleware(ctx);
-  const invitationId = ctx.path === "/sign-in/social" ? googleInvitationContext.getStore() ?? null : null;
-  await addOAuthServerContext({ invitationId });
+  const invitation = ctx.path === "/sign-in/social" ? googleInvitationContext.getStore() ?? null : null;
+  if (invitation) await addOAuthServerContext({ invitationId: invitation.id, invitationKind: invitation.kind });
   const targetPath = new URL(safeLocalPath(ctx.body?.callbackURL), ctx.context.baseURL).pathname;
   // State is stored in plaintext. Keep invite links, query values and fragments
   // out of every return URL. Decode only for checks and keep the encoded path.
@@ -41,7 +49,7 @@ export async function prepareGoogleFlow(ctx: BeforeContext, enabled: boolean) {
   for (const key of Object.keys(ctx.body)) delete ctx.body[key];
   Object.assign(ctx.body, {
     provider: "google", callbackURL: ctx.path === "/link-social" ? "/settings#settings-google" : callbackURL, newUserCallbackURL: "/onboarding",
-    errorCallbackURL: ctx.path === "/link-social" ? "/settings?google=1#settings-google" : invitationId ? "/invite?google=1" : "/login?google=1",
+    errorCallbackURL: ctx.path === "/link-social" ? "/settings?google=1#settings-google" : invitation ? "/invite?google=1" : "/login?google=1",
   });
 }
 
@@ -53,7 +61,7 @@ export function googleEmailFailure(profile: Record<string, unknown>): "google_un
   return null;
 }
 
-export function finishGoogleFlow(ctx: Pick<BeforeContext, "path" | "params"> & { context: { baseURL: string; responseHeaders?: Headers } }) {
+export async function finishGoogleFlow(ctx: Pick<BeforeContext, "path" | "params" | "request"> & { context: { baseURL: string; responseHeaders?: Headers } }, secret: string) {
   if (ctx.path !== "/callback/:id" || ctx.params?.id !== "google") return;
   const headers = ctx.context.responseHeaders;
   const location = headers?.get("location");
@@ -64,6 +72,10 @@ export function finishGoogleFlow(ctx: Pick<BeforeContext, "path" | "params"> & {
   if (!url || url.protocol !== base.protocol || url.origin !== base.origin || url.pathname.startsWith("//")) {
     headers.set("location", "/");
     return;
+  }
+  if (ctx.request && !url.searchParams.has("error")
+    && sameInvitation(readInvitationCookie(ctx.request, secret), googleInvitationRef(await getOAuthState()))) {
+    clearInvitationCookie(ctx.request, headers);
   }
   // Better Auth adds a description for a rejected new user but omits it for
   // an existing unlinked user. Normalize that observable difference as well.
@@ -85,7 +97,7 @@ export const validateGoogleUser: NonNullable<NonNullable<BetterAuthOptions["user
   if (source.action !== "create-user") return;
   // Match the existing unlinked-account failure before inspecting email claims:
   // ordinary login must not reveal whether this address belongs to a member.
-  if (!(await getOAuthState())?.serverContext?.invitationId) return { error: "account_not_linked" };
+  if (!googleInvitationRef(await getOAuthState())) return { error: "account_not_linked" };
   const failure = googleEmailFailure(source.oauth?.profile ?? {});
   if (failure) return { error: failure };
 };

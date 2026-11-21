@@ -3200,5 +3200,22 @@
   "metrics_article_reading_top_title": "Les 50 articles les plus lus",
   "metrics_article_reading_village": "Village",
   "metrics_article_reading_villages_help": "Les lectures sont comptabilisées dans le village actuel de chaque article. Lorsqu’un article change de village, ses lectures passées sont aussi attribuées au nouveau village. Tous les villages personnels sont regroupés sur une seule ligne.",
-  "metrics_article_reading_villages_title": "Lectures par village"
+  "metrics_article_reading_villages_title": "Lectures par village",
+  "shared_invite_unavailable": "Ce lien d’invitation a atteint sa limite ou n’est plus utilisable.",
+  "shared_invite_full": "Ce lien d’invitation a atteint sa limite.",
+  "shared_invite_signed_in": "Vous êtes connecté en tant que @{handle}.",
+  "shared_invite_switch_account": "Pour vous inscrire avec un autre compte, déconnectez-vous et rouvrez ce lien.",
+  "shared_invites_create": "Créer un lien d’invitation partagé",
+  "shared_invites_title": "Liens d’invitation partagés",
+  "shared_invites_label": "Libellé",
+  "shared_invites_label_help": "Ce libellé est visible uniquement par les opérateurs.",
+  "shared_invites_max_uses": "Nombre maximal d’inscriptions",
+  "shared_invites_ttl": "Durée de validité en jours",
+  "shared_invites_empty": "Il n’y a pas encore de lien d’invitation partagé.",
+  "shared_invites_usage": "Inscriptions",
+  "shared_invites_created_at": "Création",
+  "shared_invites_expires_at": "Expiration",
+  "shared_invites_status_full": "Limite atteinte",
+  "shared_invites_rate_limited": "Vous avez atteint la limite quotidienne de 10 liens partagés.",
+  "shared_invites_invalid": "Indiquez un libellé de 1 à 80 caractères, une limite de 1 à 100 inscriptions et une durée de 1 à 30 jours."
 }

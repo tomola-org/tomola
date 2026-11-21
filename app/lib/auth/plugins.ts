@@ -7,6 +7,7 @@ import type { ClientDiscovery } from "@better-auth/oauth-provider";
 import { DCR_JWKS_DISCOVERY_ID, fetchMcpClientMetadata, type MetadataFetch } from "~/lib/mcp/cimd.server";
 import { browserBindingIdentifier, browserNonceDigest, validBrowserNonce } from "./magic-link-browser.server";
 import { magicLinkNextIdentifier, safeMagicLinkNext } from "./magic-link-next.server";
+import { magicLinkInvitationIdentifier, parseInvitationRef } from "./invitation-ref.server";
 import { APIError } from "better-auth/api";
 import { MCP_SCOPES } from "~/lib/connect-paths";
 import { MCP_ACCESS_TOKEN_SECONDS, lineMark } from "~/lib/mcp/line.server";
@@ -68,6 +69,20 @@ export function authPlugins(sendMagicLink: SendMagicLink, opts: { baseURL: strin
                 throw new Error("Could not store magic-link return destination");
               }
             }
+          }
+        }
+        const invitationRef = parseInvitationRef(metadata?.invitationRef);
+        if (metadata?.invitationRef !== undefined && !invitationRef) throw new Error("Invalid magic-link invitation binding");
+        if (invitationRef) {
+          if (!ctx) throw new Error("Magic-link invitation binding requires the provider context");
+          const credential = await ctx.context.internalAdapter.findVerificationValue(`magic-link:${hashMagicLinkToken(token)}`);
+          if (!credential) throw new Error("Magic-link credential missing");
+          try {
+            await ctx.context.internalAdapter.createVerificationValue({
+              identifier: magicLinkInvitationIdentifier(token), value: JSON.stringify(invitationRef), expiresAt: credential.expiresAt,
+            });
+          } catch {
+            throw new Error("Could not bind the invitation to the magic link");
           }
         }
         await sendMagicLink({ email, url, token, metadata }, ctx);

@@ -1,3 +1,5 @@
+import { SharedInvitationsTable } from "~/components/shared-invitations-table";
+import { createSharedInvitation, listSharedInvitations, revokeSharedInvitation } from "~/lib/shared-invitations.server";
 import { withMarkdownRead } from "~/lib/markdown-budget.server";
 import { Field, FieldLabel } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
@@ -25,13 +27,17 @@ import { LANG_LABELS } from "~/lib/languages";
 import { getLocale } from "~/paraglide/runtime.js";
 import { mailLocale } from "~/lib/mail/magic-link.server";
 
+export function headers() {
+  return { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex" };
+}
+
 async function loaderImplementation({ request }: Route.LoaderArgs) {
   const { db, user } = await requireMember(request);
   const operator = isOperatorEmail(user.email);
   if (!canCreateInvitations(operator)) throw data("Not found", { status: 404 });
   const rows = await listInvitations(db, { createdBy: user.id });
   // Account identities linked to recipient addresses are operator-only data.
-  return { operator, mailLanguages: operator ? enabledLangs() : [], locale: getLocale(), batchMax: OPERATOR_INVITATION_BATCH_MAX,
+  return { operator, sharedInvitations: operator ? await listSharedInvitations(db, { createdBy: user.id }) : [], mailLanguages: operator ? enabledLangs() : [], locale: getLocale(), batchMax: OPERATOR_INVITATION_BATCH_MAX,
     villages: await signupVillageChoices(db, user.id), ttlDays: INVITATION_TTL_DAYS, invitations: rows.map(({ id, email, status, createdAt, expiresAt }) => ({ id, email, status, createdAt: createdAt.toISOString(), expiresAt: expiresAt.toISOString() })) };
 }
 
@@ -40,6 +46,20 @@ export async function action({ request }: Route.ActionArgs) {
   const { user, db } = await requireMember(request);
   const form = await request.formData();
   const operator = isOperatorEmail(user.email);
+  const intent = form.get("intent");
+  if (intent === "create-shared" || intent === "revoke-shared") {
+    if (!operator) throw data("Not found", { status: 404 });
+    await requirePrivilegedWriteSession(request);
+    if (intent === "revoke-shared") {
+      if (!await revokeSharedInvitation(db, String(form.get("id") ?? ""), user.id)) throw data("Not found", { status: 404 });
+      return { url: null, error: null };
+    }
+    await requireWriter(request);
+    const result = await createSharedInvitation(db, user, form);
+    if (result.error === "forbidden") throw data("Not found", { status: 404 });
+    if (result.error) return data({ url: null, error: null, sharedError: result.error }, { status: result.error === "rate_limited" ? 429 : 400, headers: headers() });
+    return data({ url: null, error: null, sharedUrl: inviteUrl(result.token) }, { headers: headers() });
+  }
   const emailValues = form.getAll("email").map(String);
   const multipleEmails = emailValues.length > 1 || emailValues.some(value => value.split(/[\s,;]+/u).filter(Boolean).length > 1);
   const emails = parseInvitationEmails(emailValues);
@@ -89,6 +109,12 @@ export default function InvitesNew({ actionData, loaderData }: Route.ComponentPr
   const navigation = useNavigation();
   const results = actionData && "results" in actionData ? actionData.results : undefined;
   const formRef = useRef<HTMLFormElement>(null);
+  const sharedFormRef = useRef<HTMLFormElement>(null);
+  const sharedUrl = actionData && "sharedUrl" in actionData ? actionData.sharedUrl : null;
+  const sharedError = actionData && "sharedError" in actionData ? actionData.sharedError : null;
+  useEffect(() => {
+    if (sharedUrl) sharedFormRef.current?.reset();
+  }, [sharedUrl]);
   // A created invitation empties the recipient and note, so a filled form is not mistaken for an unsent one.
   // The village, mail and language choices stay for the next invitation.
   useEffect(() => {
@@ -149,6 +175,37 @@ export default function InvitesNew({ actionData, loaderData }: Route.ComponentPr
       </section>}
       {actionData?.url && <InvitationLink key={actionData.url} url={actionData.url} />}
       {actionData?.url && <p className="ui-help text-muted-foreground">{m.invites_once()}</p>}
+      {loaderData.operator && <section className="space-y-3">
+        <h2 className="text-xl font-semibold">{m.shared_invites_create()}</h2>
+        <Form ref={sharedFormRef} method="post" className="space-y-2">
+          <input type="hidden" name="intent" value="create-shared" />
+          <Field><FieldLabel>{m.shared_invites_label()}
+            <Input name="label" required maxLength={80} aria-describedby="shared-invitation-label-help" />
+          </FieldLabel></Field>
+          <p id="shared-invitation-label-help" className="ui-help text-muted-foreground">{m.shared_invites_label_help()}</p>
+          <Field><FieldLabel>{m.shared_invites_max_uses()}
+            <Input name="maxUses" type="number" required min={1} max={100} defaultValue={20} />
+          </FieldLabel></Field>
+          <Field><FieldLabel>{m.shared_invites_ttl()}
+            <Input name="ttlDays" type="number" required min={1} max={30} defaultValue={14} />
+          </FieldLabel></Field>
+          {loaderData.villages.length > 0 && <Field><FieldLabel htmlFor="shared-invitation-village">{m.invites_village()}</FieldLabel>
+            <select id="shared-invitation-village" name="villageId" className="block rounded-md border border-input bg-background p-2">
+              <option value="">{m.invites_village_none()}</option>
+              {loaderData.villages.map(village => <option key={village.id} value={village.id}>{village.name}</option>)}
+            </select>
+          </Field>}
+          <Button type="submit" disabled={navigation.state !== "idle"}>{m.shared_invites_create()}</Button>
+        </Form>
+        {sharedError && <p role="alert" className="text-destructive">{sharedError === "rate_limited" ? m.shared_invites_rate_limited()
+          : sharedError === "invalid_village" ? m.error_generic() : m.shared_invites_invalid()}</p>}
+        {sharedUrl && <>
+          <InvitationLink key={sharedUrl} url={sharedUrl} compact />
+          <p className="ui-help text-muted-foreground">{m.invites_once()}</p>
+        </>}
+        <h3 className="text-lg font-semibold">{m.shared_invites_title()}</h3>
+        <SharedInvitationsTable rows={loaderData.sharedInvitations} />
+      </section>}
       {/* The list has a heading only when there is something in it; an empty list says nothing. */}
       {loaderData.invitations.length > 0 && <section className="space-y-2">
         <h2 className="text-xl font-semibold">{m.invites_history()}</h2>

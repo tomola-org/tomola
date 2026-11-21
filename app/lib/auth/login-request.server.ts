@@ -2,7 +2,7 @@ import type { Db } from "~/lib/db/client.server";
 import { clientAddress } from "~/lib/http/client-ip.server";
 import { normalizeEmail } from "~/lib/invitations.server";
 import { hitRateLimit, LOGIN_LOOKUP_IP_LIMIT } from "~/lib/rate-limit.server";
-import { isKnownAddress, magicLinkOutcome } from "./magic-link.server";
+import { isKnownAddress, magicLinkOutcome, type MagicLinkOutcome } from "./magic-link.server";
 
 // In production a missing source address means the deployment's entry is wrong (client-ip.server.ts), and the lookup allowance silently does not apply. Say so once per process.
 let warnedNoSource = false;
@@ -47,9 +47,9 @@ export async function requestLoginLink(input: {
     console.warn(`[login] address not registered ip=${ip ?? "unknown"}`);
     return "unregistered";
   }
-  const outcome: { result?: "sent" | "unregistered" | "later" } = {};
+  const outcome: MagicLinkOutcome = {};
   await magicLinkOutcome.run(outcome, input.send);
   // A sender that recorded nothing must never read as "sent".
   if (outcome.result === undefined) console.error("[magic-link] no delivery outcome was recorded");
-  return outcome.result ?? "later";
+  return outcome.result === "invitation_unavailable" ? "later" : outcome.result ?? "later";
 }

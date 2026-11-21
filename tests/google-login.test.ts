@@ -5,10 +5,10 @@ import { eq } from "drizzle-orm";
 import { createAuth } from "~/lib/auth/auth.server";
 import { googleLoginConfig } from "~/lib/auth/google-config.server";
 import { invitationCookie, readInvitationCookie } from "~/lib/auth/invitation-cookie.server";
-import { createInvitation } from "~/lib/invitations.server";
+import { createInvitation, hashInvitationToken } from "~/lib/invitations.server";
 import { isGoogleAuthEndpoint } from "~/lib/auth/endpoints.server";
-import { account, invitations, session, user, verification } from "~/lib/db/schema";
-import { createTestDb } from "./helpers/db";
+import { account, invitations, session, sharedInvitations, sharedInvitationUses, user, verification, villageMembers, villages } from "~/lib/db/schema";
+import { addMember, createTestDb } from "./helpers/db";
 import { createProfile } from "~/lib/profiles.server";
 import { action as settingsAction } from "~/routes/settings";
 import { action as authAction, loader as authLoader } from "~/routes/api.auth";
@@ -66,7 +66,7 @@ async function setup(claims: Record<string, unknown> = {}) {
   const callback = (flow: { url: URL; cookie: string }, cookie = flow.cookie, extra = "") => auth.handler(request(`/api/auth/callback/google?code=fixture-code&state=${flow.url.searchParams.get("state")}${extra}`, cookie));
   const invite = async (email = "alice@gmail.com") => {
     const value = await createInvitation(db, { email });
-    return { ...value, cookie: invitationCookie(new Request(BASE), value.id, SECRET).split(";")[0] };
+    return { ...value, cookie: invitationCookie(new Request(BASE), { kind: "individual", id: value.id }, SECRET).split(";")[0] };
   };
   const emailLogin = async (email = "alice@gmail.com") => {
     await auth.api.signInMagicLink({ headers: new Headers(), body: { email } });
@@ -301,21 +301,22 @@ describe("closed Google configuration and invitation cookie", () => {
   });
   it("uses a bounded secure, HttpOnly, same-site identifier cookie", () => {
     const now = new Date(); const request = new Request(BASE); const id = "12345678-1234-1234-1234-123456789abc";
-    const value = invitationCookie(request, id, SECRET, now);
+    const value = invitationCookie(request, { kind: "individual", id }, SECRET, now);
     expect(value).toMatch(/^__Host-tomola.invitation=/); expect(value).toContain("HttpOnly; SameSite=Lax; Max-Age=3600; Secure");
     const read = new Request(BASE, { headers: { cookie: value.split(";")[0] } });
-    expect(readInvitationCookie(read, SECRET, now)).toBe(id);
+    expect(readInvitationCookie(read, SECRET, now)).toEqual({ kind: "individual", id });
     expect(readInvitationCookie(read, SECRET, new Date(now.getTime() + 3600_000))).toBeNull();
   });
 });
 
+async function withAuth<T>(h: Awaited<ReturnType<typeof setup>>, run: () => Promise<T>) {
+  const g = globalThis as { __tomolaAuth?: Promise<typeof h.auth>; __tomolaDb?: Promise<typeof h.db> };
+  const oldAuth = g.__tomolaAuth; const oldDb = g.__tomolaDb;
+  g.__tomolaAuth = Promise.resolve(h.auth); g.__tomolaDb = Promise.resolve(h.db);
+  try { return await run(); } finally { g.__tomolaAuth = oldAuth; g.__tomolaDb = oldDb; }
+}
+
 describe("Google application routes and notices", () => {
-  async function withAuth<T>(h: Awaited<ReturnType<typeof setup>>, run: () => Promise<T>) {
-    const g = globalThis as { __tomolaAuth?: Promise<typeof h.auth>; __tomolaDb?: Promise<typeof h.db> };
-    const oldAuth = g.__tomolaAuth; const oldDb = g.__tomolaDb;
-    g.__tomolaAuth = Promise.resolve(h.auth); g.__tomolaDb = Promise.resolve(h.db);
-    try { return await run(); } finally { g.__tomolaAuth = oldAuth; g.__tomolaDb = oldDb; }
-  }
   it("keeps native sign-in returns on the site while preserving encoded paths", async () => {
     const h = await setup();
     const invitation = await h.invite();
@@ -395,7 +396,7 @@ describe("Google application routes and notices", () => {
     await withAuth(h, async () => {
       const load = (cookie: string, token?: string) => inviteLoader({ request: new Request(`${BASE}/invite?google=1&error=access_denied`, { headers: { cookie } }), params: { token } } as never);
       expect(await load(invite.cookie)).toMatchObject({ email: invite.email, reopenInvitation: false });
-      for (const cookie of ["", `${invite.cookie}altered`, invitationCookie(new Request(BASE), invite.id, SECRET, new Date(Date.now() - 3600_000)).split(";")[0]]) {
+      for (const cookie of ["", `${invite.cookie}altered`, invitationCookie(new Request(BASE), { kind: "individual", id: invite.id }, SECRET, new Date(Date.now() - 3600_000)).split(";")[0]]) {
         expect(await load(cookie)).toMatchObject({ email: null, reopenInvitation: true });
       }
       expect(await load(invite.cookie, "invalid-token")).toMatchObject({ email: null });
@@ -455,4 +456,85 @@ it("derives browser guidance and the fragment-free copy URL from the request", (
   expect(googleBrowserFromRequest(new Request(`${BASE}/settings`))).toEqual({ blocked: false, url: `${BASE}/settings` });
   expect(googleBrowserFromRequest(new Request(`${BASE}/settings.data?lang=en&_routes=routes%2Fsettings`))).toEqual({ blocked: false, url: `${BASE}/settings?lang=en` });
   expect(googleBrowserFromRequest(new Request(`${BASE}/invite/fixture.data?openExternalBrowser=1&_routes=routes%2Finvite`))).toEqual({ blocked: false, url: `${BASE}/invite/fixture?openExternalBrowser=1` });
+});
+
+describe("shared invitations in Google sign-in", () => {
+  async function shared(h: Awaited<ReturnType<typeof setup>>, villageId?: string) {
+    const id = crypto.randomUUID();
+    const token = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+    const ref = { kind: "shared" as const, id };
+    await h.db.insert(sharedInvitations).values({ id, tokenHash: hashInvitationToken(token), label: "Workshop", createdBy: "google_issuer",
+      villageId, maxUses: 1, expiresAt: new Date(Date.now() + 3600_000) });
+    return { ref, token, cookie: invitationCookie(new Request(BASE), ref, SECRET).split(";")[0] };
+  }
+
+  it("uses the OAuth-bound shared link and auto-enrolls the new member, preserving a different invitation cookie", async () => {
+    vi.stubEnv("VILLAGES", "1");
+    const h = await setup();
+    await addMember(h.db, "google_issuer", "google_issuer");
+    const [village] = await h.db.insert(villages).values({ slug: "google-signup", kind: "invite_public", name: "Google signup" }).returning();
+    await h.db.insert(villageMembers).values({ villageId: village.id, userId: "google_issuer", role: "owner" });
+    const a = await shared(h, village.id);
+    const b = await shared(h);
+    const flow = await h.start(a.cookie);
+    await withAuth(h, async () => {
+      const request = h.request(`/api/auth/callback/google?code=fixture-code&state=${flow.url.searchParams.get("state")}`, flow.cookie.replace(a.cookie, b.cookie));
+      const response = await authLoader({ request } as never);
+      expect(response.headers.get("location")).toBe("/onboarding");
+      expect(response.headers.getSetCookie().some(value => value.startsWith("__Host-tomola.invitation="))).toBe(false);
+    });
+    const [member] = await h.db.select().from(user).where(eq(user.email, "alice@gmail.com"));
+    expect(await createProfile(h.db, member.id, { handle: "google_shared", homeArea: "other" })).toMatchObject({ ok: true });
+    expect(await h.db.select().from(villageMembers).where(eq(villageMembers.userId, member.id))).toMatchObject([{ villageId: village.id }]);
+    expect(await h.db.select().from(sharedInvitationUses)).toMatchObject([{ linkId: a.ref.id, usedBy: member.id }]);
+    expect(await h.db.select({ usedCount: sharedInvitations.usedCount }).from(sharedInvitations).where(eq(sharedInvitations.id, b.ref.id))).toEqual([{ usedCount: 0 }]);
+    const linked = await h.callback(await h.start(b.cookie));
+    expect(linked.headers.get("location")).toBe("/");
+    expect(await h.db.select().from(sharedInvitationUses)).toHaveLength(1);
+  });
+
+  it("does not spend a shared slot for an existing member who has not linked Google", async () => {
+    const h = await setup();
+    await h.invite();
+    await h.emailLogin();
+    const link = await shared(h);
+    const response = await h.callback(await h.start(link.cookie));
+    expect(response.headers.get("location")).toContain("error=account_not_linked");
+    expect(await h.db.select().from(sharedInvitationUses)).toEqual([]);
+  });
+
+  it.each(["full", "revoked"] as const)("checks a %s link again before retrying the Google flow", async status => {
+    const h = await setup();
+    vi.stubEnv("BETTER_AUTH_SECRET", SECRET);
+    const link = await shared(h);
+    const flow = await h.start(link.cookie);
+    await h.db.update(sharedInvitations).set(status === "full" ? { usedCount: 1 } : { revokedAt: new Date() })
+      .where(eq(sharedInvitations.id, link.ref.id));
+    const callback = await h.callback(flow);
+    expect(callback.headers.get("location")).toContain("/invite?google=1");
+    await withAuth(h, async () => {
+      const url = new URL(callback.headers.get("location")!, BASE);
+      expect(await inviteLoader({ request: h.request(url.pathname + url.search, link.cookie), params: {} } as never))
+        .toMatchObject({ valid: false, full: status === "full" });
+      const started = await inviteAction({ request: new Request(`${BASE}/invite?google=1`, {
+        method: "POST", headers: { cookie: link.cookie, origin: BASE }, body: new URLSearchParams({ intent: "google-login" }),
+      }), params: {} } as never);
+      expect(started).toMatchObject({ error: "invalid" });
+    });
+    expect(await h.db.select().from(user)).toEqual([]);
+    expect(await h.db.select().from(sharedInvitationUses)).toEqual([]);
+  });
+
+  it("accepts old OAuth state containing only an individual invitation ID", async () => {
+    const h = await setup();
+    const link = await h.invite();
+    const flow = await h.start(link.cookie);
+    const identifier = getAuthStateVerificationIdentifier(flow.url.searchParams.get("state")!);
+    const [row] = await h.db.select().from(verification).where(eq(verification.identifier, identifier));
+    const old = JSON.parse(row.value);
+    delete old.serverContext.invitationKind;
+    await h.db.update(verification).set({ value: JSON.stringify(old) }).where(eq(verification.id, row.id));
+    expect((await h.callback(flow)).headers.get("location")).toBe("/onboarding");
+    expect(await h.db.select().from(invitations)).toMatchObject([{ id: link.id, usedAt: expect.any(Date) }]);
+  });
 });

@@ -2484,5 +2484,22 @@
   "metrics_article_reading_top_title": "阅读量前 50 篇文章",
   "metrics_article_reading_village": "村",
   "metrics_article_reading_villages_help": "阅读量按文章当前所属的村统计。迁移文章时，过去的阅读量也计入迁入的村。所有个人村合并为一行。",
-  "metrics_article_reading_villages_title": "按村统计阅读量"
+  "metrics_article_reading_villages_title": "按村统计阅读量",
+  "shared_invite_unavailable": "此邀请链接已达人数上限或已失效。",
+  "shared_invite_full": "此邀请链接已达人数上限。",
+  "shared_invite_signed_in": "你已使用 @{handle} 登录。",
+  "shared_invite_switch_account": "如要注册其他账号，请退出登录后重新打开此链接。",
+  "shared_invites_create": "创建共享邀请链接",
+  "shared_invites_title": "共享邀请链接",
+  "shared_invites_label": "标识标签",
+  "shared_invites_label_help": "此标签仅对运营人员可见。",
+  "shared_invites_max_uses": "注册人数上限",
+  "shared_invites_ttl": "有效天数",
+  "shared_invites_empty": "还没有共享邀请链接。",
+  "shared_invites_usage": "注册人数",
+  "shared_invites_created_at": "创建时间",
+  "shared_invites_expires_at": "到期时间",
+  "shared_invites_status_full": "已达上限",
+  "shared_invites_rate_limited": "你已达到每天 10 个共享链接的上限。",
+  "shared_invites_invalid": "请输入 1 至 80 个字符的标签、1 至 100 人的注册上限和 1 至 30 天的有效期。"
 }

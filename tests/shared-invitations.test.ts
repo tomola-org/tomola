@@ -1,0 +1,139 @@
+import { randomBytes } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { afterEach, expect, it, vi } from "vitest";
+import { invitationCookie, readInvitationCookie } from "~/lib/auth/invitation-cookie.server";
+import { addressHasher, createMagicLinkSender, magicLinkOutcome, sharedInvitationContext, type MagicLinkOutcome } from "~/lib/auth/magic-link.server";
+import { authSecret } from "~/lib/auth/secret.server";
+import { rateLimits, sharedInvitations, suspendedEmailHashes, user } from "~/lib/db/schema";
+import { addMember, createTestDb } from "./helpers/db";
+import { suspendedEmailHash } from "~/lib/suspended-email.server";
+import { createSharedInvitation } from "~/lib/shared-invitations.server";
+import { action as invitesAction, headers as invitesHeaders } from "~/routes/invites-new";
+import { action as adminAction } from "~/routes/admin-invitations";
+import { setupRouteHarness } from "./helpers/route-harness";
+
+afterEach(() => { vi.unstubAllEnvs(); });
+
+const BASE = "http://localhost:5173";
+const issuer = { id: "link_operator", email: "link_operator@example.com" };
+
+function linkForm(label: string) {
+  const form = new FormData();
+  form.set("label", label);
+  form.set("maxUses", "1");
+  form.set("ttlDays", "14");
+  return form;
+}
+
+it("keeps legacy individual cookie bytes compatible and authenticates the shared kind", () => {
+  const id = "12345678-1234-1234-1234-123456789abc";
+  const request = new Request(BASE);
+  const shared = invitationCookie(request, { kind: "shared", id }).split(";")[0];
+  const individual = invitationCookie(request, { kind: "individual", id }).split(";")[0];
+  const read = (cookie: string) => readInvitationCookie(new Request(BASE, { headers: { cookie } }));
+  expect(individual).toMatch(/^tomola\.invitation=12345678-/);
+  expect(read(individual)).toEqual({ kind: "individual", id });
+  expect(read(shared)).toEqual({ kind: "shared", id });
+  expect(read(shared.replace("s:", ""))).toBeNull();
+  expect(read(individual.replace("=", "=s:"))).toBeNull();
+  expect(read(`${individual}; ${shared}`)).toBeNull();
+});
+
+it("rejects non-operator create and revoke attempts even when member invitations are enabled", async () => {
+  vi.stubEnv("OPERATOR_ONLY_INVITATIONS", "");
+  vi.stubEnv("OPERATOR_EMAILS", issuer.email);
+  const h = await setupRouteHarness();
+  try {
+    await h.signIn("regular_inviter");
+    for (const intent of ["create-shared", "revoke-shared"]) {
+      const post = (path: string) => h.args(h.request(path, { as: "regular_inviter", form: { intent, label: "Example", maxUses: "10", ttlDays: "1" } }));
+      expect((await h.outcome(() => invitesAction(post("/invites/new")))).status).toBe(404);
+      expect((await h.outcome(() => adminAction(post("/admin/invitations")))).status).toBe(404);
+    }
+    expect(invitesHeaders()).toEqual({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex" });
+  } finally { h.restore(); }
+});
+
+it("charges the operator's allowance only for successful creation and never stores raw tokens", async () => {
+  vi.stubEnv("OPERATOR_EMAILS", issuer.email);
+  const db = await createTestDb();
+  await addMember(db, issuer.id, issuer.id, { email: issuer.email });
+  const now = new Date();
+  const bad = linkForm("bad\nlabel");
+  const missingVillage = linkForm("Valid label");
+  missingVillage.set("villageId", "missing");
+  expect(await createSharedInvitation(db, issuer, bad, now)).toEqual({ error: "invalid" });
+  expect(await createSharedInvitation(db, issuer, missingVillage, now)).toEqual({ error: "invalid_village" });
+  for (let index = 0; index < 10; index++) {
+    const created = await createSharedInvitation(db, issuer, linkForm(` Example ${index} `), now);
+    expect(created.error).toBeNull();
+    if (created.error) throw new Error(created.error);
+    const [row] = await db.select().from(sharedInvitations).where(eq(sharedInvitations.id, created.id));
+    expect(row.label).toBe(`Example ${index}`);
+    expect(row.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(row)).not.toContain(created.token);
+  }
+  expect(await createSharedInvitation(db, issuer, linkForm("One more"), now)).toEqual({ error: "rate_limited" });
+  expect(await db.select({ count: rateLimits.count }).from(rateLimits).where(eq(rateLimits.key, `member:shared-invitation:${issuer.id}`))).toEqual([{ count: 10 }]);
+});
+
+it("uses the same observed outcome and one awaited delivery for new, existing, and held addresses", async () => {
+  const db = await createTestDb();
+  const now = new Date();
+  await db.insert(sharedInvitations).values({ id: "delivery-link", tokenHash: "fixture", label: "Delivery", createdBy: issuer.id, maxUses: 10, expiresAt: new Date(now.getTime() + 86_400_000) });
+  await db.insert(user).values({ id: "existing", name: "", email: "existing@example.com" });
+  await db.insert(suspendedEmailHashes).values({ hash: suspendedEmailHash("held@example.com"), expiresAt: new Date(now.getTime() + 36_000_000) });
+  let delivered = false;
+  const mail = vi.fn(async () => { await new Promise(resolve => setImmediate(resolve)); delivered = true; });
+  const isKnown = vi.fn(async () => false);
+  const send = createMagicLinkSender({ db, baseURL: BASE, secret: authSecret(), now: () => now, isKnown, decoyTo: () => "decoy@example.invalid",
+    mailer: () => ({ kind: "memory", from: "test@example.com", send: mail }) });
+  for (const [email, to] of [["fresh@example.com", "fresh@example.com"], ["existing@example.com", "existing@example.com"], ["held@example.com", "decoy@example.invalid"]]) {
+    delivered = false;
+    const outcome: MagicLinkOutcome = {};
+    await sharedInvitationContext.run("delivery-link", () => magicLinkOutcome.run(outcome, () => send({ email, token: randomBytes(24).toString("base64url"), url: BASE })));
+    expect(outcome.result).toBe("sent");
+    expect(delivered).toBe(true);
+    expect(mail).toHaveBeenLastCalledWith(expect.objectContaining({ to }));
+  }
+  expect(mail).toHaveBeenCalledTimes(3);
+  expect(isKnown).not.toHaveBeenCalled();
+});
+
+it("caps shared delivery across links and sources while sharing the usual address cap", async () => {
+  vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
+  const db = await createTestDb();
+  const hour = Math.floor(Date.now() / 3_600_000) * 3_600_000;
+  let now = new Date(hour + 1_000);
+  await db.insert(sharedInvitations).values(["delivery-a", "delivery-b"].map(id => ({
+    id, tokenHash: id, label: id, createdBy: issuer.id, maxUses: 2, expiresAt: new Date(hour + 86_400_000),
+  })));
+  const secret = authSecret();
+  const mail = vi.fn(async () => {});
+  const send = createMagicLinkSender({ db, baseURL: BASE, secret, now: () => now, isKnown: async () => true,
+    mailer: () => ({ kind: "memory", from: "test@example.com", send: mail }) });
+  let source = 0;
+  async function deliver(email: string, link: string | null) {
+    const outcome: MagicLinkOutcome = {};
+    const headers = new Headers({ "x-forwarded-for": `198.51.100.${++source}` });
+    await sharedInvitationContext.run(link, () => magicLinkOutcome.run(outcome, () => send({ email, url: BASE, token: randomBytes(24).toString("base64url") }, { headers })));
+    return outcome.result;
+  }
+  for (const minutes of [0, 15]) {
+    now = new Date(hour + minutes * 60_000 + 1_000);
+    for (const link of ["delivery-a", "delivery-b", "delivery-b"]) expect(await deliver("capped@example.com", link)).toBe("sent");
+    expect(await deliver("capped@example.com", "delivery-a")).toBe("later");
+  }
+  now = new Date(hour + 30 * 60_000);
+  expect(await deliver("capped@example.com", "delivery-a")).toBe("later");
+  for (let i = 0; i < 28; i++) expect(await deliver(`link_cap_${i}@example.com`, "delivery-a")).toBe("sent");
+  expect(await deliver("link_capped@example.com", "delivery-a")).toBe("later");
+
+  const address = "standard_cap@example.com";
+  const hash = addressHasher(secret)(address);
+  await db.insert(rateLimits).values({ key: `magic-link:email:${hash}`, count: 28, windowStart: new Date(hour), expiresAt: new Date(hour + 3_600_000) });
+  expect(await deliver(address, null)).toBe("sent");
+  expect(await deliver(address, "delivery-b")).toBe("sent");
+  expect(await deliver(address, null)).toBe("later");
+  expect(await deliver(address, "delivery-b")).toBe("later");
+});

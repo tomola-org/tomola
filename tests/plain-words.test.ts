@@ -49,6 +49,7 @@ it("uses interface messages for all supported post languages", () => {
 it("gives unusable invitations a matching page and document title without an address", async () => {
   const loaderData: Parameters<typeof Invite>[0]["loaderData"] = {
     email: null, codePending: null, publicReading: false, trialRequired: false, reopenInvitation: false,
+    shared: false, signedIn: null, valid: false, full: false,
     from: null, note: null, village: null,
   };
   const html = await render(routeElement(Invite, { loaderData }));

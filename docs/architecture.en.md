@@ -35,6 +35,8 @@ Creating an account currently requires an invitation; there is no public self-re
 
 At `/invites/new`, operators can paste up to 20 email addresses at once and send an individual, recipient-bound invitation email from tomola in a selected enabled language, or copy the links themselves. The existing limit of 20 invitations per day remains; ordinary members still create one link at a time and deliver it themselves when member invitations are enabled.
 
+Operators can also create a shared link with a registration limit, an expiry date and an optional village. The label and usage counts are visible only to operators. The link itself is shown once, on creation. Operators can revoke it from their invitation page or the administration list. A new account takes one place when it is created, and account deletion does not release that place. If a selected village is no longer eligible during profile setup, the new member completes registration without joining it.
+
 Writing, member pages, following lists, chat, and protected machine reads such as search and stance aggregates require membership and the relevant permissions. Principles, why pages and guidance such as `llms.txt` are independent of post visibility. Readability is distinct from permission to reuse posts or publication of the software.
 
 | Area | Current mechanisms |

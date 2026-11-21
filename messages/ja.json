@@ -2338,5 +2338,22 @@
   "member_page_follow_hint": "フォローすると、この人の公開投稿がホームの「フォロー中」に届きます。",
   "village_membership_unfollow": "このビレッジのフォローを外す",
   "village_membership_follow": "このビレッジをフォローする",
-  "village_membership_follow_help": "フォローすると、ホームの「フォロー中」にこのビレッジの投稿が並びます。外したあとも参加したままで、投稿や利用可能なチャットを続けられます。"
+  "village_membership_follow_help": "フォローすると、ホームの「フォロー中」にこのビレッジの投稿が並びます。外したあとも参加したままで、投稿や利用可能なチャットを続けられます。",
+  "shared_invite_unavailable": "この招待リンクは上限に達したか、使えなくなりました。",
+  "shared_invite_full": "この招待リンクは人数の上限に達しました。",
+  "shared_invite_signed_in": "@{handle} でログインしています。",
+  "shared_invite_switch_account": "別のアカウントで登録するには、ログアウトしてからこのリンクを開き直してください。",
+  "shared_invites_create": "共有招待リンクを作る",
+  "shared_invites_title": "共有招待リンク",
+  "shared_invites_label": "識別ラベル",
+  "shared_invites_label_help": "運営者のみに表示されます。",
+  "shared_invites_max_uses": "登録できる人数",
+  "shared_invites_ttl": "有効日数",
+  "shared_invites_empty": "共有招待リンクはまだありません。",
+  "shared_invites_usage": "登録数",
+  "shared_invites_created_at": "作成日時",
+  "shared_invites_expires_at": "有効期限",
+  "shared_invites_status_full": "上限到達",
+  "shared_invites_rate_limited": "共有招待リンクは1日に10本まで作成できます。",
+  "shared_invites_invalid": "識別ラベルは1〜80字、登録できる人数は1〜100人、有効日数は1〜30日で入力してください。"
 }

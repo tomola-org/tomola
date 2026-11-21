@@ -1,3 +1,12 @@
+import { Field, FieldLabel } from "~/components/ui/field";
+import { Input } from "~/components/ui/input";
+import { parseEmail } from "~/lib/email";
+import { authSecret } from "~/lib/auth/secret.server";
+import { getSessionProfile } from "~/lib/auth/session.server";
+import { sameInvitation } from "~/lib/auth/invitation-ref.server";
+import { loginCodeInvitation } from "~/lib/auth/login-code.server";
+import { magicLinkOutcome, sharedInvitationContext, type MagicLinkOutcome } from "~/lib/auth/magic-link.server";
+import { findSharedInvitation, sharedInvitationStatus } from "~/lib/shared-invitations.server";
 import { useOperatorSettings } from "~/lib/operator-context";
 import { participationCopy } from "~/lib/operator-settings";
 import { publicReading } from "~/lib/public-reading.server";
@@ -9,7 +18,7 @@ import { Form, Link, useLocation, useRevalidator, type MiddlewareFunction } from
 import { useEffect, useRef } from "react";
 import { invitationCookie, clearInvitationCookie, readInvitationCookie } from "~/lib/auth/invitation-cookie.server";
 import { invitationVillage } from "~/lib/signup-village.server";
-import { prepareLoginCode } from "~/lib/auth/login-code-cookie.server";
+import { pendingLoginCode, prepareLoginCode, rememberedLoginEmail } from "~/lib/auth/login-code-cookie.server";
 import { pendingLoginScreen, restartLoginCode } from "~/lib/auth/login-code-state.server";
 import { submitLoginCode } from "~/lib/auth/login-code-action.server";
 import { loginCodeSent } from "~/lib/auth/login-code-response.server";
@@ -19,7 +28,7 @@ import { EntrySteps } from "~/components/entry-steps";
 import { getAuth, isOriginRejected, isRejectedInput } from "~/lib/auth/auth.server";
 import { getDb } from "~/lib/db/client.server";
 import { enforceIpLimit } from "~/lib/http/limits.server";
-import { findValidInvitationById, findValidInvitationByToken, invitationSenderHandle } from "~/lib/invitations.server";
+import { findValidInvitationById, findValidInvitationByToken, invitationSenderHandle, matchesIndividualInvitationToken } from "~/lib/invitations.server";
 import { m } from "~/paraglide/messages.js";
 import { getLocale } from "~/paraglide/runtime.js";
 import { readInvitationNote } from "~/lib/invitation-note.server";
@@ -37,41 +46,68 @@ export function headers() {
   return { "Cache-Control": "no-store", "Referrer-Policy": "strict-origin", "X-Robots-Tag": "noindex" };
 }
 
+async function screenInvitation(request: Request, token?: string, ref = readInvitationCookie(request)) {
+  const db = await getDb();
+  const link = token ? await findSharedInvitation(db, { token }) : ref?.kind === "shared" ? await findSharedInvitation(db, ref) : null;
+  if (link) return { kind: "shared" as const, link, ref: { kind: "shared" as const, id: link.id }, status: sharedInvitationStatus(link) };
+  const individual = token ? await findValidInvitationByToken(db, token)
+    : ref?.kind === "individual" ? await findValidInvitationById(db, ref.id) : null;
+  return individual ? { kind: "individual" as const, link: individual, ref: { kind: "individual" as const, id: individual.id }, status: "valid" as const } : null;
+}
+
+async function pendingInvitation(request: Request) {
+  const pending = pendingLoginCode(request);
+  const remembered = rememberedLoginEmail(request);
+  if (!pending || !remembered) return null;
+  const bound = await loginCodeInvitation(await getDb(), pending, remembered.email, authSecret());
+  return bound ? { ...bound, email: remembered.email } : null;
+}
+
 export const middleware: MiddlewareFunction<Response>[] = [async ({ request, params }, next) => {
   const response = await next();
   if (request.method !== "GET" || !response.ok || !params.token) return response;
-  const invitation = await findValidInvitationByToken(await getDb(), params.token);
-  if (invitation) response.headers.append("Set-Cookie", invitationCookie(request, invitation.id));
-  else clearInvitationCookie(request, response.headers);
+  const invitation = await screenInvitation(request, params.token);
+  const current = readInvitationCookie(request);
+  if (invitation?.status === "valid") {
+    // A redirect back to a waiting code screen must preserve another tab's invitation.
+    if (!current || sameInvitation(current, invitation.ref) || !sameInvitation((await pendingInvitation(request))?.ref ?? null, invitation.ref)) {
+      response.headers.append("Set-Cookie", invitationCookie(request, invitation.ref));
+    }
+  } else if (sameInvitation(current, invitation?.ref ?? null)
+      || (current?.kind === "individual" && await matchesIndividualInvitationToken(await getDb(), current.id, params.token))) {
+    clearInvitationCookie(request, response.headers);
+  }
   return response;
 }];
-
-async function screenInvitation(request: Request, token?: string) {
-  const db = await getDb();
-  if (token) return findValidInvitationByToken(db, token);
-  const id = readInvitationCookie(request);
-  return id ? findValidInvitationById(db, id) : null;
-}
 
 // Invitation POSTs: 300 per IP per 15 minutes (AUTH_PAGE_IP_LIMIT; 429 on excess). Do not count GET page views.
 async function loaderImplementation({ params, request }: Route.LoaderArgs) {
   const db = await getDb();
   const invitation = await screenInvitation(request, params.token);
-  const from = invitation ? await invitationSenderHandle(db, invitation) : null;
-  const note = invitation && from ? await readInvitationNote(db, invitation.id, getLocale(), new URL(request.url).searchParams.get("original") === "1") : null;
+  const individual = invitation?.kind === "individual" ? invitation.link : null;
+  const shared = invitation?.kind === "shared";
+  const signedIn = shared ? (await getSessionProfile(request))?.handle ?? null : null;
+  const valid = invitation?.status === "valid";
+  const from = valid ? await invitationSenderHandle(db, invitation.link) : null;
+  const url = new URL(request.url);
+  const note = individual && from ? await readInvitationNote(db, individual.id, getLocale(), url.searchParams.get("original") === "1") : null;
+  const pending = invitation && !signedIn && (valid || (shared && url.searchParams.get("google") !== "1")) ? await pendingInvitation(request) : null;
+  const codePending = invitation && pending && (sameInvitation(pending.ref, invitation.ref) || (!pending.ref && individual))
+    ? await pendingLoginScreen(db, request, individual?.email) : null;
   return {
     publicReading: publicReading(),
-    ...(googleLoginConfig() ? { google: { browser: googleBrowserFromRequest(request), error: new URL(request.url).searchParams.get("error"), email: invitation ? maskGoogleInvitationEmail(invitation.email) : null } } : {}),
+    ...(googleLoginConfig() ? { google: { browser: googleBrowserFromRequest(request), error: url.searchParams.get("error"), email: individual ? maskGoogleInvitationEmail(individual.email) : null } } : {}),
     trialRequired: trialParticipationRequired(),
-    email: invitation?.email ?? null,
+    email: individual?.email ?? null,
+    shared, signedIn, valid, full: shared && invitation.status === "full",
     reopenInvitation: !params.token && !invitation,
     from,
     note: note ? { ...note,
       translationLabel: note.translated ? m.label_from_lang_machine({ lang: languageLabel(note.from) }) : null,
       unavailableLabel: note.unavailable ? m.label_no_translation() : null,
     } : null,
-    village: invitation ? await invitationVillage(db, invitation) : null,
-    codePending: invitation ? await pendingLoginScreen(db, request, invitation.email) : null,
+    village: valid && !signedIn ? await invitationVillage(db, invitation.link) : null,
+    codePending,
   };
 }
 
@@ -80,22 +116,52 @@ export async function action({ request, params }: Route.ActionArgs) {
   const db = await getDb();
   await enforceIpLimit(db, request, "auth-page");
   const form = await request.formData();
-  if (form.get("intent") === "login-restart") return restartLoginCode(request);
-  if (form.get("intent") === "login-code") return submitLoginCode(request, form);
-  const invitation = await screenInvitation(request, params.token);
-  if (!invitation) return { sentTo: null, error: "invalid" as const };
-  if (form.get("intent") === "google-login") return startGoogleSignIn(request, "/", invitation.id);
+  const intent = form.get("intent");
+  const screen = await screenInvitation(request, params.token);
+  if (screen?.kind === "shared" && await getSessionProfile(request)) return { sentTo: null, error: "invalid" as const };
+  if (intent === "login-restart") return restartLoginCode(request);
+  const previous = intent === "login-resend" || intent === "login-code" ? await pendingInvitation(request) : null;
+  if (intent === "login-code") {
+    if (previous?.ref && params.token && !sameInvitation(previous.ref, screen?.ref ?? null)) {
+      return { status: "code_invalid" as const };
+    }
+    return submitLoginCode(request, form, { invitation: true });
+  }
+  const boundResend = intent === "login-resend" ? previous?.ref : null;
+  if (boundResend && params.token && !sameInvitation(boundResend, screen?.ref ?? null)) {
+    return { sentTo: null, error: "invalid" as const };
+  }
+  const invitation = boundResend && !params.token ? await screenInvitation(request, undefined, boundResend) : screen;
+  if (invitation?.status !== "valid") {
+    const error = previous?.ref?.kind === "shared" ? "invitation_unavailable" : "invalid";
+    return { sentTo: null, error };
+  }
+  if (intent === "google-login") return startGoogleSignIn(request, "/", invitation.ref);
+  const email = invitation.kind === "individual" ? invitation.link.email
+    : intent === "login-resend" ? (previous?.ref ? previous.email : null) : parseEmail(String(form.get("email") ?? ""));
+  if (!email) return { sentTo: null, error: "invalid_email" as const };
+  if (invitation.kind === "shared" && screen?.kind !== "shared" && await getSessionProfile(request)) {
+    return { sentTo: null, error: "invalid" as const };
+  }
   const auth = await getAuth();
-  const pending = prepareLoginCode(request, invitation.email, form.get("intent") === "login-resend");
+  const pending = prepareLoginCode(request, email, intent === "login-resend");
+  const outcome: MagicLinkOutcome = {};
   const browser = pending.browser;
   try {
     // Passing request enables origin validation. asResponse: false makes rejection an exception instead of a Response.
-    await auth.api.signInMagicLink({
-      body: { email: invitation.email, metadata: { locale: getLocale(), browserNonce: browser.nonce, codeId: pending.id, invitation: true } },
+    const send = () => auth.api.signInMagicLink({
+      body: { email, metadata: { locale: getLocale(), browserNonce: browser.nonce, codeId: pending.id, invitation: true, invitationRef: invitation.ref } },
       headers: request.headers,
       request,
       asResponse: false,
     });
+    if (invitation.kind === "shared") {
+      await sharedInvitationContext.run(invitation.ref.id, () => magicLinkOutcome.run(outcome, send));
+      if (outcome.result !== "sent") {
+        const error = outcome.result === "invitation_unavailable" ? "invitation_unavailable" : "later";
+        return { sentTo: null, error };
+      }
+    } else await send();
   } catch (error) {
     // 403 origin rejection means the opened address differs from configuration. Other rejections indicate invalid input.
     if (isOriginRejected(error)) return { sentTo: null, error: "origin_mismatch" as const };
@@ -105,12 +171,11 @@ export async function action({ request, params }: Route.ActionArgs) {
   const headers = new Headers({ "Cache-Control": "no-store" });
   headers.append("Set-Cookie", browser.cookie); headers.append("Set-Cookie", pending.cookie);
   headers.append("Set-Cookie", pending.emailCookie);
-  headers.append("Set-Cookie", invitationCookie(request, invitation.id));
-  return loginCodeSent(request, { sentTo: invitation.email, error: null }, headers);
+  return loginCodeSent(request, { sentTo: email, error: null }, headers);
 }
 
 export function meta({ loaderData }: Route.MetaArgs) {
-  return [{ title: !loaderData?.email ? m.invite_unusable_title() : loaderData.codePending ? m.login_code_heading() : m.invite_title() }];
+  return [{ title: loaderData?.codePending ? m.login_code_heading() : loaderData?.valid || loaderData?.signedIn ? m.invite_title() : m.invite_unusable_title() }];
 }
 
 export default function Invite({ loaderData, actionData }: Route.ComponentProps) {
@@ -136,13 +201,22 @@ export default function Invite({ loaderData, actionData }: Route.ComponentProps)
   if (loaderData.note?.translated) noteParams.set("original", "1"); else noteParams.delete("original");
   const noteSearch = noteParams.toString();
   const codeError = actionData && "status" in actionData && actionData.status === "code_invalid";
-  const heading = !loaderData.email ? m.invite_unusable_title() : loaderData.codePending ? m.login_code_heading() : loaderData.from ? m.invite_title_from({ handle: loaderData.from }) : m.invite_title();
+  const sendError = actionData && "error" in actionData ? actionData.error : null;
+  const unavailable = (actionData && "status" in actionData && actionData.status === "invitation_unavailable") || sendError === "invitation_unavailable";
+  const heading = unavailable ? m.shared_invite_unavailable()
+    : loaderData.signedIn ? m.invite_title()
+    : loaderData.codePending ? m.login_code_heading()
+    : loaderData.full ? m.shared_invite_full()
+    : !loaderData.valid ? m.invite_unusable_title()
+    : loaderData.from ? m.invite_title_from({ handle: loaderData.from }) : m.invite_title();
+  const showEntrySteps = !unavailable && !loaderData.signedIn && (loaderData.valid || loaderData.codePending);
   return (
     <>
     <GuestHeader />
     <main className="space-y-4">
-      {loaderData.email && <EntrySteps current={loaderData.codePending ? 2 : 1} />}
+      {showEntrySteps && <EntrySteps current={loaderData.codePending ? 2 : 1} />}
       <h1 className="text-2xl font-bold">{heading}</h1>
+      {sendError === "later" && <p role="alert" className="text-destructive">{m.login_try_later()}</p>}
       {loaderData.note && <div className="space-y-1" data-invitation-note>
         {loaderData.codePending && loaderData.from && <p className="ui-meta text-muted-foreground">{m.invite_title_from({ handle: loaderData.from })}</p>}
         <p className="break-words" dir="auto" lang={loaderData.note.lang}>{loaderData.note.text}</p>
@@ -154,18 +228,28 @@ export default function Invite({ loaderData, actionData }: Route.ComponentProps)
       </div>}
       {loaderData.village && <p className="break-words">{m.invite_village({ village: loaderData.village.name })}</p>}
       {loaderData.village && <p className="ui-help">{m.village_join_visibility()}</p>}
-      {!loaderData.email ? <><p>{loaderData.reopenInvitation ? m.google_invitation_reopen() : m.invite_invalid()}</p><Link to="/login" className="underline">{m.invite_invalid_login()}</Link></> : loaderData.codePending ? <>
+      {loaderData.signedIn ? <>
+        <p>{m.shared_invite_signed_in({ handle: loaderData.signedIn })}</p>
+        <p className="ui-help">{m.shared_invite_switch_account()}</p>
+        <Link to="/" className="underline">{m.confirm_home()}</Link>
+      </> : unavailable ? <Link to="/login" className="underline">{m.invite_invalid_login()}</Link> : loaderData.codePending ? <>
         <p className="break-words">{m.invite_sent({ email: loaderData.codePending.email })}</p>
         <LoginCodeForm key={loaderData.codePending.revision} state={loaderData.codePending} invalid={!!codeError} limited={actionData && "limited" in actionData ? actionData.limited : undefined} invitation />
         {actionData && "error" in actionData && actionData.error === "origin_mismatch" && <p className="text-destructive">{m.auth_origin_mismatch()}</p>}
+      </> : !loaderData.valid ? <>
+        {!loaderData.full && <p>{loaderData.reopenInvitation ? m.google_invitation_reopen() : m.invite_invalid()}</p>}
+        <Link to="/login" className="underline">{m.invite_invalid_login()}</Link>
       </> : <>
       <p><span className="block">{m.entry_intro()}</span><span className="block">{m.invite_about()}</span></p>
       {loaderData.publicReading && <p className="ui-help text-muted-foreground">{m.public_reading_onboarding()}</p>}
       {loaderData.google && <><GoogleLoginError {...loaderData.google} /><GoogleLogin browser={loaderData.google.browser} /></>}
       <Form method="post" className="space-y-2">
-          <p>{m.invite_for({ email: loaderData.email })}</p>
+          {loaderData.shared ? <Field><FieldLabel className="block">{m.login_email()}
+            <Input name="email" type="email" required autoComplete="email" />
+          </FieldLabel></Field> : loaderData.email && <p>{m.invite_for({ email: loaderData.email })}</p>}
           <p className="ui-help text-muted-foreground">{m.invite_next()}</p>
-          {actionData && "error" in actionData && actionData.error === "invalid" && <p className="text-destructive">{m.invite_invalid()}</p>}
+          {sendError === "invalid" && <p role="alert" className="text-destructive">{m.invite_invalid()}</p>}
+          {sendError === "invalid_email" && <p role="alert" className="text-destructive">{m.invites_invalid_email()}</p>}
           {actionData && "error" in actionData && actionData.error === "origin_mismatch" && <p className="text-destructive">{m.auth_origin_mismatch()}</p>}
           {loaderData.trialRequired && <p className="ui-help text-muted-foreground">{participationCopy(policy, getLocale()).invitationRestriction}</p>}
           <Button type="submit">
