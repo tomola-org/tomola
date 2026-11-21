@@ -77,6 +77,12 @@ export async function findValidInvitationByToken(
   return row?.email && !isDeletedIdentity(undefined, row.email) ? { ...row, email: row.email } : null;
 }
 
+export async function matchesIndividualInvitationToken(db: Db, id: string, token: string) {
+  const [row] = await db.select({ id: invitations.id }).from(invitations)
+    .where(and(eq(invitations.id, id), eq(invitations.tokenHash, hashInvitationToken(token))));
+  return !!row;
+}
+
 // A signed browser cookie can restore the invitation screen without retaining
 // its secret URL in OAuth state. Recheck the same lifetime and recipient rules.
 export async function findValidInvitationById(db: Db, id: string, now = new Date()): Promise<(Invitation & { email: string }) | null> {

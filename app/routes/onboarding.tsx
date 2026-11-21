@@ -29,7 +29,8 @@ import { useEnabledLangs } from "~/lib/use-enabled-langs";
 import { createProfile, getProfile } from "~/lib/profiles.server";
 import { m } from "~/paraglide/messages.js";
 import { getLocale } from "~/paraglide/runtime.js";
-import { clearInvitationCookie } from "~/lib/auth/invitation-cookie.server";
+import { usedSignupInvitation } from "~/lib/auth/signup-invitation.server";
+import { clearInvitationCookie, readInvitationCookie } from "~/lib/auth/invitation-cookie.server";
 import { consumedInvitationVillage, joinedSignupVillage } from "~/lib/signup-village.server";
 
 // Signup records the handle and the main language, the country of residence, adulthood and explicit agreement to the trial terms. The screen groups them under "about you" and "before you join"; the second group is where
@@ -72,7 +73,9 @@ export async function action({ request }: Route.ActionArgs) {
     const headers = new Headers();
     if (locale) headers.append("Set-Cookie", uiLocaleCookie(request, locale));
     clearReadingReturn(request, headers);
-    clearInvitationCookie(request, headers);
+    // A legacy signup may still have its entry cookie after authentication.
+    const invitation = readInvitationCookie(request);
+    if (invitation && await usedSignupInvitation(db, user.id, invitation)) clearInvitationCookie(request, headers);
     if (greet) headers.append("Set-Cookie", welcomeCookie(request, destination.startsWith("/t/") ? "article" : "home"));
     // A different locale must replace the client's existing Paraglide state too.
     return (locale && locale !== getLocale() ? redirectDocument : redirect)(destination, { headers });

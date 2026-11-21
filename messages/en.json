@@ -3144,5 +3144,22 @@
   "member_page_follow_hint": "Follow this person to see their public posts in Following on your home page.",
   "village_membership_unfollow": "Unfollow this village",
   "village_membership_follow": "Follow this village",
-  "village_membership_follow_help": "Following adds this village’s posts to Following on the home page. If you unfollow, you remain a member and can still post and use any available chat."
+  "village_membership_follow_help": "Following adds this village’s posts to Following on the home page. If you unfollow, you remain a member and can still post and use any available chat.",
+  "shared_invite_unavailable": "This invitation link is full or no longer available.",
+  "shared_invite_full": "This invitation link has reached its limit.",
+  "shared_invite_signed_in": "You’re signed in as @{handle}.",
+  "shared_invite_switch_account": "To register with another account, sign out and open this link again.",
+  "shared_invites_create": "Create a shared invitation link",
+  "shared_invites_title": "Shared invitation links",
+  "shared_invites_label": "Label",
+  "shared_invites_label_help": "Only operators can see this label.",
+  "shared_invites_max_uses": "Registration limit",
+  "shared_invites_ttl": "Days until expiry",
+  "shared_invites_empty": "No shared invitation links yet.",
+  "shared_invites_usage": "Registrations",
+  "shared_invites_created_at": "Created",
+  "shared_invites_expires_at": "Expires",
+  "shared_invites_status_full": "Limit reached",
+  "shared_invites_rate_limited": "You’ve reached the daily limit of 10 shared links.",
+  "shared_invites_invalid": "Enter a label of 1 to 80 characters, a limit of 1 to 100 registrations, and a duration of 1 to 30 days."
 }

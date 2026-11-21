@@ -3,6 +3,7 @@ import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes, ra
 import { and, eq, gt, lt, sql } from "drizzle-orm";
 import type { Db } from "~/lib/db/client.server";
 import { rateLimits, verification } from "~/lib/db/schema";
+import { parseInvitationRef, type InvitationRef } from "./invitation-ref.server";
 import { hashMagicLinkToken } from "./plugins";
 import { addressHasher } from "./magic-link.server";
 import { browserNonceDigest, validBrowserNonce } from "./magic-link-browser.server";
@@ -10,7 +11,7 @@ import { browserNonceDigest, validBrowserNonce } from "./magic-link-browser.serv
 export const loginCodeLinkIdentifier = (token: string) => `magic-link-code-link:${hashMagicLinkToken(token)}`;
 export const loginCodeIdentifier = (id: string) => `magic-link-code:${id}`;
 const key = (nonce: string, code: string) => Buffer.from(hkdfSync("sha256", nonce, code, "tomola login code v1", 32));
-type Envelope = { iv: string; tag: string; ciphertext: string; address: string; browser?: string; failures: number };
+type Envelope = { iv: string; tag: string; ciphertext: string; address: string; browser?: string; failures: number; invitation?: InvitationRef };
 const DAY_MS = 86_400_000;
 // IP comes from clientAddress, including its already normalized IPv6 /64.
 // Browser secrets bind decryption, but cannot serve as an abuse budget.
@@ -26,14 +27,14 @@ async function failureCount(db: Db, key: string, now: Date) {
 
 // Only the mail composer receives the plaintext code. A database reader cannot
 // test guesses without the browser's 256-bit secret.
-export async function issueLoginCode(db: Db, input: { id: string; email: string; token: string; nonce: string; secret: string }): Promise<string> {
+export async function issueLoginCode(db: Db, input: { id: string; email: string; token: string; nonce: string; secret: string; invitation?: InvitationRef | null }): Promise<string> {
   if (isDeletedIdentity(undefined, input.email)) throw new Error("Invalid account");
   const code = randomInt(1_000_000).toString().padStart(6, "0");
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key(input.nonce, code), iv);
   cipher.setAAD(Buffer.from(input.id));
   const ciphertext = Buffer.concat([cipher.update(input.token, "utf8"), cipher.final()]);
-  const envelope: Envelope = { iv: iv.toString("base64url"), tag: cipher.getAuthTag().toString("base64url"), ciphertext: ciphertext.toString("base64url"), address: addressHasher(input.secret)(input.email), browser: browserNonceDigest(input.nonce), failures: 0 };
+  const envelope: Envelope = { iv: iv.toString("base64url"), tag: cipher.getAuthTag().toString("base64url"), ciphertext: ciphertext.toString("base64url"), address: addressHasher(input.secret)(input.email), browser: browserNonceDigest(input.nonce), failures: 0, ...(input.invitation ? { invitation: input.invitation } : {}) };
   const [credential] = await db.select().from(verification).where(eq(verification.identifier, `magic-link:${hashMagicLinkToken(input.token)}`));
   await db.insert(verification).values({ id: randomUUID(), identifier: loginCodeIdentifier(input.id), value: JSON.stringify(envelope), expiresAt: credential?.expiresAt ?? new Date(Date.now() + 900_000) });
   await db.insert(verification).values({ id: randomUUID(), identifier: loginCodeLinkIdentifier(input.token), value: input.id, expiresAt: credential?.expiresAt ?? new Date(Date.now() + 900_000) });
@@ -87,4 +88,15 @@ export async function loginCodeState(db: Db, id: string, ip: string | null): Pro
 }
 export async function loginCodeLimited(db: Db, id: string, ip: string | null): Promise<LoginCodeLimit> {
   return (await loginCodeState(db, id, ip)).limited;
+}
+
+// Resend may use a remembered address only if it belongs to this code and browser.
+export async function loginCodeInvitation(db: Db, pending: { id: string; nonce: string }, email: string, secret: string) {
+  const [row] = await db.select({ value: verification.value }).from(verification)
+    .where(and(eq(verification.identifier, loginCodeIdentifier(pending.id)), gt(verification.expiresAt, new Date())));
+  if (!row) return null;
+  const value = JSON.parse(row.value) as Envelope;
+  if (value.browser !== browserNonceDigest(pending.nonce) || value.address !== addressHasher(secret)(email)) return null;
+  const ref = parseInvitationRef(value.invitation);
+  return value.invitation === undefined || ref ? { ref } : null;
 }

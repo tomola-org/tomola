@@ -1,3 +1,4 @@
+import { clearLoginCodeCookies } from "~/lib/auth/login-code-cookie.server";
 import { withMarkdownRead } from "~/lib/markdown-budget.server";
 import { Field, FieldLabel } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
@@ -104,8 +105,13 @@ export async function action({ request }: Route.ActionArgs) {
   const before = await linkState(request, token);
   await enforceIpLimit(await getDb(), request, "auth-page");
   if (before === "usable") {
-    const response = await completeMagicLink(request, token);
-    if (response) return response;
+    const result = await completeMagicLink(request, token);
+    if (result.kind === "ok") return result.response;
+    if (result.kind === "invitation_unavailable") {
+      const headers = new Headers(PAGE_HEADERS);
+      clearLoginCodeCookies(request, headers);
+      return data({ status: "invalid" as const, reason: "invitation_unavailable" as const }, { status: 400, headers });
+    }
   }
   const after = await linkState(request, token);
   const reason = after === "unknown" && before === "expired" ? "expired" : after === "usable" ? "unknown" : after;
@@ -125,7 +131,7 @@ export default function AuthConfirm({ loaderData, actionData }: Route.ComponentP
   // The link was asked for while connecting an AI: the way on is the browser window the AI opened, not a new login here.
   const aiConnection = actionData?.status === "invalid" ? "aiConnection" in actionData : "aiConnection" in loaderData;
   const resume = actionData?.status === "invalid" ? ("resume" in actionData ? actionData.resume : null) : ("resume" in loaderData ? loaderData.resume : null);
-  const heading = reason === "used" ? m.confirm_used_heading() : reason === "expired" ? m.confirm_expired_heading()
+  const heading = reason === "invitation_unavailable" ? m.shared_invite_unavailable() : reason === "used" ? m.confirm_used_heading() : reason === "expired" ? m.confirm_expired_heading()
     : reason === "other-browser" ? m.confirm_unusable_heading() : m.confirm_unknown_heading();
   // Disable the button while submitting. Tokens are single-use.
   // Also guard with a ref to block an immediate second click before state updates. Re-enable after completion when an error returns.
@@ -139,7 +145,7 @@ export default function AuthConfirm({ loaderData, actionData }: Route.ComponentP
     <GuestHeader />
     <main className="space-y-4">
       <h1 className="text-2xl font-bold">{invalid ? heading : m.confirm_title()}</h1>
-      {invalid ? (
+      {reason === "invitation_unavailable" ? <Link to="/login" className="underline">{m.invite_invalid_login()}</Link> : invalid ? (
         <>
           {reason === "used" ? <p>{m.confirm_used()}</p>
             : reason === "expired" ? <p>{aiConnection ? m.confirm_mcp_expired() : m.confirm_expired({ minutes: loaderData.minutes })}</p>

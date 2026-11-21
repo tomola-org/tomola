@@ -30,7 +30,7 @@ async function world() {
   return { db, a, b };
 }
 function browserCookie(id: string, now = new Date()) {
-  return invitationCookie(new Request(BASE), id, authSecret(), now).split(";")[0];
+  return invitationCookie(new Request(BASE), { kind: "individual", id }, authSecret(), now).split(";")[0];
 }
 async function register(db: Awaited<ReturnType<typeof createTestDb>>, email: string, cookie = "") {
   let token = "";
@@ -44,11 +44,11 @@ async function register(db: Awaited<ReturnType<typeof createTestDb>>, email: str
 
 it("signs an expiring, host-scoped cookie and rejects tampering and duplicate cookies", () => {
   const now = new Date(), id = "12345678-1234-1234-1234-123456789abc", request = new Request("https://example.com/invite/token");
-  const value = invitationCookie(request, id, "secret", now);
+  const value = invitationCookie(request, { kind: "individual", id }, "secret", now);
   expect(invitationCookieName(request)).toBe("__Host-tomola.invitation");
   expect(value).toContain("Path=/; HttpOnly; SameSite=Lax; Max-Age=3600; Secure");
   const read = (cookie: string, time = now) => readInvitationCookie(new Request(request.url, { headers: { cookie } }), "secret", time);
-  expect(read(value.split(";")[0])).toBe(id);
+  expect(read(value.split(";")[0])).toEqual({ kind: "individual", id });
   expect(read(value.replace(id, id.replace("1", "2")))).toBeNull();
   expect(read(value, new Date(now.getTime() + 3600000))).toBeNull();
   expect(read(`${value.split(";")[0]}; ${value.split(";")[0]}`)).toBeNull();

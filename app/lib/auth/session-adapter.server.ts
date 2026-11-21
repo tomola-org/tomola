@@ -5,6 +5,8 @@ import { PgTransaction } from "drizzle-orm/pg-core";
 import type { Db } from "~/lib/db/client.server";
 import * as schema from "~/lib/db/schema";
 import { RETENTION, DAY_MS } from "~/lib/retention";
+import { invitationRequired } from "./invitation-ref.server";
+import { redeemSignupInvitation, type SignupInvitationGrant } from "./signup-invitation.server";
 import { DCR_JWKS_DISCOVERY_ID } from "~/lib/mcp/cimd.server";
 
 type Adapter = ReturnType<ReturnType<typeof drizzleAdapter>>;
@@ -23,14 +25,16 @@ function allowed(value: unknown, model: string): boolean {
 
 // Enforce the lifetime at the authoritative read, including library middleware
 // that calls getSession internally instead of the app's session helper.
-function wrap<T extends Pick<Adapter, "create" | "findOne" | "findMany">>(adapter: T, db: Db, prepareRemoteKeys: boolean): T {
+function wrap<T extends Pick<Adapter, "create" | "findOne" | "findMany">>(adapter: T, db: Db, prepareRemoteKeys: boolean,
+  createUser: Adapter["create"], makeAdapter: (db: Db) => Adapter): T {
   return {
     ...adapter,
     create: query => {
+      if (query.model === "user") return createUser(query);
       // Roll back duplicate assertion inserts to a savepoint so the provider
       // can read the existing row and return invalid_client.
       if (query.model === "oauthClientAssertion" && is(db, PgTransaction)) {
-        return db.transaction(() => adapter.create(query));
+        return db.transaction(tx => makeAdapter(tx).create(query));
       }
       return adapter.create(query);
     },
@@ -50,10 +54,29 @@ function wrap<T extends Pick<Adapter, "create" | "findOne" | "findMany">>(adapte
   };
 }
 
-export function sessionAdapter(db: Db, prepareRemoteKeys = false): ReturnType<typeof drizzleAdapter> {
-  const factory = drizzleAdapter(db, { provider: "pg", schema });
+export function sessionAdapter(db: Db, prepareRemoteKeys = false, signupGrants = new Map<string, SignupInvitationGrant>()): ReturnType<typeof drizzleAdapter> {
   return options => {
-    const adapter = factory(options);
-    return { ...wrap(adapter, db, prepareRemoteKeys), transaction: callback => adapter.transaction(tx => callback(wrap(tx, db, prepareRemoteKeys))) };
+    const makeAdapter = (connection: Db) => drizzleAdapter(connection, { provider: "pg", schema })(options);
+    function forConnection(connection: Db) {
+      const adapter = makeAdapter(connection);
+      const createUser = async <T extends Record<string, unknown>, R = T>(query: {
+        model: string; data: Omit<T, "id">; select?: string[]; forceAllowId?: boolean;
+      }): Promise<R> => {
+        const { id, email } = query.data as { id?: string; email?: string };
+        const grant = id && signupGrants.get(id);
+        if (!id || !email || !grant) throw invitationRequired();
+        try {
+          return await connection.transaction(async tx => {
+            const created = await makeAdapter(tx).create<T, R>(query);
+            await redeemSignupInvitation(tx, id, email, grant);
+            return created;
+          });
+        } finally {
+          signupGrants.delete(id);
+        }
+      };
+      return wrap(adapter, connection, prepareRemoteKeys, createUser, makeAdapter);
+    }
+    return { ...forConnection(db), transaction: callback => db.transaction(tx => callback(forConnection(tx))) };
   };
 }

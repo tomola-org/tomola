@@ -15,6 +15,8 @@ import { hashMagicLinkToken, type SendMagicLink } from "./plugins";
 import { browserBindingIdentifier } from "./magic-link-browser.server";
 import { issueLoginCode, loginCodeIdentifier, loginCodeLinkIdentifier } from "./login-code.server";
 import { validBrowserNonce } from "./magic-link-browser.server";
+import { findSharedInvitation, sharedInvitationStatus } from "~/lib/shared-invitations.server";
+import { magicLinkInvitationIdentifier, parseInvitationRef } from "./invitation-ref.server";
 import { magicLinkNextIdentifier } from "./magic-link-next.server";
 
 // Email URLs point to the confirmation page /auth/confirm (app/routes/auth-confirm.tsx), rather than Better Auth's verification URL (/api/auth/magic-link/verify).
@@ -42,8 +44,9 @@ export async function isKnownAddress(db: Db, email: string, now: Date = new Date
 
 // A login screen asks for the outcome of its own request: it runs signInMagicLink inside this store, and the sender below records what happened and then waits for the
 // mail provider to accept the message. Calls made outside a store (invitations, scripts, tests) keep the unobserved behaviour: the response never depends on the recipient.
-export type MagicLinkOutcome = { result?: "sent" | "unregistered" | "later" };
+export type MagicLinkOutcome = { result?: "sent" | "unregistered" | "later" | "invitation_unavailable" };
 export const magicLinkOutcome = new AsyncLocalStorage<MagicLinkOutcome>();
+export const sharedInvitationContext = new AsyncLocalStorage<string | null>();
 
 // Emails currently being sent. Only tests and process shutdown wait for completion.
 const pending = new Set<Promise<void>>();
@@ -93,6 +96,8 @@ export function createMagicLinkSender(deps: {
   const addressHash = addressHasher(deps.secret);
   const tag = (email: string) => addressHash(email).slice(0, 8);
   return async ({ email: rawEmail, token, metadata }, ctx) => {
+    const sharedLinkId = sharedInvitationContext.getStore() ?? null;
+    const observed = magicLinkOutcome.getStore();
     const { db } = deps;
     const now = deps.now?.() ?? new Date();
     const email = normalizeEmail(rawEmail);
@@ -103,12 +108,23 @@ export function createMagicLinkSender(deps: {
     // browser's recipient-wide delivery budget by repeating rejected requests.
     const byEmail = byPair.allowed && (!byIp || byIp.allowed)
       ? await hitRateLimit(db, { key: `magic-link:email:${addressHash(email)}`, ...MAGIC_LINK_EMAIL_LIMIT, now }) : null;
-    const limited = !byPair.allowed || (byEmail && !byEmail.allowed) ? "address" : byIp && !byIp.allowed ? "ip" : null;
+    let limited = !byPair.allowed || (byEmail && !byEmail.allowed) ? "address" : byIp && !byIp.allowed ? "ip" : null;
 
-    const observed = magicLinkOutcome.getStore();
+    const sharedLink = sharedLinkId === null ? null : await findSharedInvitation(db, { id: sharedLinkId });
+    if (sharedLinkId !== null && !limited) {
+      const byShortWindow = await hitRateLimit(db, { key: `shared-invite:email-15m:${addressHash(email)}`, limit: 3, windowSeconds: 900, now });
+      const byLongWindow = byShortWindow.allowed
+        ? await hitRateLimit(db, { key: `shared-invite:email-1h:${addressHash(email)}`, limit: 6, windowSeconds: 3600, now }) : null;
+      if (!byShortWindow.allowed || !byLongWindow?.allowed) limited = "address";
+      else if (sharedLink) {
+        const byLink = await hitRateLimit(db, { key: `shared-invite:link:${sharedLinkId}`, limit: Math.min(200, Math.max(sharedLink.maxUses * 3, 30)), windowSeconds: 3600, now });
+        if (!byLink.allowed) limited = "link";
+      }
+    }
+
     // `keepCode` leaves the code rows in place. A held address keeps them so the code screen behaves exactly as it does for an ordinary invited address.
     const cleanup = async (keepCode = false) => {
-      const identifiers = [`magic-link:${hashMagicLinkToken(token)}`, browserBindingIdentifier(token), magicLinkNextIdentifier(token)];
+      const identifiers = [`magic-link:${hashMagicLinkToken(token)}`, browserBindingIdentifier(token), magicLinkNextIdentifier(token), magicLinkInvitationIdentifier(token)];
       if (observed && !keepCode && validBrowserNonce(metadata?.codeId)) identifiers.push(loginCodeIdentifier(metadata.codeId), loginCodeLinkIdentifier(token));
       try {
         await db.delete(verification).where(inArray(verification.identifier, identifiers));
@@ -124,10 +140,17 @@ export function createMagicLinkSender(deps: {
       return;
     }
 
+    if (sharedLinkId !== null && !isDeletedIdentity(undefined, email)
+      && (!sharedLink || sharedInvitationStatus(sharedLink, now) !== "valid")) {
+      await cleanup();
+      if (observed) observed.result = "invitation_unavailable";
+      return;
+    }
+
     // Prepare a code even for unknown/rate-limited recipients, before checking
     // eligibility. The requesting page receives no recipient-dependent result.
     const code = !isDeletedIdentity(undefined, email) && validBrowserNonce(metadata?.browserNonce) && validBrowserNonce(metadata?.codeId)
-      ? await issueLoginCode(db, { id: metadata.codeId, email, token, nonce: metadata.browserNonce, secret: deps.secret })
+      ? await issueLoginCode(db, { id: metadata.codeId, email, token, nonce: metadata.browserNonce, secret: deps.secret, invitation: parseInvitationRef(metadata?.invitationRef) })
       : null;
     let held = false;
     const job: Promise<void> = (async () => {
@@ -137,7 +160,7 @@ export function createMagicLinkSender(deps: {
       };
       try {
         if (limited) return await refuse(`rate limited (${limited})`);
-        if (isDeletedIdentity(undefined, email) || !(await (deps.isKnown ?? isKnownAddress)(db, email, now))) {
+        if (isDeletedIdentity(undefined, email) || (sharedLinkId === null && !(await (deps.isKnown ?? isKnownAddress)(db, email, now)))) {
           await refuse("no member or invitation");
           if (observed) observed.result = "unregistered";
           return;

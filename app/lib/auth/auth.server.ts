@@ -5,19 +5,19 @@ import { randomUUID } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware, getOAuthState, isAPIError } from "better-auth/api";
 import { googleLoginConfig } from "./google-config.server";
-import { finishGoogleFlow, prepareGoogleFlow, validateGoogleUser } from "./google-policy.server";
+import { finishGoogleFlow, googleInvitationRef, prepareGoogleFlow, validateGoogleUser } from "./google-policy.server";
 import { getDb, type Db } from "~/lib/db/client.server";
 import { sessionAdapter } from "./session-adapter.server";
 import { RETENTION } from "~/lib/retention";
 import { safeErrorText } from "~/lib/error-text.server";
-import { markInvitationUsed } from "~/lib/invitations.server";
 import { getMailer, type Mailer } from "~/lib/mail/mail.server";
 import { siteUrl } from "~/lib/site-url";
 import { createMagicLinkSender } from "./magic-link.server";
 import { authSecret } from "./secret.server";
 import { authPlugins, type SendMagicLink } from "./plugins";
-import { readInvitationCookie } from "./invitation-cookie.server";
-import { rememberSignupInvitation } from "~/lib/signup-village.server";
+import { hasSharedInvitationCookie, readInvitationCookie } from "./invitation-cookie.server";
+import { invitationRequired, magicLinkInvitationContext } from "./invitation-ref.server";
+import type { SignupInvitationGrant } from "./signup-invitation.server";
 import { sharedMetadataFetch, type MetadataFetch } from "~/lib/mcp/cimd.server";
 
 type AuthOptions = { baseURL: string; secret: string; sendMagicLink: SendMagicLink; metadataFetch?: MetadataFetch };
@@ -28,11 +28,12 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
   const google = googleLoginConfig();
   const prepareRemoteKeys = Boolean(preparedMetadataFetch);
   const metadataFetch = preparedMetadataFetch ?? sharedMetadataFetch(opts.metadataFetch);
+  const signupGrants = new Map<string, SignupInvitationGrant>();
   const auth = betterAuth({
     baseURL: opts.baseURL,
     secret: opts.secret,
     session: { expiresIn: RETENTION.sessionDays * 86400, updateAge: 86400 },
-    database: sessionAdapter(db, prepareRemoteKeys),
+    database: sessionAdapter(db, prepareRemoteKeys, signupGrants),
     socialProviders: google ? { google: {
       ...google, disableDefaultScope: true, scope: ["openid", "email"], includeGrantedScopes: false,
       disableIdTokenSignIn: true, overrideUserInfoOnSignIn: false,
@@ -48,7 +49,7 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
       await prepareGoogleFlow(ctx, !!google);
       if (ctx.path === "/sign-in/magic-link" && isDeletedIdentity(undefined, ctx.body?.email)) return ctx.json({ status: true });
     }), after: createAuthMiddleware(async ctx => {
-      finishGoogleFlow(ctx);
+      await finishGoogleFlow(ctx, opts.secret);
       if (ctx.path !== "/passkey/generate-authenticate-options") return;
       const result = ctx.context.returned;
       if (result && typeof result === "object" && "challenge" in result && typeof result.challenge === "string") return ctx.json({ ...result, userVerification: "required" });
@@ -84,26 +85,25 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
       },
       user: {
         create: {
-          // Do not create users for uninvited addresses. Atomically consume the invitation here before user creation (markInvitationUsed).
-          // If two concurrent creations use the same invitation, only one can mark it used; the other affects zero rows and fails.
-          // Choose the user id for used_by here and include it in the creation data (Better Auth uses the id returned by the hook as-is).
+          // The adapter takes this grant when inserting the user and redeems it
+          // in the same transaction. Request cookies cannot change a bound grant.
           before: async (newUser, context) => {
-            if (isDeletedIdentity(newUser.id, newUser.email)) throw new APIError("FORBIDDEN", { message: "Invalid account" });
             const id = randomUUID();
+            if (isDeletedIdentity(id, newUser.email)) throw invitationRequired();
             const request = context?.request ?? new Request(opts.baseURL, { headers: context?.headers ?? undefined });
             const googleSignup = context?.path === "/callback/:id" && context.params?.id === "google";
-            const bound = googleSignup ? (await getOAuthState())?.serverContext?.invitationId : null;
-            const invitationId = googleSignup ? (typeof bound === "string" ? bound : null) : readInvitationCookie(request, opts.secret);
-            const claimed = await markInvitationUsed(db, newUser.email, { usedBy: id, invitationId, requireInvitationId: googleSignup });
-            if (claimed === 0) {
-              throw new APIError("FORBIDDEN", { code: "INVITATION_REQUIRED", message: "invitation_required" });
+            const bound = magicLinkInvitationContext.getStore();
+            let grant: SignupInvitationGrant;
+            if (googleSignup || bound) {
+              const ref = googleSignup ? googleInvitationRef(await getOAuthState()) : bound?.ref;
+              if (!ref) throw invitationRequired();
+              grant = { ref, strict: true };
+            } else {
+              const cookie = readInvitationCookie(request, opts.secret);
+              if (!cookie && hasSharedInvitationCookie(request)) throw invitationRequired();
+              grant = { ref: cookie?.kind === "individual" ? cookie : null, strict: false };
             }
-            try { await rememberSignupInvitation(db, id, invitationId); }
-            catch (error) {
-              // The invitation is already consumed. Keep registration usable
-              // even when the optional village association cannot be saved.
-              console.warn("[auth] Signup invitation association failed", { invitationId }, safeErrorText(error));
-            }
+            signupGrants.set(id, grant);
             return { data: { ...newUser, id } };
           },
         },

@@ -2484,5 +2484,22 @@
   "metrics_article_reading_top_title": "閱讀量前 50 篇文章",
   "metrics_article_reading_village": "村",
   "metrics_article_reading_villages_help": "閱讀量按文章目前所屬的村統計。搬移文章時，過去的閱讀量也計入遷入的村。所有個人村合併為一列。",
-  "metrics_article_reading_villages_title": "按村統計閱讀量"
+  "metrics_article_reading_villages_title": "按村統計閱讀量",
+  "shared_invite_unavailable": "此邀請連結已達人數上限或已失效。",
+  "shared_invite_full": "此邀請連結已達人數上限。",
+  "shared_invite_signed_in": "你已使用 @{handle} 登入。",
+  "shared_invite_switch_account": "如要註冊其他帳號，請登出後重新開啟此連結。",
+  "shared_invites_create": "建立共用邀請連結",
+  "shared_invites_title": "共用邀請連結",
+  "shared_invites_label": "識別標籤",
+  "shared_invites_label_help": "此標籤僅供營運人員查看。",
+  "shared_invites_max_uses": "註冊人數上限",
+  "shared_invites_ttl": "有效天數",
+  "shared_invites_empty": "目前沒有共用邀請連結。",
+  "shared_invites_usage": "註冊人數",
+  "shared_invites_created_at": "建立時間",
+  "shared_invites_expires_at": "到期時間",
+  "shared_invites_status_full": "已達上限",
+  "shared_invites_rate_limited": "你已達到每天 10 個共用連結的上限。",
+  "shared_invites_invalid": "請輸入 1 至 80 個字元的標籤、1 至 100 人的註冊上限及 1 至 30 天的有效期。"
 }
