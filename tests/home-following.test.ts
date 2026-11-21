@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { DELETED_MEMBER_EMAIL, DELETED_MEMBER_ID } from "~/lib/deleted-member";
 import { entries, listSeen, notifications, profiles, user, villageFollows, villages } from "~/lib/db/schema";
-import { buildMemberExport } from "~/lib/exports.server";
+import { buildMemberExport, MEMBER_EXPORT_VERSION } from "~/lib/exports.server";
 import { setMemberFollow } from "~/lib/member-follows.server";
 import { personalVillage } from "~/lib/personal-villages.server";
 import { createApiToken } from "~/lib/tokens.server";
@@ -69,7 +69,7 @@ it("combines own, village and author topics and preserves access boundaries acro
     await followAuthor(true);
     expect(await h.db.select().from(notifications)).toEqual([]);
     const exported = await buildMemberExport(h.db, reader);
-    expect(exported.version).toBe(18);
+    expect(exported.version).toBe(MEMBER_EXPORT_VERSION);
     expect(exported.member_follows).toEqual([{ handle: "quartz_org", created_at: expect.any(String) }]);
     expect(exported.village_follows).toEqual(expect.arrayContaining([{ village: "quartz-organization", created_at: expect.any(String) }]));
     expect(exported.village_follows.some(row => row.village === "quartz-closed" || row.village.startsWith("@"))).toBe(false);

@@ -876,6 +876,20 @@
       "when": 1795256891714,
       "tag": "0124_entry_reading_counts",
       "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1795265594994,
+      "tag": "0125_mcp_post_workflows",
+      "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1795265595631,
+      "tag": "0126_village_proposals",
+      "breakpoints": true
     }
   ]
 }
