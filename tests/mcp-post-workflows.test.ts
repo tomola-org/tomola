@@ -72,7 +72,7 @@ describe("MCP post approvals through the browser routes", () => {
   it("keeps edit proposals private and binds the signed browser approval to the saved proposal", async () => {
     const { action, loader } = await import("~/routes/mcp-entry-edit");
     const topic = success(await createTopic(h.db, owner, { title: "Edit target", body: "Original source text.", lang: "en" }));
-    const made = success(await prepareEntryEdit(h.db, owner, client, topic.id, { body }));
+    const made = success(await prepareEntryEdit(h.db, owner, client, topic.id, { title: null, body }));
     const id = made.proposal.id;
     const path = `/mcp/entry-edits/${id}`;
     const params = { id: String(id) };
@@ -83,7 +83,7 @@ describe("MCP post approvals through the browser routes", () => {
     expect(await discardEntryEdit(h.db, owner, id, 1, otherClient)).toBe(false);
     expect(await h.outcome(() => loader(h.args(h.request(path, { as: "workflow_reader" }), params)))).toMatchObject({ status: 404 });
     expect(await h.outcome(() => loader(h.args(h.request(path, { as: "workflow_owner" }), params)))).toMatchObject({ value: { data: { content: { body }, current: { body: "Original source text." } } } });
-    const form = { intent: "apply", entryId: String(topic.id), entryKind: "topic", version: "1", title: "Edit target", body, lang: "en" };
+    const form = { intent: "apply", entryId: String(topic.id), entryKind: "topic", version: "1", body, lang: "en" };
     const request = (fields = form, headers?: Record<string, string>) => h.request(path, { as: "workflow_owner", form: fields, headers });
     const submit = (req: Request) => h.outcome(() => action(h.args(req, params)));
     expect(await submit(request(form, { origin: "https://other.example" }))).toMatchObject({ status: 403 });
@@ -99,7 +99,7 @@ describe("MCP post approvals through the browser routes", () => {
       expect(await h.db.select({ title: entryEditProposals.title, body: entryEditProposals.body, state: entryEditProposals.state }).from(entryEditProposals)
         .where(eq(entryEditProposals.id, id))).toEqual([{ title: null, body: null, state: "applied" }]);
       expect(await getClientEntryEditStatus(h.db, owner, client, id)).toMatchObject({ status: "applied", version: 2 });
-      expect(await h.db.select().from(entries).where(eq(entries.id, topic.id))).toMatchObject([{ body }]);
+      expect(await h.db.select().from(entries).where(eq(entries.id, topic.id))).toMatchObject([{ title: null, body }]);
       await deleteOwnEntry(h.db, owner, topic.id);
       expect(await getClientEntryEditStatus(h.db, owner, client, id)).toEqual({ id, version: 2, status: "applied" });
     } finally {

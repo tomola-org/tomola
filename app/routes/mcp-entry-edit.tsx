@@ -95,7 +95,7 @@ export default function EntryEditReview({ loaderData, actionData }: Route.Compon
         <input type="hidden" name="version" value={version} />
         <input type="hidden" name="entryId" value={current.id} />
         <input type="hidden" name="entryKind" value={current.kind} />
-        <input type="hidden" name="title" value={content.title ?? ""} />
+        {content.title !== null && <input type="hidden" name="title" value={content.title} />}
         <input type="hidden" name="body" value={content.body} />
         <input type="hidden" name="lang" value={content.lang} />
         {signingView && <input type="hidden" name="signingView" value={signingView} />}

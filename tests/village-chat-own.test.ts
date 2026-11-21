@@ -2,7 +2,7 @@ import { consentChatMembers } from "./helpers/chat-consent";
 import { afterEach, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { addMember, createTestDb } from "./helpers/db";
-import { chatMentions, chatMessages, chatSequences, notifications, profiles, villageMembers, villages } from "~/lib/db/schema";
+import { chatMentions, chatMessages, chatSequences, notifications, profiles, villageMembers, villageProposals, villages } from "~/lib/db/schema";
 import { buildMemberExport, MEMBER_EXPORT_VERSION } from "~/lib/exports.server";
 import { deleteOwnChat, exportOwnChat, ownChatPage, CHAT_OWN_PAGE_SIZE } from "~/lib/village-chat-own.server";
 import { CHAT_OWN_DELETE_LIMIT } from "~/lib/village-chat-delete.server";
@@ -120,19 +120,25 @@ it("exports only own undeleted chat data and preserves other fields when either 
   await w.db.update(chatMessages).set({ hiddenAt: new Date() }).where(eq(chatMessages.id, sent.id));
   await mutateChat(w.db, w.reader, w.village.slug!, "send", { body: "Other exported author" });
   const now = new Date("2026-10-14T00:00:00Z");
+  await w.db.insert(villageProposals).values({
+    userId: w.author, clientKey: "oauth:fixture", clientId: "fixture", clientName: "Fixture", villageId: w.village.id,
+    sourceVersion: "a".repeat(64), description: "Own village proposal", iconAction: "keep", createdAt: now,
+    expiresAt: new Date(now.getTime() + 86_400_000),
+  });
   const open = await buildMemberExport(w.db, w.author, { now });
   expect(open.version).toBe(MEMBER_EXPORT_VERSION);
   expect(open.chat_messages).toEqual([{ id: sent.id, village: w.village.slug, lang: "en", body: "Edited export text", created_at: expect.any(String), edited_at: expect.any(String), hidden: true }]);
-  const seen = w.seen; seen.length = 0;
+  expect(open.village_proposals).toEqual([expect.objectContaining({ village: w.village.slug, description: "Own village proposal" })]);
   for (const [v, c] of [["1", ""], ["", "1"], ["", ""]]) {
     vi.stubEnv("VILLAGES", v); vi.stubEnv("VILLAGE_CHAT", c);
+    w.seen.length = 0;
     const closed = await buildMemberExport(w.db, w.author, { now });
-    expect(closed).toEqual({ ...open, chat_messages: [] });
+    expect(closed).toEqual({ ...open, chat_messages: [], village_proposals: v === "1" ? open.village_proposals : [] });
     expect(await ownChatPage(w.db, w.author)).toMatchObject({ groups: [] });
     await expect(deleteOwnChat(w.db, w.author, sent.id)).rejects.toMatchObject({ code: "not_found" });
+    expect(w.seen.filter(q => /\b(?:from|join)\s+"?chat_[a-z_]+\b/i.test(q))).toEqual([]);
+    if (v !== "1") expect(w.seen.filter(q => /\b(?:from|join)\s+"?(?:villages|village_[a-z_]+)\b/i.test(q))).toEqual([]);
   }
-  // Village icons are exported whenever villages are open; only chat reads must stop with the chat.
-  expect(seen.filter(q => !/icon_media_id/.test(q) && /\b(?:from|join)\s+"?(?:chat_[a-z_]+|villages|village_members)"?/i.test(q))).toEqual([]);
   vi.stubEnv("VILLAGES", "1"); vi.stubEnv("VILLAGE_CHAT", "1");
   await deleteOwnChat(w.db, w.author, sent.id);
   expect((await buildMemberExport(w.db, w.author)).chat_messages).toEqual([]);

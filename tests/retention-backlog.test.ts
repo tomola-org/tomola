@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { expect, it } from "vitest";
-import { aiQuestionReports, appeals, chatAccessLog, chatMessages, chatReportSnapshots, chatTranslationReports, entries, invitationNoteTranslations, invitations, jobs, llmUsage, media, moderationActions, notifications, nushiAnswers, nushiReports, nushiRequests, pushDeliveries, pushSubscriptions, oauthClient, oauthRefreshToken, rateLimits, reports, session, signingChallenges, suspendedEmailHashes, user, verification, villageReportSnapshots, villages } from "~/lib/db/schema";
+import { aiQuestionReports, appeals, chatAccessLog, chatMessages, chatReportSnapshots, chatTranslationReports, entries, entryEditProposals, invitationNoteTranslations, invitations, jobs, llmUsage, media, moderationActions, notifications, nushiAnswers, nushiReports, nushiRequests, pushDeliveries, pushSubscriptions, oauthClient, oauthRefreshToken, rateLimits, reports, session, signingChallenges, suspendedEmailHashes, user, verification, villageProposals, villageReportSnapshots, villages } from "~/lib/db/schema";
 import { runMaintenanceCleanup } from "~/lib/jobs/maintenance-jobs.server";
 import { addMember, createTestDb } from "./helpers/db";
 import { auditRetentionTransactions, expectBoundedTransactions } from "./helpers/retention";
@@ -18,6 +18,16 @@ it("drains every maintenance category's 350-row backlog within one invocation", 
   await addMember(db, "a", "alice");
   const [village] = await db.insert(villages).values({ kind: "invite_public", name: "Retention fixture", slug: "retention-fixture" }).returning();
   const [topic] = await db.insert(entries).values({ kind: "topic", authorId: "a", lang: "en", body: "Retention source" }).returning();
+  const proposalCreated = new Date(OLD.getTime() - 86_400_000);
+  await db.insert(entryEditProposals).values(each(() => ({
+    authorId: "a", clientKey: "oauth:fixture", clientName: "Fixture", entryId: topic.id, entryVersion: "fixture",
+    body: "Expired edit proposal", lang: "en" as const, createdAt: proposalCreated, expiresAt: OLD,
+  })));
+  await db.insert(villageProposals).values(each(() => ({
+    userId: "a", clientKey: "oauth:fixture", clientId: "fixture", clientName: "Fixture", villageId: village.id,
+    sourceVersion: "a".repeat(64), description: "Expired village proposal", iconAction: "keep" as const,
+    createdAt: proposalCreated, expiresAt: OLD,
+  })));
   const [request] = await db.insert(nushiRequests).values({ entryId: topic.id, threadId: topic.id, villageId: village.id, revision: 1, sourceHash: "fixture", expiresAt: NOW }).returning();
   const [answer] = await db.insert(nushiAnswers).values({ requestId: request.id, answer: { status: "answered", readings: [], citations: [] }, scope: { posts: 0, from: null, to: null, truncated: false, materialLanguage: "en", answerLangCode: null, materialIndex: [] }, lang: "en", engine: "fake", model: "fake", promptVersion: "fixture" }).returning();
   for (const kind of ["error", "moderation"]) await db.insert(nushiReports).values(each(() => ({ answerId: answer.id, kind, reason: "other", evidence: kind === "error" ? { question: "Private question", answer: "Private answer" } : null, createdAt: OLD })));
@@ -67,7 +77,7 @@ it("drains every maintenance category's 350-row backlog within one invocation", 
   await db.insert(media).values(each(i => ({ id: villageImageId(i), avatar: true, villageId: village.id, bytes: Buffer.from("image"), mime: "image/webp", width: 256, height: 256, byteSize: 5, uploadedBy: "a", uploadedAt: OLD })));
   for (const [i, report] of villageReports.entries()) await db.update(reports).set({ iconMediaId: villageImageId(i) }).where(eq(reports.id, report.id));
   await db.insert(moderationActions).values(each(i => ({ action: "clear_village_icon", targetVillageId: village.id, iconMediaIdBefore: villageImageId(i), actorId: "a", reason: "other", createdAt: OLD })));
-  const tables = [nushiReports, aiQuestionReports, suspendedEmailHashes, rateLimits, verification, session, chatAccessLog, notifications, pushDeliveries, llmUsage, signingChallenges, jobs, villageReportSnapshots, chatReportSnapshots, chatTranslationReports, invitations, invitationNoteTranslations, oauthClient, oauthRefreshToken, moderationActions, reports, media];
+  const tables = [nushiReports, aiQuestionReports, suspendedEmailHashes, rateLimits, verification, session, chatAccessLog, notifications, pushDeliveries, llmUsage, signingChallenges, jobs, villageReportSnapshots, chatReportSnapshots, chatTranslationReports, invitations, invitationNoteTranslations, oauthClient, oauthRefreshToken, moderationActions, reports, media, entryEditProposals, villageProposals];
   await auditRetentionTransactions(db, tables);
 
   const results = await runMaintenanceCleanup(db, NOW);

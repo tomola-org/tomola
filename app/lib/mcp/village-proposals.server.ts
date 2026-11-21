@@ -233,6 +233,7 @@ export async function applyVillageProposal(db: Db, userId: string, id: string, v
 }
 
 export async function exportOwnVillageProposals(db: Db, userId: string, now: Date) {
+  if (!villagesEnabled()) return [];
   const rows = await db.select({ proposal: villageProposals, slug: villages.slug }).from(villageProposals)
     .innerJoin(villages, eq(villages.id, villageProposals.villageId))
     .where(and(eq(villageProposals.userId, userId), gt(villageProposals.expiresAt, now))).orderBy(villageProposals.createdAt, villageProposals.id);
