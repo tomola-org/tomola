@@ -42,9 +42,10 @@ test("native publication refusal keeps the saved version usable for the next pub
     await page.getByRole("button", { name: m.save_draft, exact: true }).click();
     await expect(page).toHaveURL(/\/drafts\/\d+(?:\?saved=1)?$/);
     // Native clients can submit invalid fields; exercise the server refusal, not HTML validation.
-    await page.locator("form").filter({ has: body(page) }).evaluate(form => form.setAttribute("novalidate", ""));
+    const form = page.locator("form", { has: body(page) });
+    await form.evaluate(element => element.setAttribute("novalidate", ""));
     await page.getByRole("button", { name: m.draft_publish, exact: true }).click();
-    await expect(page.locator('input[name="version"]')).toHaveValue("2");
+    await expect(form.locator('input[name="version"]')).toHaveValue("2");
     await expect(body(page)).toHaveValue("The saved question text.");
     await page.locator('input[name="title"]').fill("A question ready to publish");
     await page.getByRole("button", { name: m.draft_publish, exact: true }).click();

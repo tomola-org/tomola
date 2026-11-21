@@ -472,7 +472,8 @@ test("a conflict copy moves its device link and reopening the original cannot ov
 test("stale device versions do not write on opening, fork another editor, or reject immediate publication", async ({ page, browser, context }) => {
   await open(page, "version"); await body(page).fill("Initial draft"); await saved(page);
   const id = await draftId(page), path = `/drafts/${id}`;
-  await page.goto(path); await waitForFormReady(page.locator("form", { has: body(page) }));
+  const form = page.locator("form", { has: body(page) });
+  await page.goto(path); await waitForFormReady(form);
   await body(page).fill("Saved on this device"); await saved(page);
   const cloud = await browser.newContext({ storageState: await context.storageState() });
   try {
@@ -480,8 +481,8 @@ test("stale device versions do not write on opening, fork another editor, or rej
     await body(other).fill("Current cloud version"); await saved(other);
     let writes = 0;
     page.on("request", request => { if (request.method() === "POST" && new URL(request.url()).pathname === "/drafts/autosave") writes++; });
-    await page.reload(); await waitForFormReady(page.locator("form", { has: body(page) }));
-    await expect(page.locator('input[name="version"]')).toHaveValue("3");
+    await page.reload(); await waitForFormReady(form);
+    await expect(form.locator('input[name="version"]')).toHaveValue("3");
     await expect(page.locator("form[data-draft-recovery=ready]")).toHaveCount(1);
     await autosaveQuiet(page); expect(writes).toBe(0);
     expect(await (await page.request.get(`/drafts/autosave?draftId=${id}`)).json()).toEqual({ id, version: 3 });
@@ -494,8 +495,8 @@ test("stale device versions do not write on opening, fork another editor, or rej
     await body(other).fill("Continued on the other device"); await saved(other);
     await expect(status(other)).not.toContainText(en.draft_autosave_copied);
     expect(new URL(other.url()).pathname).toBe(path);
-    await page.goto(path); await waitForFormReady(page.locator("form", { has: body(page) }));
-    await expect(page.locator('input[name="version"]')).toHaveValue("4");
+    await page.goto(path); await waitForFormReady(form);
+    await expect(form.locator('input[name="version"]')).toHaveValue("4");
     await page.getByRole("button", { name: en.draft_publish, exact: true }).click();
     await expect(page).toHaveURL(/\/t\/\d+\?posted=/);
   } finally { await cloud.close(); }
