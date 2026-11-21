@@ -7,7 +7,7 @@ import { and, eq, inArray, is, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { getTableConfig, PgTable } from "drizzle-orm/pg-core";
 import type { Db, Tx } from "./db/client.server";
 import * as schema from "./db/schema";
-import { accountDeletions, chatAccessLog, chatMessages, chatReportSnapshots, chatTranslationReports, entries, entryMedia, entryMentionSnapshots, invitations, invitationNoteTranslations, jobs, media, memberFollows, memberSignatures, moderationActions, notifications, nushiReports, nushiSources, profiles, reports, suspendedEmailHashes, translations, user, verification, villageEvents, villageInvites, villageMembers, villages } from "./db/schema";
+import { accountDeletions, chatAccessLog, chatMessages, chatReportSnapshots, chatTranslationReports, entries, entryMedia, entryMentionSnapshots, invitations, invitationNoteTranslations, jobs, media, memberFollows, memberSignatures, moderationActions, notifications, nushiReports, nushiSources, profiles, reports, sharedInvitations, sharedInvitationUses, suspendedEmailHashes, translations, user, verification, villageEvents, villageInvites, villageMembers, villages } from "./db/schema";
 import { discardPaidTranslationCalls } from "./jobs/paid-translation.server";
 import { TRANSLATE_INVITATION_NOTE_JOB } from "./invitation-note.server";
 import { DELETED_MEMBER_EMAIL, DELETED_MEMBER_HANDLE, DELETED_MEMBER_ID, isDeletedIdentity } from "./deleted-member";
@@ -260,6 +260,9 @@ export async function completeAccountDeletion(db: Db, id: string, opts: { now?: 
       .where(sql`exists (select 1 from jsonb_each_text(${villageEvents.detail}) where value in (${userId}, ${profile.handle}))`);
     await tx.update(invitations).set({ email: null }).where(eq(invitations.email, account.email));
     await tx.update(invitations).set({ usedBy: null }).where(eq(invitations.usedBy, userId));
+    await tx.update(sharedInvitationUses).set({ usedBy: null }).where(eq(sharedInvitationUses.usedBy, userId));
+    await tx.update(sharedInvitations).set({ createdBy: null, revokedAt: sql`coalesce(${sharedInvitations.revokedAt}, ${now})` })
+      .where(eq(sharedInvitations.createdBy, userId));
     // Lock and erase the parent first. Concurrent note reads and final writes
     // must finish before deletion or observe the erased source after commit.
     const issued = await tx.update(invitations).set({ createdBy: null, note: null, noteLang: null }).where(eq(invitations.createdBy, userId)).returning({ id: invitations.id });

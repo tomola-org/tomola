@@ -403,6 +403,35 @@ export const invitations = pgTable(
     check("invitations_note_check", sql`(${t.note} IS NULL AND ${t.noteLang} IS NULL) OR (${t.note} IS NOT NULL AND ${t.noteLang} IS NOT NULL AND char_length(${t.note}) BETWEEN 1 AND 300)`)],
 );
 
+export const sharedInvitations = pgTable("shared_invitations", {
+  id: text("id").primaryKey(),
+  tokenHash: text("token_hash").notNull().unique(),
+  label: text("label").notNull(),
+  createdBy: text("created_by"),
+  villageId: text("village_id").references(() => villages.id, { onDelete: "set null" }),
+  maxUses: integer("max_uses").notNull(),
+  usedCount: integer("used_count").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+}, t => [
+  check("shared_invitations_label_check", sql`char_length(${t.label}) BETWEEN 1 AND 80`),
+  check("shared_invitations_max_uses_check", sql`${t.maxUses} BETWEEN 1 AND 100`),
+  check("shared_invitations_used_count_check", sql`${t.usedCount} BETWEEN 0 AND ${t.maxUses}`),
+  index("shared_invitations_created_by_idx").on(t.createdBy, t.createdAt),
+]);
+
+export const sharedInvitationUses = pgTable("shared_invitation_uses", {
+  id: text("id").primaryKey(),
+  linkId: text("link_id").notNull().references(() => sharedInvitations.id, { onDelete: "cascade" }),
+  usedBy: text("used_by"),
+  usedAt: timestamp("used_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  uniqueIndex("shared_invitation_uses_link_user_idx").on(t.linkId, t.usedBy).where(sql`${t.usedBy} is not null`),
+  index("shared_invitation_uses_used_by_idx").on(t.usedBy).where(sql`${t.usedBy} is not null`),
+  index("shared_invitation_uses_link_used_at_idx").on(t.linkId, t.usedAt),
+]);
+
 export const invitationNoteTranslations = pgTable("invitation_note_translations", {
   invitationId: text("invitation_id").notNull().references(() => invitations.id, { onDelete: "cascade" }),
   lang: text("lang").notNull(),
