@@ -9,6 +9,7 @@ import { captureScreenshot, enMessages as m, openUserMenu, openPlaces, state, us
 
 
 const name = (lang: string) => m.village_language_name.replace("{language}", new Intl.DisplayNames(["en"], { type: "language", languageDisplay: "standard" }).of(lang)!);
+const editorForm = (page: Page) => page.locator("form", { has: page.locator('textarea[name="body"]') });
 // The visible destination is named by its label and current village.
 const destination = (page: Page, label = m.field_village) => page.getByRole("button", { name: new RegExp(`^${label}\\b`) });
 async function select(page: Page, slug: string, label = m.field_village) {
@@ -183,7 +184,7 @@ test("a conflict copy retains its destination and saves do not reset an open des
   await expect(page.locator('textarea[name="body"]')).toHaveValue("My retained draft, with its own destination.");
   // Hold the real save response until the destination menu is open. The saved
   // version, unlike the earlier "Draft saved." notice, proves this save landed.
-  const version = page.locator('input[name="version"]');
+  const version = editorForm(page).locator('input[name="version"]');
   for (const chooseWhileSaving of [false, true]) {
     const savedTarget = chooseWhileSaving ? "ja" : "en";
     const nextTarget = chooseWhileSaving ? "en" : "ja";
@@ -226,11 +227,12 @@ test("a conflict copy retains its destination and saves do not reset an open des
 
 test("a stale browser publication adopts the latest contents and destination before publishing", async ({ page }) => {
   await useMember(page, "vtarget_stale@example.com", "/t/new");
-  await waitForFormReady(page.locator("form", { has: page.locator('textarea[name="body"]') }));
+  const form = editorForm(page);
+  await waitForFormReady(form);
   await page.locator('textarea[name="body"]').fill("Initial destination draft");
   await select(page, "en"); await saveEditorDraft(page);
   const path = new URL(page.url()).pathname;
-  const version = await page.locator('input[name="version"]').inputValue();
+  const version = await form.locator('input[name="version"]').inputValue();
   await page.route("**/drafts/autosave", route => route.abort());
   const changed = await page.request.post(path, { form: { intent: "save", version, body: "Latest draft in another village", lang: "en", village: "ja", villageExplicit: "1" }, headers: { Origin: state().baseURL } });
   expect(changed.status()).toBe(200);
@@ -240,9 +242,9 @@ test("a stale browser publication adopts the latest contents and destination bef
   expect((await posting).status()).toBe(409);
   await expect(page.locator('textarea[name="body"]')).toHaveValue("My retained unsaved wording");
   await page.getByRole("button", { name: m.ai_write_use_latest, exact: true }).click();
-  await waitForFormReady(page.locator("form", { has: page.locator('textarea[name="body"]') }));
+  await waitForFormReady(form);
   await expect(page.locator('textarea[name="body"]')).toHaveValue("Latest draft in another village");
-  await expect(page.locator('input[name="version"]')).toHaveValue(String(Number(version) + 1));
+  await expect(form.locator('input[name="version"]')).toHaveValue(String(Number(version) + 1));
   await openPostSettings(page);
   await expect(destination(page)).toContainText(name("ja"));
   await expect(page.locator('input[name="village"]')).toHaveValue("ja");
@@ -270,7 +272,7 @@ test("native forms review changed destinations and resubmit the saved draft vers
     await page.locator('input[name="villageDisplayed"]').evaluate(element => element.remove());
     await page.getByRole("button", { name: m.draft_publish, exact: true }).click();
     await expect(page.getByText(m.village_changed, { exact: true })).toBeVisible();
-    await expect(page.locator('input[name="version"]')).toHaveValue("2");
+    await expect(editorForm(page).locator('input[name="version"]')).toHaveValue("2");
     await expect(page.locator('input[name="villageDisplayed"]')).toHaveValue("ja");
     await page.getByRole("button", { name: m.draft_publish, exact: true }).click(); await placement(page, "ja");
   } finally { await context.close(); }
