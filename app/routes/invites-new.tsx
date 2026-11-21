@@ -49,12 +49,12 @@ export async function action({ request }: Route.ActionArgs) {
   const intent = form.get("intent");
   if (intent === "create-shared" || intent === "revoke-shared") {
     if (!operator) throw data("Not found", { status: 404 });
+    if (intent === "create-shared") await requireWriter(request);
     await requirePrivilegedWriteSession(request);
     if (intent === "revoke-shared") {
       if (!await revokeSharedInvitation(db, String(form.get("id") ?? ""), user.id)) throw data("Not found", { status: 404 });
       return { url: null, error: null };
     }
-    await requireWriter(request);
     const result = await createSharedInvitation(db, user, form);
     if (result.error === "forbidden") throw data("Not found", { status: 404 });
     if (result.error) return data({ url: null, error: null, sharedError: result.error }, { status: result.error === "rate_limited" ? 429 : 400, headers: headers() });

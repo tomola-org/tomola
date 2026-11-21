@@ -57,7 +57,7 @@ function wrap<T extends Pick<Adapter, "create" | "findOne" | "findMany">>(adapte
 export function sessionAdapter(db: Db, prepareRemoteKeys = false, signupGrants = new Map<string, SignupInvitationGrant>()): ReturnType<typeof drizzleAdapter> {
   return options => {
     const makeAdapter = (connection: Db) => drizzleAdapter(connection, { provider: "pg", schema })(options);
-    function forConnection(connection: Db) {
+    function forConnection(connection: Db): Adapter {
       const adapter = makeAdapter(connection);
       const createUser = async <T extends Record<string, unknown>, R = T>(query: {
         model: string; data: Omit<T, "id">; select?: string[]; forceAllowId?: boolean;
@@ -67,16 +67,18 @@ export function sessionAdapter(db: Db, prepareRemoteKeys = false, signupGrants =
         if (!id || !email || !grant) throw invitationRequired();
         try {
           return await connection.transaction(async tx => {
-            const created = await makeAdapter(tx).create<T, R>(query);
             await redeemSignupInvitation(tx, id, email, grant);
-            return created;
+            return await makeAdapter(tx).create<T, R>(query);
           });
         } finally {
           signupGrants.delete(id);
         }
       };
-      return wrap(adapter, connection, prepareRemoteKeys, createUser, makeAdapter);
+      return {
+        ...wrap(adapter, connection, prepareRemoteKeys, createUser, makeAdapter),
+        transaction: <R>(callback: (trx: Adapter) => Promise<R>) => connection.transaction(tx => callback(forConnection(tx))),
+      };
     }
-    return { ...forConnection(db), transaction: callback => db.transaction(tx => callback(forConnection(tx))) };
+    return forConnection(db);
   };
 }

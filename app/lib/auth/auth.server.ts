@@ -129,6 +129,10 @@ export function authMetadataFetch(auth: Auth): MetadataFetch {
   return sharedMetadataFetch(opts.metadataFetch);
 }
 
+export function authActiveSecret(auth: Auth): string {
+  return originalOptions.get(auth)?.secret ?? authSecret();
+}
+
 // The app's Better Auth instance: send magic-link email through the mail system after checking rate limits and the recipient (app/lib/auth/magic-link.server.ts).
 export function createAppAuth(
   db: Db,

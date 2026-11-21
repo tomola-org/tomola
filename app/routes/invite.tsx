@@ -1,7 +1,6 @@
 import { Field, FieldLabel } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
 import { parseEmail } from "~/lib/email";
-import { authSecret } from "~/lib/auth/secret.server";
 import { getSessionProfile } from "~/lib/auth/session.server";
 import { sameInvitation } from "~/lib/auth/invitation-ref.server";
 import { loginCodeInvitation } from "~/lib/auth/login-code.server";
@@ -25,7 +24,7 @@ import { loginCodeSent } from "~/lib/auth/login-code-response.server";
 import type { Route } from "./+types/invite";
 import { GuestHeader } from "~/components/guest-header";
 import { EntrySteps } from "~/components/entry-steps";
-import { getAuth, isOriginRejected, isRejectedInput } from "~/lib/auth/auth.server";
+import { authActiveSecret, getAuth, isOriginRejected, isRejectedInput } from "~/lib/auth/auth.server";
 import { getDb } from "~/lib/db/client.server";
 import { enforceIpLimit } from "~/lib/http/limits.server";
 import { findValidInvitationById, findValidInvitationByToken, invitationSenderHandle, matchesIndividualInvitationToken } from "~/lib/invitations.server";
@@ -59,7 +58,7 @@ async function pendingInvitation(request: Request) {
   const pending = pendingLoginCode(request);
   const remembered = rememberedLoginEmail(request);
   if (!pending || !remembered) return null;
-  const bound = await loginCodeInvitation(await getDb(), pending, remembered.email, authSecret());
+  const bound = await loginCodeInvitation(await getDb(), pending, remembered.email, authActiveSecret(await getAuth()));
   return bound ? { ...bound, email: remembered.email } : null;
 }
 
@@ -122,7 +121,8 @@ export async function action({ request, params }: Route.ActionArgs) {
   if (intent === "login-restart") return restartLoginCode(request);
   const previous = intent === "login-resend" || intent === "login-code" ? await pendingInvitation(request) : null;
   if (intent === "login-code") {
-    if (previous?.ref && params.token && !sameInvitation(previous.ref, screen?.ref ?? null)) {
+    if (previous?.ref && params.token && !sameInvitation(previous.ref, screen?.ref ?? null)
+      && !(previous.ref.kind === "individual" && await matchesIndividualInvitationToken(db, previous.ref.id, params.token))) {
       return { status: "code_invalid" as const };
     }
     return submitLoginCode(request, form, { invitation: true });
@@ -234,7 +234,7 @@ export default function Invite({ loaderData, actionData }: Route.ComponentProps)
         <Link to="/" className="underline">{m.confirm_home()}</Link>
       </> : unavailable ? <Link to="/login" className="underline">{m.invite_invalid_login()}</Link> : loaderData.codePending ? <>
         <p className="break-words">{m.invite_sent({ email: loaderData.codePending.email })}</p>
-        <LoginCodeForm key={loaderData.codePending.revision} state={loaderData.codePending} invalid={!!codeError} limited={actionData && "limited" in actionData ? actionData.limited : undefined} invitation />
+        <LoginCodeForm key={loaderData.codePending.revision} state={loaderData.codePending} invalid={!!codeError} limited={actionData && "limited" in actionData ? actionData.limited : undefined} resentNotice={sendError !== "later"} invitation />
         {actionData && "error" in actionData && actionData.error === "origin_mismatch" && <p className="text-destructive">{m.auth_origin_mismatch()}</p>}
       </> : !loaderData.valid ? <>
         {!loaderData.full && <p>{loaderData.reopenInvitation ? m.google_invitation_reopen() : m.invite_invalid()}</p>}

@@ -104,11 +104,7 @@ export function createMagicLinkSender(deps: {
     const ip = ctx?.headers ? clientAddress(ctx.headers) : ctx?.request ? clientAddress(ctx.request) : null;
     const byPair = await hitRateLimit(db, { key: `magic-link:email-ip:${addressHash(`${email}:${ip ?? "unknown"}`)}`, ...MAGIC_LINK_EMAIL_IP_LIMIT, now });
     const byIp = ip === null ? null : await hitRateLimit(db, { key: `magic-link:ip:${ip}`, ...MAGIC_LINK_IP_LIMIT, now });
-    // A source already denied by its own allowance cannot consume another
-    // browser's recipient-wide delivery budget by repeating rejected requests.
-    const byEmail = byPair.allowed && (!byIp || byIp.allowed)
-      ? await hitRateLimit(db, { key: `magic-link:email:${addressHash(email)}`, ...MAGIC_LINK_EMAIL_LIMIT, now }) : null;
-    let limited = !byPair.allowed || (byEmail && !byEmail.allowed) ? "address" : byIp && !byIp.allowed ? "ip" : null;
+    let limited = !byPair.allowed ? "address" : byIp && !byIp.allowed ? "ip" : null;
 
     const sharedLink = sharedLinkId === null ? null : await findSharedInvitation(db, { id: sharedLinkId });
     if (sharedLinkId !== null && !limited) {
@@ -121,6 +117,12 @@ export function createMagicLinkSender(deps: {
         if (!byLink.allowed) limited = "link";
       }
     }
+
+    // A source already denied by its own allowance cannot consume another
+    // browser's recipient-wide delivery budget by repeating rejected requests.
+    const byEmail = !limited
+      ? await hitRateLimit(db, { key: `magic-link:email:${addressHash(email)}`, ...MAGIC_LINK_EMAIL_LIMIT, now }) : null;
+    if (byEmail && !byEmail.allowed) limited = "address";
 
     // `keepCode` leaves the code rows in place. A held address keeps them so the code screen behaves exactly as it does for an ordinary invited address.
     const cleanup = async (keepCode = false) => {
