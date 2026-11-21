@@ -12,6 +12,8 @@ import { requireOperator } from "~/lib/auth/session.server";
 import { LANG_LABELS, type Area } from "~/lib/languages";
 import { getMetrics, observationWeeks } from "~/lib/metrics.server";
 import { POSITIONS } from "~/lib/stances";
+import { villageName } from "~/lib/village-name";
+import { villagesEnabled } from "~/lib/villages-enabled.server";
 import { m } from "~/paraglide/messages.js";
 import { Link } from "react-router";
 
@@ -27,7 +29,10 @@ export async function loader({ request }: Route.LoaderArgs) {
   const { db } = await requireOperator(request);
   const now = new Date();
   const metrics = await getMetrics(db, now);
-  const [history, qualitySignals, reading, articleReadings] = await Promise.all([evaluationHistory(db), translationQualitySignals(db), weeklyReadings(db, now), topArticleReadings(db, now)]);
+  const [history, qualitySignals, reading, articleReadings] = await Promise.all([
+    evaluationHistory(db), translationQualitySignals(db), weeklyReadings(db, now),
+    topArticleReadings(db, now, { includeVillages: villagesEnabled() }),
+  ]);
   const weeks = observationWeeks(now).map(day);
   // The distance points are grouped by pair of areas, one cell per week (the points come in order of the weeks).
   const pairs: Array<{ a: Area; b: Area; cells: Array<{ questions: number; people: number; sumDistance: number; mean: number | null }> }> = [];
@@ -42,7 +47,12 @@ export async function loader({ request }: Route.LoaderArgs) {
     questionReportsLabel: m.post_ask_reports_title(),
     qualitySignals,
     reading,
-    articleReadings,
+    articleReadings: {
+      ...articleReadings,
+      villages: articleReadings.villages?.map(({ systemLang, name, ...row }) => ({
+        ...row, name: row.kind === "shared" ? villageName({ language: systemLang, name }) : name,
+      })) ?? null,
+    },
     weeks,
     crossAreaReplyRate: metrics.crossAreaReplyRate.map((w) => ({ ...w, weekStart: day(w.weekStart) })),
     insightful: metrics.crossAreaInsightful.map((w) => ({ ...w, weekStart: day(w.weekStart) })),

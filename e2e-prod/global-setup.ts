@@ -93,7 +93,7 @@ export default async function globalSetup(config: FullConfig) {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       TOMOLA_OPERATOR_DIR: process.env.TOMOLA_OPERATOR_DIR || path.join(root, "tests/fixtures/operator"),
-      VILLAGES: "",
+      VILLAGES: process.env.E2E_VILLAGES === "1" ? "1" : "",
       GOOGLE_LOGIN: process.env.E2E_GOOGLE_LOGIN === "1" ? "1" : "",
       GOOGLE_CLIENT_ID: process.env.E2E_GOOGLE_LOGIN === "1" ? "browser-test-client" : "",
       GOOGLE_CLIENT_SECRET: process.env.E2E_GOOGLE_LOGIN === "1" ? "browser-test-secret" : "",

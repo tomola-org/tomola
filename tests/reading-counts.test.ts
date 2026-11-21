@@ -4,8 +4,12 @@ import { addMember, createTestDb } from "./helpers/db";
 import { createTopic, softDeleteEntry } from "~/lib/entries.server";
 import { PG_MODE } from "./helpers/pg-test";
 import { formatArticleReadingDisplay } from "~/lib/article-reading";
+import { ensurePersonalVillage } from "~/lib/personal-villages.server";
 import { entries, entryReadingCounts, entryReadingMetricState, profiles, readingCounts, villages } from "~/lib/db/schema";
-import { articleReadingDisplay, articleReadingQuery, countReading, topArticleReadings, topArticleReadingsQuery, weeklyReadings } from "~/lib/reading-counts.server";
+import {
+  articleReadingConcentrationQuery, articleReadingDisplay, articleReadingQuery, countReading,
+  topArticleReadings, topArticleReadingsQuery, villageArticleReadings, villageArticleReadingsQuery, weeklyReadings,
+} from "~/lib/reading-counts.server";
 
 const translated = { sourceLang: "ja", readLang: "en", isTranslated: true } as const;
 const original = { sourceLang: "ja", readLang: "ja", isTranslated: false } as const;
@@ -189,10 +193,102 @@ it("excludes hidden, deleted, private, zero-count and out-of-window articles bef
   ]);
   const result = await topArticleReadings(db, now);
   expect(result).toMatchObject({ start: day, end: "2026-11-21" });
+  expect(result.concentration).toEqual({
+    publicArticles: 56, readArticles: 52, totalBrowser: 58, topCount: 6, topBrowser: 12, topShare: 12 / 58,
+  });
   expect(result.articles).toHaveLength(50);
   expect(result.articles[0]).toMatchObject({ id: rankFirst.id, title: "Headline from body.", browser: 4, translated: 3, api: 4 });
   expect(result.articles[1]).toMatchObject({ id: rankSecond.id, browser: 4, translated: 0, mcp: 3 });
   expect(result.articles.slice(2).map(row => row.id)).toEqual(rest.slice(-48).reverse().map(row => row.id));
+});
+
+it("measures browser coverage and shows the top share starting at ten articles", async () => {
+  const db = await createTestDb();
+  const now = new Date("2026-11-21T23:59:59Z");
+  const metrics = async () => (await topArticleReadings(db, now)).concentration;
+  const withheld = { topCount: null, topBrowser: null, topShare: null };
+  expect(await metrics()).toEqual({ publicArticles: 0, readArticles: 0, totalBrowser: 0, ...withheld });
+
+  await addMember(db, "breadth_author", "breadth_author");
+  const topic = { kind: "topic", authorId: "breadth_author", lang: "en", title: "Breadth fixture", body: "An article." } as const;
+  const articles = await db.insert(entries).values(Array.from({ length: 15 }, () => topic)).returning({ id: entries.id });
+  const day = "2026-11-21";
+  const toolMethods = ["markdown", "api", "mcp", "ai_crawler"] as const;
+  await db.insert(entryReadingCounts).values(toolMethods.map((method, i) => ({
+    entryId: articles[i + 11].id, day, method, isTranslated: true, count: 99,
+  })));
+  expect(await metrics()).toEqual({ publicArticles: 15, readArticles: 0, totalBrowser: 0, ...withheld });
+
+  const browserCounts = [10, 10, 10, 3, 3, 3, 3, 3, 3, 4, 4].map((count, i) => ({
+    entryId: articles[i].id, day, method: "browser" as const, isTranslated: false, count,
+  }));
+  await db.insert(entryReadingCounts).values(browserCounts.slice(0, 9));
+  expect(await metrics()).toEqual({ publicArticles: 15, readArticles: 9, totalBrowser: 48, ...withheld });
+  await db.insert(entryReadingCounts).values(browserCounts[9]);
+  expect(await metrics()).toEqual({ publicArticles: 15, readArticles: 10, totalBrowser: 52, topCount: 1, topBrowser: 10, topShare: 10 / 52 });
+  await db.insert(entryReadingCounts).values(browserCounts[10]);
+  expect(await metrics()).toEqual({ publicArticles: 15, readArticles: 11, totalBrowser: 56, topCount: 2, topBrowser: 20, topShare: 20 / 56 });
+});
+
+it("groups reads by current public village and combines personal villages", async () => {
+  const db = await createTestDb();
+  const day = "2026-10-23";
+  const end = "2026-11-21";
+  const breakdown = () => villageArticleReadings(db, day, end);
+  const endedAt = new Date("2026-11-01T00:00:00Z");
+  await addMember(db, "village_reader_a", "village_reader_a");
+  await addMember(db, "village_reader_b", "village_reader_b");
+  const [open, invite, language, ended, closed, destination, unlisted] = await db.insert(villages).values([
+    { kind: "open", slug: "alpha", name: "Alpha" },
+    { kind: "invite_public", slug: "beta", name: "Beta" },
+    { kind: "open", slug: "ja", language: "ja", system: true },
+    { kind: "open", slug: "ended", name: "Ended", endedAt },
+    { kind: "closed", slug: "closed", name: "Closed" },
+    { kind: "open", slug: "destination", name: "Destination" },
+    { kind: "invite_public", name: "Unlisted" },
+  ]).returning();
+  const personalA = await ensurePersonalVillage(db, "village_reader_a");
+  const personalB = await ensurePersonalVillage(db, "village_reader_b");
+  const topic = { kind: "topic", authorId: "village_reader_a", lang: "en", body: "Village fixture." } as const;
+  const [original, translated, byInvite, byLanguage, inEnded, firstPersonal, otherPersonal, unassigned, stale, zero, ...excluded] =
+    await db.insert(entries).values([
+      { ...topic, villageId: open.id }, { ...topic, villageId: open.id },
+      { ...topic, villageId: invite.id }, { ...topic, villageId: language.id }, { ...topic, villageId: ended.id },
+      { ...topic, villageId: personalA.id }, { ...topic, villageId: personalB.id, authorId: "village_reader_b" },
+      topic, { ...topic, villageId: destination.id }, { ...topic, villageId: destination.id },
+      { ...topic, villageId: closed.id }, { ...topic, villageId: unlisted.id },
+      { ...topic, villageId: open.id, hiddenAt: endedAt }, { ...topic, villageId: open.id, deletedAt: endedAt },
+    ]).returning({ id: entries.id });
+  const reads = ({ id }: { id: number }, count: number, method: typeof entryReadingCounts.$inferInsert.method = "browser",
+    date = day, isTranslated = false) => ({ entryId: id, count, method, day: date, isTranslated });
+  await db.insert(entryReadingCounts).values([
+    reads(original, 5), reads(original, 1, "markdown", day, true), reads(original, 1, "api"),
+    reads(translated, 3, "browser", end, true), reads(byInvite, 8), reads(byInvite, 2, "mcp"),
+    reads(byLanguage, 8), reads(byLanguage, 3, "ai_crawler"), reads(inEnded, 6),
+    reads(firstPersonal, 4), reads(otherPersonal, 3),
+    reads(stale, 999, "browser", "2026-10-22"), reads(stale, 999, "browser", "2026-11-22"), reads(zero, 0),
+    ...excluded.map(entry => reads(entry, 999)),
+  ]);
+  const noReads = { translated: 0, markdown: 0, api: 0, mcp: 0, crawler: 0 };
+  const shared = { kind: "shared", systemLang: null, articles: 1, ...noReads };
+  const expected = [
+    { ...shared, slug: "ja", name: "", systemLang: "ja", browser: 8, crawler: 3 },
+    { ...shared, slug: "alpha", name: "Alpha", articles: 2, browser: 8, translated: 3, markdown: 1, api: 1 },
+    { ...shared, slug: "beta", name: "Beta", browser: 8, mcp: 2 },
+    { ...shared, kind: "personal", slug: null, name: "", articles: 2, browser: 7 },
+    { ...shared, slug: "ended", name: "Ended", browser: 6 },
+  ];
+  expect(await breakdown()).toEqual(expected);
+
+  await db.insert(entryReadingCounts).values(reads(unassigned, 12, "api"));
+  const none = { ...shared, kind: "none", slug: null, name: "", browser: 0, api: 12 };
+  expect(await breakdown()).toEqual([...expected, none]);
+  await db.update(entries).set({ villageId: destination.id }).where(eq(entries.id, original.id));
+  expect(await breakdown()).toEqual([
+    expected[0], expected[2], expected[3], expected[4],
+    { ...shared, slug: "destination", name: "Destination", browser: 5, markdown: 1, api: 1 },
+    { ...shared, slug: "alpha", name: "Alpha", browser: 3, translated: 3 }, none,
+  ]);
 });
 
 it.skipIf(!PG_MODE)("uses the article and recent-day indexes with selective filters on real PostgreSQL", { tags: ["postgres"] }, async () => {
@@ -205,13 +301,19 @@ it.skipIf(!PG_MODE)("uses the article and recent-day indexes with selective filt
     select id, date '2026-11-21' - age, 'browser', false, 1
     from ${entries} cross join generate_series(0, 729) as age`);
   await db.execute(sql`analyze ${entryReadingCounts}`);
-  for (const [query, index] of [
-    [articleReadingQuery(db, topics[0].id), "entry_reading_counts_entry_id_day_method_is_translated_pk"],
-    [topArticleReadingsQuery(db, "2026-10-23", "2026-11-21"), "entry_reading_counts_day_entry_idx"],
+  const start = "2026-10-23";
+  const end = "2026-11-21";
+  const recentIndex = "entry_reading_counts_day_entry_idx";
+  for (const [name, query, index] of [
+    ["Article reading display", articleReadingQuery(db, topics[0].id), "entry_reading_counts_entry_id_day_method_is_translated_pk"],
+    ["Top articles", topArticleReadingsQuery(db, start, end), recentIndex],
+    ["Reading concentration", articleReadingConcentrationQuery(db, start, end), recentIndex],
+    ["Reads by village", villageArticleReadingsQuery(db, start, end), recentIndex],
   ] as const) {
     const result = await db.execute(sql`explain (analyze, buffers) ${query.getSQL()}`) as { rows: { "QUERY PLAN": string }[] };
     const plan = result.rows.map(row => row["QUERY PLAN"]).join("\n");
-    expect(plan).toContain(index);
-    expect(plan).not.toMatch(/Seq Scan on entry_reading_counts/);
+    console.info(`${name}\n${plan}`);
+    expect(plan, name).toContain(index);
+    expect(plan, name).not.toMatch(/Seq Scan on entry_reading_counts/);
   }
 });

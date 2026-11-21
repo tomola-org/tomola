@@ -1,21 +1,23 @@
 import { eq, sql } from "drizzle-orm";
 import { afterEach, expect, it, vi } from "vitest";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
-import { entries, entryReadingCounts, profiles, rateLimits, readingCounts, translations } from "~/lib/db/schema";
+import { entries, entryReadingCounts, profiles, rateLimits, readingCounts, translations, user, villages } from "~/lib/db/schema";
 import { createTopic } from "~/lib/entries.server";
 import { loader as topicLoader } from "~/routes/topic";
 import { loader as adminLoader } from "~/routes/admin-metrics";
 import { EXCLUDED_RESIDENCE_COUNTRIES } from "./helpers/operator";
 import { DELETED_MEMBER_ID, DELETED_MEMBER_EMAIL } from "~/lib/deleted-member";
-import { user } from "~/lib/db/schema";
+import { ensurePersonalVillage } from "~/lib/personal-villages.server";
 import { signReadingMark } from "~/lib/reading-mark.server";
 import { action } from "~/routes/topic-translations";
 import { TRANSLATION_READ_CALLS_HOURLY } from "~/lib/translation-on-read.server";
 import { hitMemoryReadLimit, hitRateLimit } from "~/lib/rate-limit.server";
+import { jsonMessages } from "./helpers/messages-json";
+import { setTestMessages } from "./stubs/paraglide-messages";
 import { setTestLocale } from "./stubs/paraglide-runtime";
 
 let h: RouteHarness;
-afterEach(() => { h?.restore(); vi.restoreAllMocks(); vi.unstubAllEnvs(); setTestLocale("en"); });
+afterEach(() => { h?.restore(); vi.restoreAllMocks(); vi.unstubAllEnvs(); setTestLocale("en"); setTestMessages(); });
 async function seed() {
   h = await setupRouteHarness();
   vi.stubEnv("PUBLIC_READING", "1");
@@ -153,4 +155,35 @@ it("shares article counts only with eligible members and continues counting arti
   }
   await h.signIn("pendingread", { profile: false });
   expect(await h.outcome(() => article("pendingread"))).toMatchObject({ status: 302, location: "/onboarding" });
+});
+
+it("localizes shared village labels and only serializes anonymous village totals when enabled", async () => {
+  const id = await seed();
+  vi.stubEnv("OPERATOR_EMAILS", "readsource@example.com");
+  vi.stubEnv("VILLAGES", "1");
+  setTestLocale("ja");
+  setTestMessages(jsonMessages());
+  const [languageVillage] = await h.db.insert(villages).values({ kind: "open", slug: "ja", language: "ja", system: true }).returning();
+  await h.db.update(entries).set({ villageId: languageVillage.id }).where(eq(entries.id, id));
+  const personal = await ensurePersonalVillage(h.db, h.ids.readvisitor);
+  const [another] = await h.db.insert(entries).values({
+    kind: "topic", authorId: h.ids.readvisitor, villageId: personal.id, lang: "en", title: "Personal article", body: "Public fixture.",
+  }).returning({ id: entries.id });
+  const day = new Date().toISOString().slice(0, 10);
+  await h.db.insert(entryReadingCounts).values([
+    { entryId: id, day, method: "browser", isTranslated: true, count: 2 },
+    { entryId: another.id, day, method: "mcp", isTranslated: false, count: 1 },
+  ]);
+  const metrics = () => adminLoader(h.args(h.request("/admin/metrics", { as: "readsource" })));
+  const enabled = (await metrics()).articleReadings;
+  const counts = { articles: 1, browser: 0, translated: 0, markdown: 0, api: 0, mcp: 0, crawler: 0 };
+  expect(enabled.villages).toEqual([
+    { ...counts, kind: "shared", slug: "ja", name: "日本語のビレッジ", browser: 2, translated: 2 },
+    { ...counts, kind: "personal", slug: null, name: "", mcp: 1 },
+  ]);
+  expect(enabled.concentration).toEqual({ publicArticles: 2, readArticles: 1, totalBrowser: 2, topCount: null, topBrowser: null, topShare: null });
+  expect(enabled.articles.map(row => row.id)).toEqual([id, another.id]);
+
+  vi.stubEnv("VILLAGES", "0");
+  expect((await metrics()).articleReadings).toEqual({ ...enabled, villages: null });
 });

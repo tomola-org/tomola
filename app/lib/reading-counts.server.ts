@@ -1,5 +1,5 @@
 import { isEnabledLang } from "./enabled-langs.server";
-import { and, desc, eq, gt, gte, isNull, lte, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, isNull, lte, sql, type SQLWrapper } from "drizzle-orm";
 import type { Db, Tx } from "./db/client.server";
 import { entries, entryReadingCounts, entryReadingMetricState, profiles, readingCounts, villages } from "./db/schema";
 import type { SourceLang } from "./languages";
@@ -119,9 +119,13 @@ export async function articleReadingDisplay(db: Db, topicId: number) {
   return display && { ...display, since: row.startedAt && row.createdAt < row.startedAt ? utcDay(row.startedAt) : null };
 }
 
-export function topArticleReadingsQuery(db: Db, start: string, end: string) {
+const recentPositiveReads = (start: string, end: string) => and(
+  gte(entryReadingCounts.day, start), lte(entryReadingCounts.day, end), gt(entryReadingCounts.count, 0),
+);
+
+function recentArticleReadings(db: Db, start: string, end: string) {
   const methodTotal = (method: ReadingMethod) => sumArticleReads(eq(entryReadingCounts.method, method));
-  const counted = db.select({
+  return db.select({
     entryId: entryReadingCounts.entryId,
     total: sumArticleReads().as("total"),
     browser: sumArticleReads(browser).as("browser"),
@@ -131,8 +135,12 @@ export function topArticleReadingsQuery(db: Db, start: string, end: string) {
     mcp: methodTotal("mcp").as("mcp"),
     crawler: methodTotal("ai_crawler").as("crawler"),
   }).from(entryReadingCounts)
-    .where(and(gte(entryReadingCounts.day, start), lte(entryReadingCounts.day, end), gt(entryReadingCounts.count, 0)))
+    .where(recentPositiveReads(start, end))
     .groupBy(entryReadingCounts.entryId).as("recent");
+}
+
+export function topArticleReadingsQuery(db: Db, start: string, end: string) {
+  const counted = recentArticleReadings(db, start, end);
   return db.select({
     id: entries.id, title: entries.title,
     body: sql<string | null>`case when ${entries.title} is null then left(${entries.body}, 1024) end`,
@@ -142,16 +150,86 @@ export function topArticleReadingsQuery(db: Db, start: string, end: string) {
     .orderBy(desc(counted.browser), desc(counted.total), desc(entries.id)).limit(50);
 }
 
-export async function topArticleReadings(db: Db, now: Date) {
+export type ArticleReadingConcentration = {
+  publicArticles: number;
+  readArticles: number;
+  totalBrowser: number;
+  topCount: number | null;
+  topBrowser: number | null;
+  topShare: number | null;
+};
+
+export function articleReadingConcentrationQuery(db: Db, start: string, end: string) {
+  const counted = db.select({
+    entryId: entryReadingCounts.entryId,
+    browser: sumArticleReads().as("browser"),
+  }).from(entryReadingCounts).where(and(recentPositiveReads(start, end), browser))
+    .groupBy(entryReadingCounts.entryId).as("recent_browser");
+  const ranked = db.select({
+    browser: counted.browser,
+    rank: sql`row_number() over (order by ${counted.browser} desc, ${counted.entryId} desc)`.as("rank"),
+    topCount: sql<number | null>`case when count(*) over () >= 10 then ceil(count(*) over () / 10.0) end`.mapWith(Number).as("top_count"),
+  }).from(counted).innerJoin(entries, eq(entries.id, counted.entryId)).where(publicArticle()).as("ranked");
+  const totals = db.select({
+    readArticles: count().as("read_articles"),
+    totalBrowser: sql<number>`coalesce(sum(${ranked.browser}), 0)`.mapWith(Number).as("total_browser"),
+    topCount: sql<number | null>`max(${ranked.topCount})`.mapWith(Number).as("top_count"),
+    topBrowser: sql<number | null>`sum(${ranked.browser}) filter (where ${ranked.rank} <= ${ranked.topCount})`.mapWith(Number).as("top_browser"),
+  }).from(ranked).as("totals");
+  const publicArticles = db.select({ total: count() }).from(entries).where(publicArticle());
+  return db.select({
+    publicArticles: sql<number>`(${publicArticles})`.mapWith(Number),
+    readArticles: totals.readArticles,
+    totalBrowser: totals.totalBrowser,
+    topCount: totals.topCount,
+    topBrowser: totals.topBrowser,
+    topShare: sql<number | null>`${totals.topBrowser} / nullif(${totals.totalBrowser}, 0)`.mapWith(Number),
+  }).from(totals);
+}
+
+export async function articleReadingConcentration(db: Db, start: string, end: string): Promise<ArticleReadingConcentration> {
+  const [row] = await articleReadingConcentrationQuery(db, start, end);
+  return row;
+}
+
+export function villageArticleReadingsQuery(db: Db, start: string, end: string) {
+  const counted = recentArticleReadings(db, start, end);
+  // The public-place predicate leaves only shared villages, personal villages and unassigned articles.
+  const kind = sql<"shared" | "personal" | "none">`case
+    when ${entries.villageId} is null then 'none'
+    when ${villages.kind} = 'personal' then 'personal'
+    else 'shared' end`;
+  const name = sql<string>`coalesce(${villages.name}, '')`;
+  const sum = (column: SQLWrapper) => sql<number>`sum(${column})`.mapWith(Number);
+  return db.select({
+    kind, slug: villages.slug, name, systemLang: villages.language,
+    articles: count(),
+    browser: sum(counted.browser), translated: sum(counted.translated), markdown: sum(counted.markdown),
+    api: sum(counted.api), mcp: sum(counted.mcp), crawler: sum(counted.crawler),
+  }).from(counted).innerJoin(entries, eq(entries.id, counted.entryId))
+    .leftJoin(villages, eq(entries.villageId, villages.id)).where(publicArticle())
+    .groupBy(kind, villages.slug, name, villages.language)
+    .orderBy(desc(sum(counted.browser)), desc(sum(counted.total)), kind, villages.slug);
+}
+
+export function villageArticleReadings(db: Db, start: string, end: string) {
+  return villageArticleReadingsQuery(db, start, end).execute();
+}
+
+export type VillageArticleReadingRow = Awaited<ReturnType<typeof villageArticleReadings>>[number];
+
+export async function topArticleReadings(db: Db, now: Date, opts?: { includeVillages?: boolean }) {
   const start = utcDay(new Date(now.getTime() - 29 * 86400_000));
   const end = utcDay(now);
-  const [rows, [state]] = await Promise.all([
+  const [rows, [state], concentration, villages] = await Promise.all([
     topArticleReadingsQuery(db, start, end), db.select().from(entryReadingMetricState),
+    articleReadingConcentration(db, start, end),
+    opts?.includeVillages === false ? null : villageArticleReadings(db, start, end),
   ]);
   const articles = await Promise.all(rows.map(async ({ title, body, ...row }) => ({
     ...row, title: title ?? await headlineFromBody(body ?? ""),
   })));
-  return { start, end, startedAt: state?.startedAt ?? null, articles };
+  return { start, end, startedAt: state?.startedAt ?? null, articles, concentration, villages };
 }
 
 const sumReadingCounts = (filter = sql`true`) => sql<number>`coalesce(sum(${readingCounts.count}) filter (where ${filter}), 0)`.mapWith(Number);

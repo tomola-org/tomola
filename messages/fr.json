@@ -3189,5 +3189,16 @@
   "metrics_article_reading_period": "30 derniers jours, du {start} au {end} (UTC, inclus).",
   "metrics_article_reading_since": "La mesure par article a commencé le {at}.",
   "metrics_article_reading_title": "Lectures par article",
-  "metrics_article_reading_translated": "Traduction"
+  "metrics_article_reading_translated": "Traduction",
+  "metrics_article_reading_articles": "Articles",
+  "metrics_article_reading_concentration_share": "Part des {topCount} articles les plus lus sur les {readArticles} articles lus sur navigateur : {share} ({topBrowser} / {totalBrowser})",
+  "metrics_article_reading_concentration_title": "Concentration des lectures",
+  "metrics_article_reading_concentration_unavailable": "Nombre d’articles lus sur navigateur : {readArticles}. La part des 10 % les plus lus s’affiche à partir de 10 articles lus sur navigateur.",
+  "metrics_article_reading_coverage": "Articles lus sur navigateur parmi les articles actuellement publics : {coverage}",
+  "metrics_article_reading_no_village": "Sans village",
+  "metrics_article_reading_personal_villages": "Villages personnels",
+  "metrics_article_reading_top_title": "Les 50 articles les plus lus",
+  "metrics_article_reading_village": "Village",
+  "metrics_article_reading_villages_help": "Les lectures sont comptabilisées dans le village actuel de chaque article. Lorsqu’un article change de village, ses lectures passées sont aussi attribuées au nouveau village. Tous les villages personnels sont regroupés sur une seule ligne.",
+  "metrics_article_reading_villages_title": "Lectures par village"
 }

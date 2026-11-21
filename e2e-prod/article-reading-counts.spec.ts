@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ARTICLE_AUTHOR, ARTICLE_OPERATOR, ARTICLE_RESTRICTED, ARTICLE_SUSPENDED, ARTICLE_UNCONSENTED, articleCounts } from "./article-reading-fixtures";
-import { expect, state, test, useMember, waitForClientRoute } from "./helpers";
+import { expect, state, test, useMember, waitForClientRoute, watchCsp } from "./helpers";
 import { enMessages as en } from "../e2e/helpers";
 
 const fixture = () => JSON.parse(fs.readFileSync(path.join(state().dir, "article-reading.json"), "utf8")) as { id: number };
@@ -99,10 +99,27 @@ test("counts the initial translation and the client-side source switch once acro
   expect(await stats.text()).toContain(en.stats_reading_cumulative);
   await page.goto("/stats?lang=en");
   await expect(page.getByRole("heading", { level: 3, name: en.stats_reading_cumulative, exact: true })).toBeVisible();
-  await page.goto("/admin/metrics");
-  const operatorTable = page.getByRole("region", { name: en.metrics_article_reading_title });
+  const csp = await watchCsp(page);
+  const metrics = await page.goto("/admin/metrics");
+  expect(metrics?.headers()["content-security-policy"]).toContain("'nonce-");
+  await waitForClientRoute(page);
+  const region = page.getByRole("region", { name: en.metrics_article_reading_title });
+  await expect(region.getByRole("heading", { name: en.metrics_article_reading_concentration_title })).toBeVisible();
+  await expect(region.getByText(en.metrics_article_reading_coverage.split("{coverage}")[0])).toHaveText(/[\d,]+ \/ [\d,]+ \(\d+\.\d%\)$/);
+  const [withheldPrefix, withheldSuffix] = en.metrics_article_reading_concentration_unavailable.split("{readArticles}");
+  await expect(region.getByText(withheldPrefix)).toContainText(withheldSuffix);
+  const villages = region.getByRole("table", { name: en.metrics_article_reading_villages_title });
+  if (process.env.E2E_VILLAGES === "1") {
+    const personal = villages.getByRole("row").filter({ hasText: en.metrics_article_reading_personal_villages });
+    await expect(personal.getByRole("cell").nth(2)).toHaveText((articleCounts.total + 2).toLocaleString("en-US"));
+    await expect(personal.getByRole("link")).toHaveCount(0);
+  } else {
+    await expect(region.getByRole("heading", { name: en.metrics_article_reading_villages_title })).toHaveCount(0);
+  }
+  const operatorTable = region.getByRole("table", { name: en.metrics_article_reading_top_title });
   await expect(operatorTable.getByRole("columnheader", { name: en.metrics_article_reading_translated, exact: true })).toBeVisible();
   const row = operatorTable.getByRole("row").filter({ has: page.getByRole("link", { name: "Article count browser fixture" }) });
   await expect(row.getByRole("cell").nth(5)).toHaveText("3");
   await expect(row.getByRole("cell").nth(1)).toHaveText(String(articleCounts.total + 2));
+  expect(csp).toEqual({ violations: [], pageErrors: [], hydrationWarnings: [] });
 });

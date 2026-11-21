@@ -3004,5 +3004,16 @@
   "metrics_article_reading_period": "최근 30일간({start}~{end}, UTC, 양일 포함).",
   "metrics_article_reading_since": "글별 측정은 {at}에 시작되었습니다.",
   "metrics_article_reading_title": "글별 읽기 현황",
-  "metrics_article_reading_translated": "번역본"
+  "metrics_article_reading_translated": "번역본",
+  "metrics_article_reading_articles": "글 수",
+  "metrics_article_reading_concentration_share": "브라우저에서 읽힌 글 {readArticles}개 중 상위 {topCount}개 글의 비중: {share} ({topBrowser} / {totalBrowser}회)",
+  "metrics_article_reading_concentration_title": "읽기 집중도",
+  "metrics_article_reading_concentration_unavailable": "브라우저에서 읽힌 글은 {readArticles}개입니다. 읽힌 글이 10개 이상이면 상위 10% 글의 비중을 표시합니다.",
+  "metrics_article_reading_coverage": "현재 공개 글 중 브라우저에서 읽힌 글: {coverage}",
+  "metrics_article_reading_no_village": "빌리지 없음",
+  "metrics_article_reading_personal_villages": "개인 빌리지",
+  "metrics_article_reading_top_title": "읽기 수 상위 50개 글",
+  "metrics_article_reading_village": "빌리지",
+  "metrics_article_reading_villages_help": "각 글이 현재 속한 빌리지별로 집계합니다. 글을 옮기면 이전 읽기 수도 새 빌리지에 합산됩니다. 개인 빌리지는 모두 한 행으로 집계합니다.",
+  "metrics_article_reading_villages_title": "빌리지별 읽기"
 }

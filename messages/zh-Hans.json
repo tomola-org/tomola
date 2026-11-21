@@ -2473,5 +2473,16 @@
   "metrics_article_reading_period": "最近 30 天，{start} 至 {end}（UTC，含首尾）。",
   "metrics_article_reading_since": "按文章统计开始于 {at}。",
   "metrics_article_reading_title": "按文章统计阅读",
-  "metrics_article_reading_translated": "译文"
+  "metrics_article_reading_translated": "译文",
+  "metrics_article_reading_articles": "文章数",
+  "metrics_article_reading_concentration_share": "有浏览器阅读记录的 {readArticles} 篇文章中，阅读量最高的 {topCount} 篇占 {share}（{topBrowser} / {totalBrowser} 次）",
+  "metrics_article_reading_concentration_title": "阅读集中度",
+  "metrics_article_reading_concentration_unavailable": "有浏览器阅读记录的文章为 {readArticles} 篇。达到 10 篇后才显示阅读量最高的 10% 的文章所占的比例。",
+  "metrics_article_reading_coverage": "当前公开文章中有浏览器阅读记录的文章：{coverage}",
+  "metrics_article_reading_no_village": "无所属村",
+  "metrics_article_reading_personal_villages": "个人村",
+  "metrics_article_reading_top_title": "阅读量前 50 篇文章",
+  "metrics_article_reading_village": "村",
+  "metrics_article_reading_villages_help": "阅读量按文章当前所属的村统计。迁移文章时，过去的阅读量也计入迁入的村。所有个人村合并为一行。",
+  "metrics_article_reading_villages_title": "按村统计阅读量"
 }
