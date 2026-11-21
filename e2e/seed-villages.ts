@@ -1,10 +1,11 @@
 import { chatSourceHash } from "../app/lib/village-chat-translations.server";
+import { suspendedEmailHash } from "../app/lib/suspended-email.server";
 import { grantModerator } from "../app/lib/roles.server";
 import fs from "node:fs";
 import path from "node:path";
 import { eq, sql } from "drizzle-orm";
 import type { Db } from "../app/lib/db/client.server";
-import { chatConsents, chatMessages, chatMessageTranslations, chatReads, chatSequences, notifications, entries, nushiRequests, profiles, user, villageInvites, villageMembers, villages } from "../app/lib/db/schema";
+import { chatConsents, chatMessages, chatMessageTranslations, chatReads, chatSequences, notifications, entries, nushiRequests, profiles, suspendedEmailHashes, user, villageInvites, villageMembers, villages } from "../app/lib/db/schema";
 import { villagesEnabled } from "../app/lib/villages-enabled.server";
 import { createTopic, createReply } from "../app/lib/entries.server";
 import { setVote } from "../app/lib/votes.server";
@@ -54,6 +55,14 @@ export async function seedVillages(db: Db, dir: string) {
     if (!result.ok) throw new Error(result.error);
     await db.update(entries).set({ createdAt: sql`${entries.createdAt} - interval '730 days'`, lastActivityAt: sql`${entries.lastActivityAt} - interval '730 days'` }).where(eq(entries.id, result.id));
   }
+  for (const suffix of ["a", "b"]) {
+    const created = await createVillage(db, nushiMemberId("shared_link_operator"),
+      { slug: `shared-entry-${suffix}`, name: `Shared entry ${suffix.toUpperCase()}`, kind: "invite_public", description: "" });
+    if (!created.ok) throw new Error("Shared invitation village fixture creation failed");
+  }
+  await db.insert(suspendedEmailHashes).values({
+    hash: suspendedEmailHash("shared_link_held@example.com"), expiresAt: new Date(Date.now() + 86_400_000),
+  });
   for (const suffix of ["a", "b", "long"]) {
     const [owner] = await db.select({ id: profiles.userId }).from(profiles).where(eq(profiles.handle, `signup_entry_${suffix}`));
     const created = await createVillage(db, owner.id, { slug: `signup-entry-${suffix}`, name: `Signup entry ${suffix.toUpperCase()}`, kind: "invite_public", description: "" });

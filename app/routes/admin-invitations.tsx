@@ -1,3 +1,5 @@
+import { SharedInvitationsTable } from "~/components/shared-invitations-table";
+import { listSharedInvitations, revokeSharedInvitation } from "~/lib/shared-invitations.server";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
 import type { Route } from "./+types/admin-invitations";
 import { requireOperator } from "~/lib/auth/session.server";
@@ -18,13 +20,17 @@ export function headers() {
 export async function loader({ request }: Route.LoaderArgs) {
   const { db } = await requireOperator(request);
   const rows = await listInvitations(db, { limit: LIMIT });
-  return { rows, limit: LIMIT };
+  return { rows, sharedInvitations: await listSharedInvitations(db, { limit: LIMIT }), limit: LIMIT };
 }
 
 export async function action({ request }: Route.ActionArgs) {
   assertSameOrigin(request);
   const { db, user } = await requireOperator(request);
   const form = await request.formData();
+  if (form.get("intent") === "revoke-shared") {
+    if (!await revokeSharedInvitation(db, String(form.get("id") ?? ""))) throw data("Not found", { status: 404 });
+    return null;
+  }
   if (form.get("intent") !== "revoke") throw data("Bad request", { status: 400 });
   if (!await revokeInvitation(db, user.id, String(form.get("id") ?? ""), { operator: true })) throw data("Not found", { status: 404 });
   return null;
@@ -41,10 +47,14 @@ function statusLabel(status: InvitationStatus): string {
 const when = (d: Date) => d.toISOString().slice(0, 16).replace("T", " ");
 
 export default function AdminInvitations({ loaderData }: Route.ComponentProps) {
-  const { rows, limit } = loaderData;
+  const { rows, sharedInvitations, limit } = loaderData;
   return (
     <main className="space-y-4">
       <h1 className="text-2xl font-bold">{m.admin_invitations_title()}</h1>
+      <section className="space-y-2">
+        <h2 className="text-xl font-semibold">{m.shared_invites_title()}</h2>
+        <SharedInvitationsTable rows={sharedInvitations} admin />
+      </section>
       <p className="ui-help text-muted-foreground">{m.admin_invitations_intro()}</p>
       {rows.length === 0 ? (
         <p>{m.admin_invitations_empty()}</p>
