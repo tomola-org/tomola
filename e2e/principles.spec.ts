@@ -1,7 +1,8 @@
 import { captureScreenshot, enMessages, jaMessages  } from "./helpers";
 import { expect } from "@playwright/test";
 import { test } from "./editor-fixture";
-import { PRINCIPLES_LANGS, PRINCIPLES_LANG_LABELS } from "../app/lib/principles-languages";
+import { PRINCIPLES_LANGS, PRINCIPLES_LANG_LABELS, principlesLanguageGroups } from "../app/lib/principles-languages";
+import { LANGS } from "../app/lib/languages";
 import { readPrinciplesSource } from "../tests/helpers/principles-source";
 
 // The principles page and footer are public without logging in.
@@ -65,14 +66,12 @@ test("the public language list opens every language's own text and marks only th
     expect(await markdown.text()).toContain(source.markdown);
     for (const comment of source.comments) expect(await page.locator("article").textContent()).not.toContain(comment);
     await expect(nav.locator('[aria-current="page"]')).toHaveAttribute("lang", lang);
-    await expect(nav.locator("a")).toHaveCount(16);
+    await expect(nav.locator("a")).toHaveCount(PRINCIPLES_LANGS.length - 1);
     for (const other of PRINCIPLES_LANGS) await expect(nav).toContainText(PRINCIPLES_LANG_LABELS[other]);
     // The languages one can join in are on the line; the others are in a fold, open when the page is shown in one of them.
     await expect(nav.locator("ul")).toHaveCount(2);
-    const rows = [
-      ["ja", "de", "en", "fr", "ko", "th", "vi", "zh-Hans", "zh-Hant"],
-      ["ar", "bn", "es", "hi", "id", "pt", "ru", "ur"],
-    ];
+    const { open, readOnly } = principlesLanguageGroups(LANGS);
+    const rows = [open, readOnly];
     for (const [index, langs] of rows.entries()) expect(await nav.locator("ul").nth(index).locator("[lang]").evaluateAll(items => items.map(item => item.getAttribute("lang")))).toEqual(langs);
     expect(await nav.locator("details").evaluate(element => (element as HTMLDetailsElement).open)).toBe(rows[1].includes(lang));
     await expect(page.locator('link[rel="alternate"][type="text/markdown"]')).toHaveAttribute("href", lang === "ja" ? "/principles.md" : `/principles.md?lang=${lang}`);

@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { glossaryEntries, glossaryRevisions, profiles, session } from "~/lib/db/schema";
@@ -147,7 +148,7 @@ describe("/admin/glossary", () => {
     expect(await snapshot()).toBe(before);
   });
 
-  it("lists only the entries the moderator can edit, and offers only the languages of the moderator as the target of a new entry; an operator sees all, with nine languages", async () => {
+  it("lists only the entries the moderator can edit, and offers only the languages of the moderator as the target of a new entry; an operator sees every target language", async () => {
     const mine = (await load("jamod")).value as { entries: Array<{ term: string; targetLang: string }>; targetLangs: string[] };
     expect(mine.entries.map((e) => [e.term, e.targetLang])).toEqual([["alignment", "ja"]]);
     expect(mine.targetLangs).toEqual(["ja"]);
@@ -155,7 +156,7 @@ describe("/admin/glossary", () => {
     expect(hans.entries.map((e) => e.targetLang)).toEqual(["zh-Hans"]);
     const op = (await load("boss")).value as { entries: unknown[]; targetLangs: string[]; langs: string[] };
     expect(op.entries).toHaveLength(4);
-    expect(op.targetLangs).toHaveLength(9);
+    expect(op.targetLangs).toEqual(LANGS);
     // Filters remain within the assigned scope.
     expect(((await load("jamod", "?to=en")).value as { entries: unknown[] }).entries).toEqual([]);
     expect(((await load("boss", "?to=en&from=ja")).value as { entries: unknown[] }).entries).toHaveLength(1);

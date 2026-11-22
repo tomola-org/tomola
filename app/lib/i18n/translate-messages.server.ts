@@ -24,6 +24,8 @@ const STYLE: Partial<Record<Lang, string>> = {
   ko: "Use the polite formal style (합니다체) for sentences, and short noun or imperative forms for buttons and labels.",
   th: "Use a polite, neutral register. Do not put spaces inside a sentence except where Thai separates clauses.",
   vi: "Use a polite, neutral register and address the reader as 'bạn'.",
+  id: "Use a polite, neutral register and address the reader as Anda.",
+  es: "Use a polite, neutral register and address the reader as usted.",
 };
 
 function glossaryLine(hint: GlossaryHint): string {
@@ -34,7 +36,7 @@ function glossaryLine(hint: GlossaryHint): string {
 
 export function systemPrompt(locale: Lang, glossary: GlossaryHint[]): string {
   return [
-    `You are a professional software localizer. Translate the user-interface strings of "tomola", a multilingual discussion forum (members write in nine languages and read each other's posts through machine translation), from English into ${LANG_NAMES[locale]}.`,
+    `You are a professional software localizer. Translate the user-interface strings of "tomola", a multilingual discussion forum (members write in their own languages and read each other's posts through machine translation), from English into ${LANG_NAMES[locale]}.`,
     "",
     'The user message is a JSON object. Each key is a message id; each value has "en" (the English source, authoritative), "ja" (the product team\'s Japanese translation, only to disambiguate; never translate from it) and sometimes "fix" (what was wrong with your previous answer for that id: correct it).',
     "Return one JSON object that maps every id to its translation, and nothing else: no code fence, no commentary, no extra keys.",

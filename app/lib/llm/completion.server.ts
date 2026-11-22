@@ -36,6 +36,8 @@ const FAKE_PREFIX: Record<Lang, string> = {
   fr: "[fr] ",
   de: "[de] ",
   vi: "[vi] ",
+  id: "[id] ",
+  es: "[es] ",
   ko: "[ko] 번역: ",
   th: "[th] แปล: ",
   "zh-Hans": "[zh-Hans] 译：",

@@ -85,7 +85,7 @@ describe("createJsonCompleter: the engines of pnpm i18n:translate", () => {
     expect(() => createJsonCompleter("gemini", "m", {})).toThrow("GEMINI_API_KEY is not set");
     expect(() => createJsonCompleter("claude", "m", { GEMINI_API_KEY: "g" })).toThrow("ANTHROPIC_API_KEY is not set");
     const fake = createJsonCompleter("fake", "fake-i18n", {});
-    // Fake-engine translations pass input, newline, script and writing-system validation in all seven languages.
+    // Fake-engine translations pass input, newline, script and writing-system validation in every target language.
     for (const locale of TARGET_LOCALES) {
       const res = await translateMessages({ locale, source: en, reference: { $schema: "s", a: "あ", b: "い", c: "う" }, keys: ["a", "b", "c"], complete: fake.complete, glossary: glossaryFor(locale) });
       expect(res.failed, locale).toEqual({});

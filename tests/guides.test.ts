@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import { operatorDocument } from "~/lib/operator-config.server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DRAFT_ISSUE_KINDS } from "~/lib/draft-issues";
@@ -258,7 +259,6 @@ describe("/api/openapi.json", () => {
     const { llmsTxt } = await import("~/lib/api/guides.server");
     expect(doc.paths["/principles.md"].get.parameters[0].schema).toEqual({ $ref: "#/components/schemas/PrinciplesLang" });
     expect(doc.components.schemas.PrinciplesLang.enum).toEqual([...PRINCIPLES_LANGS]);
-    expect(doc.components.schemas.Lang.enum).toHaveLength(9);
     for (const lang of PRINCIPLES_LANGS) {
       expect(doc.paths["/principles.md"].get.description).toContain(`${lang}: ${expectedPrinciplesStatus(lang)}`);
       expect(llmsTxt()).toContain(`${lang}: ${expectedPrinciplesStatus(lang)}`);
@@ -282,7 +282,7 @@ describe("/api/openapi.json", () => {
     const refs = [...JSON.stringify(doc).matchAll(/"\$ref":"#\/components\/schemas\/(\w+)"/g)].map((m) => m[1]);
     expect(refs.length).toBeGreaterThan(0);
     for (const name of refs) expect(doc.components.schemas, name).toHaveProperty(name);
-    expect(doc.components.schemas.Lang.enum).toEqual(["ja", "en", "fr", "de", "zh-Hant", "zh-Hans", "ko", "th", "vi"]);
+    expect(doc.components.schemas.Lang.enum).toEqual(LANGS);
   });
 });
 
@@ -325,18 +325,17 @@ describe("the guides name the languages of the site (ENABLED_LANGS)", () => {
     }
   });
 
-  it("say that posts are translated into the enabled languages, which ?lang= and the draft lang accept, not into nine", async () => {
+  it("say that posts are translated into the enabled languages, which ?lang= and the draft lang accept", async () => {
     vi.stubEnv("ENABLED_LANGS", "ja,en");
     const llms = await (await get("/llms.txt")).text();
     expect(llms).toContain("available machine translations can be read in the languages of this site (ja, en)");
-    expect(llms).not.toContain("into nine languages");
     // each sentence about ?lang= appears once (a doubled sentence slipped in once)
     expect(llms.split("must be one of the languages of this site (ja, en); another tag is 400 `invalid_lang`").length - 1).toBe(1);
     expect(llms).toContain("must be one of the languages of this site (ja, en); another tag is 400 `invalid_lang`");
     expect(await (await get("/help/ai.md")).text()).toContain("`lang` (one of the languages of this site: ja, en;");
-    // the original of a post is readable whatever its language: /a/<lang>.md still names the nine tags of the software
-    expect(llms).toMatch(/\/a\/<lang>\.md \(<lang> is one of the nine tags the software supports: ja, en, fr, de, zh-Hant, zh-Hans, ko, th, vi/);
-    // the glossary arguments follow the same list, while the YAML download keeps all nine languages
+    // the original of a post is readable whatever its language: /a/<lang>.md still names all tags of the software
+    expect(llms).toContain(`/a/<lang>.md (<lang> is one of the tags the software supports: ${LANGS.join(", ")}`);
+    // the glossary arguments follow the same list, while the YAML download keeps all software languages
     expect(llms).toContain("each one of the languages of this site (ja, en; another tag is 400 `invalid_lang`");
     vi.stubEnv("ENABLED_LANGS", "ja,en,fr,zh-Hans,zh-Hant");
     expect(await (await get("/llms.txt")).text()).toContain("languages of this site (ja, en, fr, zh-Hant, zh-Hans)");

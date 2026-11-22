@@ -54,6 +54,7 @@ export function previewText(text: string, lang: string): string {
 // Open Graph locale names (language_TERRITORY) of the languages of the site.
 const OG_LOCALES: Record<Lang, string> = {
   ja: "ja_JP", en: "en_US", fr: "fr_FR", de: "de_DE", "zh-Hant": "zh_TW", "zh-Hans": "zh_CN", ko: "ko_KR", th: "th_TH", vi: "vi_VN",
+  id: "id_ID", es: "es_ES",
 };
 export function ogLocale(lang: string): string | null {
   return (OG_LOCALES as Record<string, string | undefined>)[lang] ?? null;

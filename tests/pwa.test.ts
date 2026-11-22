@@ -271,7 +271,7 @@ describe("the offline page (/offline)", () => {
     vi.unstubAllEnvs();
   });
 
-  it("has the three messages in every one of the nine languages", () => {
+  it("has the three messages in every software language", () => {
     for (const lang of LANGS) for (const key of ["offline_title", "offline_body", "offline_home"]) expect(messages(lang)[key] ?? messages("en")[key], `${lang} ${key}`).toBeTruthy();
   });
 

@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import { messageText } from "~/lib/i18n/messages";
 import fs from "node:fs";
 import path from "node:path";
@@ -342,7 +343,7 @@ describe("the glossary and ENABLED_LANGS", () => {
 
   it("with every language enabled (the development default) fr is a choice and ?to=fr filters", async () => {
     const d = await data("?to=fr");
-    expect(d.langs).toEqual(["ja", "en", "fr", "de", "zh-Hant", "zh-Hans", "ko", "th", "vi"]);
+    expect(d.langs).toEqual(LANGS);
     expect(d.query.to).toBe("fr");
     expect(d.items.map((e) => e.term)).toEqual(["alignment"]);
   });
@@ -360,7 +361,7 @@ describe("the glossary and ENABLED_LANGS", () => {
     expect((await mdBody("?to=ja")).items.map((i) => i.term)).toEqual(["alignment", "orphan"]);
   });
 
-  it("the YAML download and /admin/glossary keep the entries of all nine languages", async () => {
+  it("the YAML download and /admin/glossary keep the entries of all software languages", async () => {
     vi.stubEnv("ENABLED_LANGS", "ja,en");
     const res = (await (await import("~/routes/glossary-export")).loader(h.args(h.request("/glossary.yaml", { as: "aki" })))) as Response;
     expect(res.status).toBe(200);

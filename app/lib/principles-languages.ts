@@ -6,12 +6,10 @@ export type PrinciplesLang = (typeof PRINCIPLES_LANGS)[number];
 
 export const PRINCIPLES_LANG_LABELS: Record<PrinciplesLang, string> = {
   ...LANG_LABELS,
-  es: "Español",
   pt: "Português",
   ru: "Русский",
   ar: "العربية",
   hi: "हिन्दी",
-  id: "Bahasa Indonesia",
   bn: "বাংলা",
   ur: "اردو",
 };

@@ -5,7 +5,7 @@ import { chatParts } from "../village-chat";
 
 // Detect a translation that is a copy of the source, exactly or nearly (used by looksUntranslated).
 // Only the prose is compared (code, math, URLs and @mentions removed: proseOf). A translation is a near copy when
-// 1. script: it contains almost no letters of the target language's script (kana for ja, Hangul for ko, Thai for th, Han for zh, Latin for en/fr/de/vi),
+// 1. script: it contains almost no letters of the target language's script (kana for ja, Hangul for ko, Thai for th, Han for zh, Latin for other targets),
 //    for example a Traditional Chinese post "translated" into Japanese that comes back as mostly Chinese. Not used when the source is already mostly in that script;
 // 2. similarity: the character-bigram Dice coefficient to the source is very high (the source came back with a few words changed). Digits do not count, and when the
 //    source and the target use different scripts only the characters of the source's script count, so numbers, names and quotations that are the same on both sides
@@ -24,7 +24,7 @@ export const NEAR_COPY_SIMILARITY = 0.85;
 const NEAR_MIN_LENGTH_RATIO = 0.3;
 // Minimum share of the target script among the letters of the translation. Real Japanese has 40% or more kana (particles); 56 real en to ja translations
 // measured 0.58 at the lowest on 2026-10-01. Chinese measured 0.68 at the lowest. Hangul and Thai are nearly all of the letters, and Latin text is all Latin.
-export const TARGET_SCRIPT_MIN_SHARE: Partial<Record<Lang, number>> = { ja: 0.2, "zh-Hans": 0.2, "zh-Hant": 0.2, ko: 0.2, th: 0.2, en: 0.5, fr: 0.5, de: 0.5, vi: 0.5 };
+export const TARGET_SCRIPT_MIN_SHARE: Record<Lang, number> = { ja: 0.2, "zh-Hans": 0.2, "zh-Hant": 0.2, ko: 0.2, th: 0.2, en: 0.5, fr: 0.5, de: 0.5, vi: 0.5, id: 0.5, es: 0.5 };
 // The script check is skipped when the source itself has at least this share of the target script (a post declared as ja but written in English, translated to en).
 const SOURCE_ALREADY_IN_SCRIPT = 0.5;
 
@@ -39,6 +39,8 @@ const LANG_SCRIPT_CHARS: Record<Lang, RegExp> = {
   fr: /\p{scx=Latin}/u,
   de: /\p{scx=Latin}/u,
   vi: /\p{scx=Latin}/u,
+  id: /\p{scx=Latin}/u,
+  es: /\p{scx=Latin}/u,
 };
 const scriptName = (lang: Lang) => (lang === "ja" ? "ja" : lang === "zh-Hans" || lang === "zh-Hant" ? "han" : lang === "ko" ? "ko" : lang === "th" ? "th" : "latin");
 
@@ -52,6 +54,8 @@ const SCRIPT: Record<Lang, RegExp> = {
   fr: /\p{scx=Latin}/gu,
   de: /\p{scx=Latin}/gu,
   vi: /\p{scx=Latin}/gu,
+  id: /\p{scx=Latin}/gu,
+  es: /\p{scx=Latin}/gu,
 };
 
 const lettersOf = (s: string) => s.replace(/[^\p{L}]/gu, "");

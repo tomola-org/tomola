@@ -250,9 +250,8 @@ describe("the page: /principles", () => {
 describe("principles languages are independent of ENABLED_LANGS", () => {
   it("contains every software language without opening the additional editions as software languages", () => {
     expect(PRINCIPLES_LANGS).toHaveLength(17);
-    expect(LANGS).toHaveLength(9);
     for (const lang of LANGS) expect(PRINCIPLES_LANGS).toContain(lang);
-    for (const lang of ["es", "pt", "ru", "ar", "hi", "id", "bn", "ur"]) {
+    for (const lang of ["pt", "ru", "ar", "hi", "bn", "ur"]) {
       expect(LANGS).not.toContain(lang);
       expect(parseEnabledLangs(lang)).toMatchObject({ ok: false });
     }

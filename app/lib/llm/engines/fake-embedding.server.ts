@@ -5,7 +5,7 @@ import { EMBEDDING_CONCEPTS } from "./embedding-concepts";
 // Deterministic fake embedding engine for tests/keyless development. No network calls or cost.
 // Build vectors with enough similarity to test search behavior in place of a real model:
 //   1. Phrases from embedding-concepts.ts add CONCEPT_WEIGHT to their concept dimension (the first CONCEPT_SLOTS dimensions, in concept order).
-//      Equivalent phrases across nine languages share dimensions, creating cross-language similarity.
+//      Equivalent phrases across languages share dimensions, creating cross-language similarity.
 //   2. Other Intl.Segmenter words (lowercase, NFKC) add 1 to hashed dimensions after CONCEPT_SLOTS, with sign determined by one hash bit.
 //      These dimensions create similarity only between same-language texts sharing words.
 //   3. L2-normalize. Empty text gets a fixed unit vector so cosine distance is not NaN.

@@ -1,4 +1,4 @@
-import type { Lang } from "../app/lib/languages";
+import { LANGS, type Lang } from "../app/lib/languages";
 import { EARLY_MEMBERS } from "./early-members";
 
 export type SeedMember = { email: string; handle: string; homeArea: Lang | "other"; readLangs?: Lang[]; uiLocale: Lang };
@@ -157,7 +157,7 @@ export const MEMBER_FIXTURES: readonly SeedMember[] = [
   { email: "a11y_code@example.com", handle: "a11y_code", homeArea: "en", uiLocale: "en" },
   ...["member", "other"].map(name => ({ email: `cfix_${name}@example.com`, handle: `cfix_${name}`, homeArea: "en" as const, uiLocale: "en" as const })),
   ...["early", "native"].map(name => ({ email: `login_help_${name}@example.com`, handle: `login_help_${name}`, homeArea: "en" as const, uiLocale: "en" as const })),
-  ...(["ja", "en", "fr", "de", "zh-Hant", "zh-Hans", "ko", "th", "vi"] as const).map(lang => ({
+  ...LANGS.map(lang => ({
     email: `markdown_cjk_${lang.toLowerCase()}@example.com`, handle: `md_cjk_${lang.toLowerCase().replace("-", "_")}`, homeArea: lang, uiLocale: "en" as const,
   })),
   { email: "markdown_cjk_escaping@example.com", handle: "md_cjk_escaping", homeArea: "en", uiLocale: "en" },

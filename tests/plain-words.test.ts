@@ -7,7 +7,7 @@ import { jsonMessages } from "./helpers/messages-json";
 import { EntryFields } from "~/components/entry-fields";
 import { TranslationReportForm } from "~/components/translation-report-form";
 import { languageLabel } from "~/lib/language-label";
-import { LANGS } from "~/lib/languages";
+import { LANGS, languageName } from "~/lib/languages";
 import { hasLogoutNotice, logoutNoticeCookie, logoutNoticeMiddleware } from "~/lib/auth/logout-notice.server";
 import Invite, { meta as inviteMeta } from "~/routes/invite";
 import Login from "~/routes/login";
@@ -39,10 +39,10 @@ it("shows the invitation note on the same login form for every recipient", async
   expect(html).toContain(messageMarkup(m.login_invitation_short()));
   expect(html.indexOf(messageMarkup(m.login_invitation_short()))).toBeGreaterThan(html.indexOf(messageMarkup(m.login_submit())));
 });
-it("uses interface messages for all supported post languages", () => {
+it("localizes all supported post language names", () => {
   for (const locale of ["ja", "en"] as const) {
     setTestLocale(locale);
-    const expected = [m.language_name_ja(), m.language_name_en(), m.language_name_fr(), m.language_name_de(), m.language_name_zh_hant(), m.language_name_zh_hans(), m.language_name_ko(), m.language_name_th(), m.language_name_vi()];
+    const expected = [m.language_name_ja(), m.language_name_en(), m.language_name_fr(), m.language_name_de(), m.language_name_zh_hant(), m.language_name_zh_hans(), m.language_name_ko(), m.language_name_th(), m.language_name_vi(), languageName("id", locale), languageName("es", locale)];
     expect(LANGS.map(lang => languageLabel(lang))).toEqual(expected);
   }
 });

@@ -70,7 +70,7 @@ export default async function globalSetup(config: FullConfig) {
     MODERATION_AI_SPAM_ENABLED: "",
     MODERATION_AI_TRIAGE_ENABLED: "",
     MODERATION_AI_MODEL: "",
-    // Default to all nine languages; scoped language tests can explicitly override their server configuration.
+    // Default to all software languages; scoped language tests can explicitly override their server configuration.
     ENABLED_LANGS: process.env.E2E_ENABLED_LANGS ?? "",
     PREVIEW_LANGS: process.env.E2E_PREVIEW_LANGS ?? "",
     PUBLIC_READING: process.env.E2E_PUBLIC_READING ?? "",

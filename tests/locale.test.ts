@@ -229,7 +229,7 @@ describe("the custom strategy of Paraglide (custom-htmlLang)", () => {
   });
 
   it("the browser half reads <html lang> once, when it is defined, and does nothing on setLocale (the switcher writes the cookie)", () => {
-    for (const [rendered, expected] of [["fr", "fr"], ["zh-Hant", "zh-Hant"], ["ZH-HANS", "zh-Hans"], ["", undefined], ["mul", undefined], ["es", undefined]] as const) {
+    for (const [rendered, expected] of [["fr", "fr"], ["zh-Hant", "zh-Hant"], ["ZH-HANS", "zh-Hans"], ["id", "id"], ["es", "es"], ["", undefined], ["mul", undefined], ["pt", undefined]] as const) {
       const html = { lang: rendered as string };
       vi.stubGlobal("document", { documentElement: html });
       defineHtmlLangStrategy();

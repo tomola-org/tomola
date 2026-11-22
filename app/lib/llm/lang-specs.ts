@@ -29,6 +29,8 @@ export const TARGET_LANG_SPECS: Partial<Record<Lang, string>> = {
   ko: "Use the language's standard punctuation and quotation marks." + PRESERVE,
   th: "Use the language's standard punctuation and quotation marks." + PRESERVE,
   vi: "Use the language's standard punctuation and quotation marks." + PRESERVE,
+  id: "Use standard Indonesian punctuation and quotation marks." + PRESERVE,
+  es: "Use standard Spanish punctuation, including opening question and exclamation marks where required." + PRESERVE,
   "zh-Hant":
     "Write in Traditional Chinese characters, with the vocabulary, usage and orthography of Taiwan (for example 軟體, 網路, 資訊, 程式, 影片, 伺服器, 品質). This is not a script conversion of Simplified Chinese: choose the words and the punctuation that a reader in Taiwan would expect, and never leave Simplified characters or mainland-only terms (such as 软件, 网络, 信息) in the output. If the source is Simplified Chinese, it is still a translation, not a character-by-character conversion. Use full-width punctuation (，。：；！？（）「」)." + PRESERVE,
   "zh-Hans":

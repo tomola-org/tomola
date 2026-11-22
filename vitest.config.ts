@@ -88,7 +88,7 @@ export default defineConfig({
       CHAT_TRANSLATION_CONCURRENCY: "",
       ...priceOverrides,
       OPERATOR_EMAILS: "",
-      // Blank values mean "unset" (all nine languages), so the environment of the development machine cannot change the tests.
+      // Blank values mean "unset" (all software languages), so the environment of the development machine cannot change the tests.
       ENABLED_LANGS: "",
       PREVIEW_LANGS: "",
       PUBLIC_READING: "",

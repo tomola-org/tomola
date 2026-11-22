@@ -17,7 +17,7 @@ import { unverifiedKeys, unverifiedCounts, type VerificationChecks, type Verifie
 export type LangReview = { unverified: number; unverifiedPublic: number; missing: number; stale: number; verifiedAt?: string | null };
 export type ReviewCounts = Readonly<Record<string, LangReview>>;
 
-// The same counting as `pnpm i18n:translate --check --require-verified`, for all nine languages.
+// The same counting as `pnpm i18n:translate --check --require-verified`, for all software languages.
 export function computeReviewCounts(
   source: Messages,
   files: Record<string, Messages>,

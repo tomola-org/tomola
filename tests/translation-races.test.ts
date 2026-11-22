@@ -92,7 +92,7 @@ describe("a translation or a divergence is not saved for a post that was deleted
       },
     };
     const handlers = createTranslationHandlers({ llm: { engines: { primary: createFakeEngine(), secondary: createFakeEngine(), judge: hidingJudge }, env: { DIVERGENCE_SAMPLE_RATE: "1" } } });
-    // Divergence-measurement jobs follow the eight-language translation jobs; run them all.
+    // Divergence-measurement jobs follow the per-language translation jobs; run them all.
     await runDueJobs(db, handlers, { now: new Date(Date.now() + 3_600_000), logger: quiet, limit: 500 });
     expect(hidden).toBe(true);
     expect(await db.select().from(divergences).where(eq(divergences.entryId, topic))).toEqual([]);

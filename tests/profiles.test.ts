@@ -152,11 +152,11 @@ describe("profiles", () => {
   it("accepts empty read languages and rejects unknown languages and areas", async () => {
     const db = await createTestDb();
     await addUser(db, "u4");
-    expect(await createProfile(db, "u4", { ...valid, readLangs: ["es"] })).toEqual({
+    expect(await createProfile(db, "u4", { ...valid, readLangs: ["xx"] })).toEqual({
       ok: false,
       error: "invalid_langs",
     });
-    expect(await createProfile(db, "u4", { ...valid, homeArea: "es" })).toEqual({ ok: false, error: "invalid_area" });
+    expect(await createProfile(db, "u4", { ...valid, homeArea: "xx" })).toEqual({ ok: false, error: "invalid_area" });
     expect(await createProfile(db, "u4", { ...valid, readLangs: [] })).toMatchObject({ ok: true, profile: { readLangs: [] } });
   });
 

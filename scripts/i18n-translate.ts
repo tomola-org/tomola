@@ -1,7 +1,7 @@
 import { safeErrorText } from "../app/lib/error-text.server.ts";
-// Translate interface messages from messages/en.json with ja.json reference into fr, de, zh-Hant, zh-Hans, ko, th, vi through the project's LLM layer (Gemini/Claude).
+// Translate interface messages from messages/en.json with ja.json reference into the other software languages through the project's LLM layer (Gemini/Claude).
 //
-//   pnpm i18n:translate                  Add missing keys for each of seven languages to messages/<language>.json using the primary engine by default, selectable with --engine.
+//   pnpm i18n:translate                  Add missing keys for each target language to messages/<language>.json using the primary engine by default, selectable with --engine.
 //   pnpm i18n:translate --engine claude --model claude-sonnet-5-5   Choose engine (gemini | claude; fake needs --allow-fake) and model. Defaults: primary from TRANSLATION_PRIMARY or GEMINI_API_KEY availability; I18N_MODEL or engine default gemini-3.8-flash/claude-sonnet-5-5.
 //   pnpm i18n:translate --lang fr,de     Restrict languages.
 //   pnpm i18n:translate --limit 5        Translate only the first N missing keys per language for a trial.
@@ -141,7 +141,7 @@ export async function runI18n(argv: string[], env: NodeJS.ProcessEnv = process.e
   if (!source || !reference) throw new Error(`messages/${SOURCE_LOCALE}.json and messages/${REFERENCE_LOCALE}.json are required`);
 
   if (args.emitReviewCounts) {
-    // No API call. The same counting as --check --require-verified, for all nine languages; the production server checks ENABLED_LANGS against it.
+    // No API call. The same counting as --check --require-verified, for all software languages; the production server checks ENABLED_LANGS against it.
     const recorded = readHashes(messagesDir);
     if (recorded === null) throw new Error(`messages/${HASHES_FILE} is missing (create it once with pnpm i18n:translate --init-hashes)`);
     const files: Record<string, Messages> = {};

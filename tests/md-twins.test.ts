@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import { clearMemoryReadLimitsForTests, hitRateLimit, READ_RATE_LIMIT } from "~/lib/rate-limit.server";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -102,7 +103,7 @@ describe("GET /t/:id.md", () => {
       history: `http://localhost:5173/t/${topicId}/history.md`,
       // For translated languages, hide the old German primary but show the stale French human translation.
       translations: ["en", "fr"],
-      translations_pending: ["de", "zh-Hant", "zh-Hans", "ko", "th", "vi"],
+      translations_pending: LANGS.filter(lang => lang !== "ja" && lang !== "en" && lang !== "fr"),
       translations_unavailable: [],
       insightful: 2,
       insightful_langs: 2,
@@ -434,12 +435,17 @@ describe("Markdown twins of the lists", () => {
 
   afterEach(() => vi.unstubAllEnvs());
 
-  it("serves /a/:lang.md for the nine languages, 404 for an unknown one, and /home.md as one index of every language", async () => {
+  it("serves /a/:lang.md for software languages, 404 for an unknown one, and /home.md as one index of every language", async () => {
     const ja = parseBlocks(await text(await getMd(h, "/a/ja.md", { as: "hana" })));
     expect(ja[0].fm).toMatchObject({ type: "index", lang: "ja", canonical: "http://localhost:5173/a/ja" });
     expect(ja[0].body).toContain(`p-${topicId}`);
     const th = parseBlocks(await text(await getMd(h, "/a/th.txt", { as: "hana" })));
     expect(th[0].body).toContain("No topics.");
+    for (const lang of LANGS) {
+      const response = await getMd(h, `/a/${lang}.md`, { as: "hana" });
+      expect(response.status, lang).toBe(200);
+      expect(parseBlocks(await response.text())[0].fm).toMatchObject({ type: "index", lang });
+    }
     expect((await getMd(h, "/a/xx.md", { as: "hana" })).status).toBe(404);
     expect((await getMd(h, "/a/xx.md")).status).toBe(401);
     const home = parseBlocks(await text(await getMd(h, "/home.md", { as: "hana" })));

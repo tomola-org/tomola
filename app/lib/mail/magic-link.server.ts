@@ -3,7 +3,7 @@ import { isLocale, type Locale } from "~/paraglide/runtime.js";
 import { m } from "~/paraglide/messages.js";
 import type { MailMessage } from "./mail.server";
 
-// Plain-text magic-link mail in the requesting page's interface locale (en/ja).
+// Plain-text magic-link mail in the requesting page's interface locale.
 // Pass expiry minutes matching auth configuration expiresIn in app/lib/auth/plugins.ts.
 export const MAGIC_LINK_MINUTES = 15;
 

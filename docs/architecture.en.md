@@ -49,7 +49,7 @@ Writing, member pages, following lists, chat, and protected machine reads such a
 | Villages | Personal villages, language villages, member-created open and member-posting public villages, member-only chat |
 | Accounts and operation | Six-digit email codes, confirmation links and passkeys, invitations, member pages, roles, reports/moderation/appeals, personal export, account deletion, operator observations |
 
-Supported language tags are `ja`, `en`, `fr`, `de`, `zh-Hans`, `zh-Hant`, `ko`, `th`, and `vi`. Operators select which languages a site enables. A supported tag, generated text, and native-speaker review are different states.
+Supported language tags are `ja`, `en`, `fr`, `de`, `zh-Hans`, `zh-Hant`, `ko`, `th`, `vi`, `id`, and `es`. Operators select which languages a site enables. A supported tag, generated text, and native-speaker review are different states.
 
 Reading language can be chosen independently of interface language. An explicit page `?lang=` overrides the original-reading preference. Without it, readable-language preferences select originals; other posts use a translation selected from the member's translation-language preference and fallbacks. Only article headers offer a temporary reading-language menu; lists retain explicit language queries and carry them in their links. These choices preserve interface language. When that translation is unavailable, the original and a pending state are shown. The source language, translation state, and an action to return to the original remain visible.
 

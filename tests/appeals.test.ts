@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createAppeal, decideAppeal, getAppealableAction, listOpenAppeals } from "~/lib/appeals.server";
@@ -130,7 +131,7 @@ describe("upholding and overturning", () => {
     const actions = await db.select().from(moderationActions).orderBy(moderationActions.id);
     expect(actions.map((a) => [a.action, a.actorId, a.targetEntryId])).toEqual([["hide", "actor", reply], ["unhide", "reviewer", reply]]);
     expect(row.moderationActionId).toBe(actions[1].id);
-    expect((await db.select().from(jobs)).filter((j) => j.kind === "translate_entry").length).toBe(8);
+    expect((await db.select().from(jobs)).filter((j) => j.kind === "translate_entry").length).toBe(LANGS.length - 1);
     // Public record: reversal appears as a normal action, without the actor.
     expect((await listPublicLog(db)).entries.map((e) => e.action)).toEqual(["unhide", "hide"]);
     expect((await getThread(db, (await stateOf(db, reply)).threadId!))!.replies.find((r) => r.id === reply)!.visibility).toBe("visible");
@@ -156,7 +157,7 @@ describe("upholding and overturning", () => {
     expect(await stateOf(db, other)).toMatchObject({ deletedAt: null });
     expect((await db.select().from(entries).where(eq(entries.id, topic)))[0]).toMatchObject({ replyCount: 2, lastActivityAt: new Date("2026-10-01T00:10:00Z") });
     expect((await db.select().from(segments).where(eq(segments.entryId, other))).length).toBeGreaterThan(0);
-    expect((await db.select().from(jobs)).filter((j) => j.kind === "translate_entry").length).toBe(8);
+    expect((await db.select().from(jobs)).filter((j) => j.kind === "translate_entry").length).toBe(LANGS.length - 1);
     expect((await db.select().from(moderationActions).orderBy(moderationActions.id)).map((a) => a.action)).toEqual(["suspend", "unsuspend", "delete", "restore"]);
     expect((await getThread(db, topic))!.replies.map((r) => [r.id, r.visibility])).toEqual([[reply, "visible"], [other, "visible"]]);
   });

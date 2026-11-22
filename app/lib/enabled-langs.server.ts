@@ -3,7 +3,7 @@ import { loadReviewCounts } from "~/lib/i18n/review-counts.server";
 import type { ReviewCounts } from "~/lib/i18n/review-counts";
 import { defaultLangOf, LANGS, parseEnabledLangs, type Lang } from "~/lib/languages";
 
-// The languages the site uses (ENABLED_LANGS). The software supports nine languages, the site uses the enabled ones:
+// The languages the site uses (ENABLED_LANGS). The site selects them from the software languages:
 // translation jobs, shown translations, the interface language, the main/read/post language choices, and the language of mails are all limited to them.
 // Original text is always readable whatever the setting (core 1), and rows for a language that is not enabled are never deleted, only not used.
 // The variable is read on every call (a short string), so tests switch it with vi.stubEnv("ENABLED_LANGS", "ja,en").
@@ -59,7 +59,7 @@ export function enabledTargetLangs(from: string, env: Env = process.env): Lang[]
 }
 
 // Startup check (called from assertStartupConfig). A malformed value stops startup in every environment. Production must set ENABLED_LANGS explicitly:
-// a forgotten variable would open all nine languages and queue translation jobs for seven languages nobody reads.
+// a forgotten variable would open every software language and queue translation jobs for all of them.
 export function assertEnabledLangsConfigured(env: Env = process.env): void {
   const parsed = parseEnabledLangs(env.ENABLED_LANGS);
   if (!parsed.ok) throw new Error(parsed.error);
@@ -67,7 +67,7 @@ export function assertEnabledLangsConfigured(env: Env = process.env): void {
   if (isDevOrTest(env)) return;
   if (!env.ENABLED_LANGS?.trim()) {
     throw new Error(
-      `ENABLED_LANGS is required in production (a comma-separated list of: ${LANGS.join(", ")}). Without it all nine languages would open and translation jobs would be queued for all of them. ` +
+      `ENABLED_LANGS is required in production (a comma-separated list of: ${LANGS.join(", ")}). Without it all software languages would open and translation jobs would be queued for all of them. ` +
         "Start with ja,en; use PREVIEW_LANGS to explicitly open a fully translated language before native-speaker review (docs/deploy.md).",
     );
   }

@@ -1,6 +1,6 @@
 import { operatorConfig } from "~/lib/operator-config.server";
 import { enabledLangs, previewLangs } from "~/lib/enabled-langs.server";
-import { LANGS, languageName, type Lang } from "~/lib/languages";
+import { LANGS, isLang, languageName, type Lang } from "~/lib/languages";
 import { PRINCIPLES_LANGS, PRINCIPLES_LANG_LABELS, type PrinciplesLang } from "~/lib/principles-languages";
 import { m } from "~/paraglide/messages.js";
 
@@ -15,7 +15,7 @@ export function languagePage(locale: Lang, env: Env = process.env) {
     { id: "open", title: m.languages_open({}, options), tags: enabled.filter(lang => !preview.includes(lang)) },
     { id: "preview", title: m.languages_preview({}, options), tags: preview },
     { id: "supported", title: m.languages_supported({}, options), tags: LANGS.filter(lang => !enabled.includes(lang)) },
-    { id: "principles", title: m.languages_principles({}, options), tags: PRINCIPLES_LANGS.filter(lang => !(LANGS as readonly string[]).includes(lang)) },
+    { id: "principles", title: m.languages_principles({}, options), tags: PRINCIPLES_LANGS.filter(lang => !isLang(lang)) },
   ];
   const named = (tag: PrinciplesLang) => ({ tag, nativeName: PRINCIPLES_LANG_LABELS[tag], name: languageName(tag, locale, PRINCIPLES_LANG_LABELS[tag]) });
   const query = new URLSearchParams({ subject: m.languages_request_subject({}, options), body: m.languages_request_body({}, options) });

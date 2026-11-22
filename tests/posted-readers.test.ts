@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -33,7 +34,7 @@ it.each(["all", ""])("finishes the author's notice with eager scope %s, excludin
   const input = { id: row.id, lang: "ja" as const, sourceHash: row.sourceHash };
   const initial = await postedTranslationStates(db, input);
   expect(initial.every(item => item.state === "pending")).toBe(true);
-  expect(initial.map(item => item.lang)).toEqual(scope === "all" ? ["en", "fr", "de", "zh-Hant", "zh-Hans", "ko", "th", "vi"] : ["en"]);
+  expect(initial.map(item => item.lang)).toEqual(scope === "all" ? LANGS.filter(lang => lang !== "ja") : ["en"]);
   expect(render(initial)).toContain("posted_translating");
   await runDueJobs(db, createTranslationHandlers({ llm: { engines: { primary: createFakeEngine(), secondary: null, judge: null } } }), { now: new Date(Date.now() + 1000), limit: 100 });
   const finished = await postedTranslationStates(db, input);

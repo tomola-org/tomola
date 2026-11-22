@@ -1,6 +1,6 @@
 import { safeErrorText } from "../app/lib/error-text.server.ts";
 import { cliOutput, isMain, runCli, type CliOutput } from "./cli";
-// Glossary export: all active, undeleted rows in import-compatible YAML (pnpm glossary:import). Include all nine languages, row-oriented, in glossary-version order.
+// Glossary export: all active, undeleted rows in import-compatible YAML (pnpm glossary:import). Include all software languages, row-oriented, in glossary-version order.
 // Exclude timestamps, editors, and history, yielding identical bytes for identical content. Read history through /glossary or /glossary.md. No API calls.
 //
 //   pnpm glossary:export                    Write to stdout.

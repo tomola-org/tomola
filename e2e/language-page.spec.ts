@@ -22,6 +22,10 @@ for (const locale of ["ja", "en"]) {
         await waitForClientRoute(page);
         const messages = await uiMessages(page);
         await expect(page.getByRole("heading", { level: 1, name: messages.languages_title, exact: true })).toBeVisible();
+        for (const lang of ["id", "es"]) {
+          await expect(page.locator(`main bdi[lang="${lang}"]`)).toHaveCount(1);
+          await expect(page.locator(`section[aria-labelledby="languages-open"] bdi[lang="${lang}"]`)).toBeVisible();
+        }
         const mail = new URL((await page.getByRole("link", { name: messages.languages_request_email, exact: true }).getAttribute("href"))!);
         expect(mail.pathname).toBe(testOperator.contactEmail);
         expect(mail.searchParams.get("subject")).toBe(messages.languages_request_subject);

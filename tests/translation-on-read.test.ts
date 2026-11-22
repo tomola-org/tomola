@@ -20,6 +20,7 @@ import { translationPageInputs } from "~/lib/translation-on-read.server";
 import { BUDGET_RESERVATION_WAIT } from "~/lib/jobs/defer-reasons";
 import { translateDedupeKey } from "~/lib/translations.server";
 import { splitReplyBranch } from "~/lib/reply-branches";
+import { LANGS } from "~/lib/languages";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); setTestLocale("en"); });
 async function setup() {
@@ -50,7 +51,7 @@ it("translates every title but no unread body; active members use the existing d
   await addMember(db, "stopped", "scope_stopped");
   await db.update(profiles).set({ displayLang: "de", suspendedUntil: new Date(Date.now() + 86400000) }).where(eq(profiles.userId, "stopped"));
   const source = await topic(db);
-  expect((await queued(db, TITLE_TRANSLATE_JOB))).toHaveLength(8);
+  expect((await queued(db, TITLE_TRANSLATE_JOB))).toHaveLength(LANGS.length - 1);
   expect((await queued(db, TRANSLATE_JOB)).map(row => (row.payload as { lang: string }).lang)).toEqual(["en"]);
   await enqueueTranslations(db, { id: source.id, lang: source.lang, sourceHash: source.sourceHash! });
   expect(await queued(db, TRANSLATE_JOB)).toHaveLength(1);
@@ -103,7 +104,7 @@ it("keeps recipient languages for notification excerpts and daily mail when N is
 it("all queues every body, while edits under readers defer other languages and preserve their rows", async () => {
   const db = await setup(); vi.stubEnv("TRANSLATION_EAGER_SCOPE", "all");
   const source = await topic(db);
-  expect(await queued(db, TRANSLATE_JOB)).toHaveLength(8);
+  expect(await queued(db, TRANSLATE_JOB)).toHaveLength(LANGS.length - 1);
   await db.insert(translations).values({ entryId: source.id, field: "body", lang: "fr", kind: "primary", text: "Old", sourceHash: source.sourceHash });
   await db.delete(jobs);
   vi.stubEnv("TRANSLATION_EAGER_SCOPE", "readers");

@@ -1,7 +1,8 @@
 // Test replacement through the vitest.config.ts alias. Provide only what server code uses so it runs without generated app/paraglide/runtime.js;
 // change the UI language with setTestLocale, defaulting to en, and reset it after each test.
-// The same nine languages as actual Paraglide locales in project.inlang/settings.json; tests/i18n.test.ts checks consistency with LANGS and message files.
-export const locales = ["en", "ja", "fr", "de", "zh-Hant", "zh-Hans", "ko", "th", "vi"] as const;
+import { LANGS } from "~/lib/languages";
+
+export const locales = ["en", ...LANGS.filter(lang => lang !== "en")] as const;
 export type Locale = (typeof locales)[number];
 export const baseLocale: Locale = "en";
 // The Paraglide cookie name and expiry match generated app/paraglide/runtime.js.

@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import { quietLogger as quiet } from "./helpers/logger";
 import { renderToStaticMarkup } from "react-dom/server";
 import { and, eq } from "drizzle-orm";
@@ -52,7 +53,7 @@ describe("the sample rate (DIVERGENCE_SAMPLE_RATE)", () => {
 });
 
 describe("the selection", () => {
-  // Fixed fixture: post IDs 1–250, eight languages and two versions.
+  // Fixed fixture: post IDs 1–250, four languages and two versions.
   const keys = Array.from({ length: 250 }, (_, i) => i + 1).flatMap((entryId) => ["en", "fr", "zh-Hans", "th"].map((lang) => ({ entryId, lang, sourceHash: `hash-${entryId % 2}` })));
 
   it("selects nothing at rate 0 and everything at rate 1", () => {
@@ -122,13 +123,13 @@ describe("the translation jobs", () => {
     expect(await measured(off.db)).toEqual([]);
     expect(await off.db.select().from(divergences)).toHaveLength(0);
     // Primary translations proceed normally.
-    expect((await off.db.select().from(translations).where(and(eq(translations.kind, "primary"), eq(translations.field, "body")))).length).toBe((4 + 1) * 8);
+    expect((await off.db.select().from(translations).where(and(eq(translations.kind, "primary"), eq(translations.field, "body")))).length).toBe((4 + 1) * (LANGS.length - 1));
   });
 
   it("measures every topic translation at rate 1, and no reply", { timeout: 30_000 }, async () => {
     const all = await world(4);
     await run(all.db, fakeSet(), { DIVERGENCE_SAMPLE_RATE: "1" });
-    expect((await measured(all.db)).length).toBe(4 * 8);
+    expect((await measured(all.db)).length).toBe(4 * (LANGS.length - 1));
     // Measure topics only, not replies.
     expect((await measured(all.db)).some((k) => k.startsWith(`${all.replyId}:`))).toBe(false);
   });
@@ -138,7 +139,7 @@ describe("the translation jobs", () => {
     await run(w.db, fakeSet(), { DIVERGENCE_SAMPLE_RATE: "0.5" });
     const expected = await sampledOf(w.db, w.ids, 0.5);
     expect(expected.length).toBeGreaterThan(10);
-    expect(expected.length).toBeLessThan(6 * 8 - 10);
+    expect(expected.length).toBeLessThan(6 * (LANGS.length - 1) - 10);
     expect(await measured(w.db)).toEqual(expected);
     // Record measurement as a translation-row flag even without divergence. No divergence row because there is no DIVERGE signal.
     expect((await w.db.select().from(divergences)).length).toBe(0);
@@ -207,7 +208,7 @@ describe("the observation page counts", () => {
       expect(pair.measured, `${pair.from}>${pair.to}`).toBe(expected);
     }
     expect(stats.reduce((n, p) => n + p.measured, 0)).toBeGreaterThan(0);
-    expect(stats.reduce((n, p) => n + p.measured, 0)).toBeLessThan(4 * 8);
+    expect(stats.reduce((n, p) => n + p.measured, 0)).toBeLessThan(4 * (LANGS.length - 1));
   });
 });
 

@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import { spawnSync } from "node:child_process";
 import { runGlossaryImport } from "../scripts/import-glossary";
 import { runGlossaryExport } from "../scripts/export-glossary";
@@ -44,7 +45,7 @@ const rowsOf = async (db: Db): Promise<GlossaryRowData[]> =>
     .map((r) => ({ term: r.term, lang: r.lang as GlossaryRowData["lang"], targetLang: r.targetLang as GlossaryRowData["targetLang"], candidates: r.candidates, note: r.note, keepOriginal: r.keepOriginal, needsReview: r.needsReview }))
     .sort((a, b) => JSON.stringify([a.term, a.lang, a.targetLang]).localeCompare(JSON.stringify([b.term, b.lang, b.targetLang])));
 
-// A glossary whose rows changed independently after import: one-way rows, different candidates and notes, nine languages, UI-deleted rows and human-edited rows.
+// A glossary whose rows changed independently after import: one-way rows, different candidates and notes, multiple languages, UI-deleted rows and human-edited rows.
 async function messyGlossary(db: Db, actor: GlossaryActor = op) {
   const make = async (input: Parameters<typeof createGlossaryEntry>[2], now: Date) => {
     const res = await createGlossaryEntry(db, actor, input, { now });
@@ -59,6 +60,8 @@ async function messyGlossary(db: Db, actor: GlossaryActor = op) {
   await make({ term: "alignment", lang: "en", targetLang: "ko", candidates: "정렬" }, t(5));
   await make({ term: "alignment", lang: "en", targetLang: "th", candidates: "การจัดแนว" }, t(5));
   await make({ term: "alignment", lang: "en", targetLang: "vi", candidates: "căn chỉnh" }, t(5));
+  await make({ term: "alignment", lang: "en", targetLang: "id", candidates: "penyelarasan" }, t(5));
+  await make({ term: "alignment", lang: "en", targetLang: "es", candidates: "alineación" }, t(5));
   await make({ term: "alignment", lang: "en", targetLang: "zh-Hans", candidates: "对齐" }, t(5));
   await make({ term: "alignment", lang: "en", targetLang: "zh-Hant", candidates: "對齊\n校準" }, t(5));
   // Empty candidates with newlines, quotes and symbols in the note.
@@ -72,7 +75,7 @@ async function messyGlossary(db: Db, actor: GlossaryActor = op) {
 }
 
 describe("the export file", () => {
-  it("writes the active rows only (the deleted ones are left out), all nine languages, one row per line, in the order of the glossary version, with no time, editor or history in it", async () => {
+  it("writes the active rows only (the deleted ones are left out), all software languages, one row per line, in the order of the glossary version, with no time, editor or history in it", async () => {
     const db = await freshDb();
     await messyGlossary(db);
     const text = await buildGlossaryExport(db);
@@ -81,7 +84,7 @@ describe("the export file", () => {
     expect(parsed.file.entries).toEqual([]);
     expect(parsed.file.rows).toHaveLength((await loadAllGlossary(db)).length);
     expect(text).not.toContain("gone");
-    expect(new Set(parsed.file.rows.flatMap((r) => [r.lang, r.targetLang]))).toEqual(new Set(["en", "ja", "fr", "de", "ko", "th", "vi", "zh-Hans", "zh-Hant"]));
+    expect(new Set(parsed.file.rows.flatMap((r) => [r.lang, r.targetLang]))).toEqual(new Set(LANGS));
     // Order by term, source language, then target language, matching glossary version ordering.
     const keys = parsed.file.rows.map((r) => [r.term, r.lang, r.targetLang]);
     expect(keys).toEqual([...keys].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0)));
@@ -197,7 +200,7 @@ rows:
       const res = parseGlossaryFile(`format: tomola-glossary\nversion: 1\nrows:\n${rows}`);
       return res.ok ? [] : res.errors;
     };
-    expect(bad('  - {term: "a", lang: "xx", target_lang: "ja"}')).toEqual(['row 1 ("a"): unknown language "xx" in lang (one of ja, en, fr, de, zh-Hant, zh-Hans, ko, th, vi)']);
+    expect(bad('  - {term: "a", lang: "xx", target_lang: "ja"}')).toEqual([`row 1 ("a"): unknown language "xx" in lang (one of ${LANGS.join(", ")})`]);
     expect(bad('  - {term: "a", lang: "ja", target_lang: "ja"}')).toEqual(['row 1 ("a"): lang and target_lang are the same (ja)']);
     expect(bad('  - {term: " ", lang: "en", target_lang: "ja"}')).toEqual(['row 1 (" "): term must be 1 to 200 characters']);
     expect(bad('  - {term: "a", lang: "en", target_lang: "ja"}\n  - {term: "a", lang: "en", target_lang: "ja", note: "dup"}')).toEqual(['row 2 ("a"): the row "a" (en → ja) is written twice']);

@@ -46,11 +46,11 @@ it("pins post rules and their prompt version when Markdown instructions change",
   const text = LANGS.map(to => translationSystemPrompt(to === "ja" ? "en" : "ja", to, "fixed")).join("\n");
   expect({ post: PROMPT_VERSION, chat: CHAT_PROMPT_VERSION, shared: createHash("sha256").update(text).digest("hex") },
     "Review changed instructions and bump the affected prompt versions before updating this fingerprint.")
-    .toEqual({ post: "translate-v14", chat: "chat-v4", shared: "66140d79329868ed0ce21c164ed8702d065188e7af03da08e83421dcc80ca4ac" });
+    .toEqual({ post: "translate-v15", chat: "chat-v4", shared: "01b38c801e83df9a9e9dff239d03faba243a10586286fcc8bfdf18d6f29c6a2b" });
 });
 
 it("keeps the plain-text chat prompt unchanged by post-only Markdown rules", () => {
   const text = LANGS.map(to => translationSystemPrompt(to === "ja" ? "en" : "ja", to, "fixed", true)).join("\n");
   expect({ version: CHAT_PROMPT_VERSION, hash: createHash("sha256").update(text).digest("hex") })
-    .toEqual({ version: "chat-v4", hash: "340c63abe37ffc7d4e3f4ecc110e3d86f5209d4a14be5372544eac9e88a3a589" });
+    .toEqual({ version: "chat-v4", hash: "091ed2ddcc152c80bef84d51e79b8b22f95723c23c07a35a0e199057642c3a38" });
 });

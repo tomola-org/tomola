@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import { quietLogger as quiet } from "./helpers/logger";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -152,7 +153,7 @@ describe("hide, unhide and dismiss", () => {
     const res = await unhideEntry(db, a, { entryId: ja, reason: "other", note: "mistake" });
     if (!res.ok) throw new Error("unhide failed");
     expect((await db.select().from(entries).where(eq(entries.id, ja)))[0]).toMatchObject({ hiddenAt: null, moderationActionId: res.actionId });
-    expect((await db.select().from(jobs).where(eq(jobs.kind, "translate_entry"))).length).toBe(8);
+    expect((await db.select().from(jobs).where(eq(jobs.kind, "translate_entry"))).length).toBe(LANGS.length - 1);
     expect((await actionRows(db)).map((r) => r.action)).toEqual(["hide", "unhide"]);
   });
 
@@ -336,7 +337,7 @@ describe("a hidden post is left out of votes, translations and their context", (
     // The requeue tool also skips hidden posts.
     expect(await requeueTranslations(db)).toMatchObject({ entries: 0, translate: 0 });
     await unhideEntry(db, actor("jamod", JA_MOD), { entryId: t.id, reason: "other" });
-    expect((await db.select().from(jobs).where(eq(jobs.kind, "translate_entry"))).length).toBe(8);
+    expect((await db.select().from(jobs).where(eq(jobs.kind, "translate_entry"))).length).toBe(LANGS.length - 1);
     await runDueJobs(db, handlers, { now: new Date(), logger: quiet, limit: 100 });
     expect((await db.select().from(translations).where(eq(translations.entryId, t.id))).length).toBeGreaterThan(0);
   });

@@ -168,7 +168,7 @@ describe("a question's stances, by every route a member can read", () => {
         const text = await res.text();
         for (const fm of blocks(text)) expect(findBreakdowns(fm), `${as} ${path}`).toEqual([]);
         // No field named after a language-area tag may appear anywhere in front matter, including a line starting with "ja: 4".
-        expect(text, `${as} ${path}`).not.toMatch(/^\s+(?:ja|en|fr|de|zh-Hant|zh-Hans|ko|th|vi|other): \d+$/m);
+        expect(text, `${as} ${path}`).not.toMatch(new RegExp(`^\\s+(?:${AREAS.join("|")}): \\d+$`, "m"));
       }
       const stancesMd = await (await getMd(h, `/t/${q}/stances.md`, { as })).text();
       expect(blocks(stancesMd)[0]).toMatchObject({ type: "stances", total: 10, counts: { agree: 5, disagree: 3, neither: 2 }, total_langs: 4 });
@@ -476,7 +476,7 @@ describe("the member export and the operators' paths", () => {
   it("has no per-language count in the OpenAPI document (its examples and descriptions), /llms.txt and /help/ai.md", () => {
     expect(findBreakdowns(JSON.parse(JSON.stringify(openApiDocument())))).toEqual([]);
     for (const [name, text] of [["llms.txt", llmsTxt()], ["help/ai.md", helpAiMd()]] as const) {
-      expect(text, name).not.toMatch(/^\s*(?:ja|en|fr|de|zh-Hant|zh-Hans|ko|th|vi|other): \d+/m);
+      expect(text, name).not.toMatch(new RegExp(`^\\s*(?:${AREAS.join("|")}): \\d+`, "m"));
       expect(text, name).not.toMatch(/\b(?:agree|disagree|neither)_by_(?:area|lang)/);
     }
   });

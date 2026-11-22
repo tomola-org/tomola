@@ -9,8 +9,8 @@ import { itemText } from "~/lib/mail/notification.server";
 import { renderMarkdown } from "~/lib/markdown.server";
 import { cookieName } from "~/paraglide/runtime.js";
 
-// Nine UI languages: en/ja must be complete; other message files may omit untranslated keys, using the same checks as pnpm i18n:translate --check.
-// Real message text must support mail and fixed footnote labels in all nine languages.
+// Interface languages: en/ja must be complete; other message files may omit untranslated keys, using the same checks as pnpm i18n:translate --check.
+// Real message text must support mail and fixed footnote labels in all software languages.
 vi.mock("~/paraglide/messages.js", async () => ({ m: (await import("./helpers/messages-json")).jsonMessages() }));
 
 const read = (locale: string) => JSON.parse(fs.readFileSync(path.join(process.cwd(), "messages", `${locale}.json`), "utf8")) as Messages;
@@ -18,7 +18,7 @@ const files = Object.fromEntries(ALL_LOCALES.map((l) => [l, read(l)]));
 const keys = (m: Messages) => Object.keys(m).filter((k) => k !== "$schema");
 const hashesText = () => fs.readFileSync(path.join(process.cwd(), "messages", HASHES_FILE), "utf8");
 
-describe("the nine languages of the interface", () => {
+describe("the languages of the interface", () => {
   it("are the languages of the site: LANGS, the Paraglide locales and the files agree", () => {
     expect([...ALL_LOCALES].sort()).toEqual([...LANGS].sort());
     const settings = JSON.parse(fs.readFileSync(path.join(process.cwd(), "project.inlang", "settings.json"), "utf8")) as { baseLocale: string; locales: string[] };
@@ -41,7 +41,7 @@ describe("the nine languages of the interface", () => {
 
   it("keep the product name and the placeholders of the e-mails in every language", () => {
     for (const locale of ALL_LOCALES) {
-      expect(files[locale].site_name, locale).toBe("tomola");
+      expect(files[locale].site_name ?? files.en.site_name, locale).toBe("tomola");
       expect(placeholders(files[locale].mail_magic_link_body ?? files.en.mail_magic_link_body), locale).toEqual(["code", "minutes", "url"]);
     }
   });
@@ -73,7 +73,7 @@ describe("the nine languages of the interface", () => {
     }
   });
 
-  it("put the fixed footnote strings of the Markdown rendering in the language of the text, for all nine", async () => {
+  it("put the fixed footnote strings of the Markdown rendering in the language of the text, for every software language", async () => {
     const md = "text[^1]\n\n[^1]: note";
     for (const locale of ALL_LOCALES) {
       const html = (await renderMarkdown(md, { lang: locale }));

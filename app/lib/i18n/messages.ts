@@ -4,7 +4,7 @@ import { LANGS, type Lang } from "~/lib/languages";
 // `pnpm i18n:translate` runs the same validation before accepting engine translations. `pnpm i18n:translate --check` and tests/i18n.test.ts validate saved files
 // for missing/extra keys, mismatched inputs, empty values, newline counts, and missing preserved terms. Simple strings and cardinal-plural message-format variants are supported.
 
-// Authoritative source and reference language. Generate the other seven languages from the source.
+// Authoritative source and reference language. Generate the target languages from the source.
 export const SOURCE_LOCALE = "en";
 export const REFERENCE_LOCALE = "ja";
 // Engine-translated languages: LANGS minus source/reference languages.
@@ -50,6 +50,8 @@ const ALLOWED_SCRIPTS: Record<string, RegExp> = {
   fr: allow(""),
   de: allow(""),
   vi: allow(""),
+  id: allow(""),
+  es: allow(""),
   ja: allow("\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}"),
   "zh-Hant": allow("\\p{Script=Han}"),
   "zh-Hans": allow("\\p{Script=Han}"),

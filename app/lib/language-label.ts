@@ -1,4 +1,4 @@
-import type { Lang, SourceLang } from "~/lib/languages";
+import { languageName, type SourceLang } from "~/lib/languages";
 import { m } from "~/paraglide/messages.js";
 import { getLocale, type Locale } from "~/paraglide/runtime.js";
 
@@ -16,6 +16,7 @@ export function localizedLanguageLabel(lang: SourceLang, locale: Locale, langCod
     }
     return m.source_language_other({}, { locale });
   }
+  if (lang === "id" || lang === "es") return languageName(lang, locale);
   const labels = {
     ja: m.language_name_ja, en: m.language_name_en, fr: m.language_name_fr,
     de: m.language_name_de, "zh-Hant": m.language_name_zh_hant,

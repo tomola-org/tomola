@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { AREAS, LANGS, LANG_LABELS, isArea, isLang } from "~/lib/languages";
 
 describe("languages", () => {
-  it("has exactly the nine language tags", () => {
-    expect(LANGS).toEqual(["ja", "en", "fr", "de", "zh-Hant", "zh-Hans", "ko", "th", "vi"]);
+  it("has the eleven language tags in order", () => {
+    expect(LANGS).toEqual(["ja", "en", "fr", "de", "zh-Hant", "zh-Hans", "ko", "th", "vi", "id", "es"]);
   });
 
   it("areas are the languages plus other", () => {
@@ -20,7 +20,9 @@ describe("languages", () => {
   it("recognizes areas", () => {
     expect(isArea("other")).toBe(true);
     expect(isArea("th")).toBe(true);
-    expect(isArea("es")).toBe(false);
+    expect(isArea("id")).toBe(true);
+    expect(isArea("es")).toBe(true);
+    expect(isArea("pt")).toBe(false);
   });
 
   it("has a label for every language", () => {

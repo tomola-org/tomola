@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import { spawnSync } from "node:child_process";
 import { invokeI18n, type CliResult } from "./helpers/cli";
 import fs from "node:fs";
@@ -129,9 +130,9 @@ describe("checkMessages, mergeMessages and missingKeys", () => {
     expect(missingKeys(en, en)).toEqual([]);
   });
 
-  it("covers the seven target languages, besides English and Japanese", () => {
-    expect(TARGET_LOCALES).toEqual(["fr", "de", "zh-Hant", "zh-Hans", "ko", "th", "vi"]);
-    expect(ALL_LOCALES).toHaveLength(9);
+  it("uses every software language except English and Japanese as a target", () => {
+    expect(TARGET_LOCALES).toEqual(LANGS.filter(lang => lang !== "ja" && lang !== "en"));
+    expect(ALL_LOCALES).toEqual(["en", "ja", ...TARGET_LOCALES]);
   });
 });
 
@@ -611,7 +612,7 @@ describe("pnpm i18n:translate --emit-review-counts", () => {
   const en = { $schema: "s", a: "Hello {name}", b: "Save", c: "Cancel" };
   const complete = Object.fromEntries(ALL_LOCALES.filter((l) => l !== "en").map((l) => [l, { $schema: "s", a: `[${l}] {name}`, b: `[${l}]`, c: `[${l}] c` }]));
 
-  it("writes the counts of all nine languages, equal to the problems of --check --require-verified, with the date of the last check and no name", { timeout: 120_000 }, async () => {
+  it("writes the counts of all software languages, equal to the problems of --check --require-verified, with the date of the last check and no name", { timeout: 120_000 }, async () => {
     const dir = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), "i18n-"));
     const out = path.join(dir, "review-counts.generated.json");
     try {
@@ -629,7 +630,7 @@ describe("pnpm i18n:translate --emit-review-counts", () => {
       const res = (await exec(["--emit-review-counts"]));
       expect(res.status).toBe(0);
       const counts = JSON.parse(fs.readFileSync(out, "utf8")) as Record<string, { unverified: number; missing: number; stale: number; verifiedAt?: string | null }>;
-      expect(Object.keys(counts)).toEqual(["ja", "en", "fr", "de", "zh-Hant", "zh-Hans", "ko", "th", "vi"]);
+      expect(Object.keys(counts)).toEqual(LANGS);
       expect(counts.ja).toEqual({ unverified: 0, unverifiedPublic: 0, missing: 0, stale: 0 });
       expect(counts.en).toEqual({ unverified: 0, unverifiedPublic: 0, missing: 0, stale: 0 });
       expect(counts.fr).toMatchObject({ missing: ["c"].length, unverified: 2, unverifiedPublic: 2, verifiedAt: null });

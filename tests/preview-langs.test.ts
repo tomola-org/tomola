@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import { shellLabels } from "~/lib/shell-labels.server";
 import { SHELL_LABEL_KEYS } from "~/lib/shell-labels";
 import { AI_USE_DEFINITIONS } from "~/lib/ai-use-registry.server";
@@ -92,8 +93,8 @@ it("counts both review totals and lets the CLI pass when only operator strings a
   expect(counts.fr).toMatchObject({ unverified: 1, unverifiedPublic: 0 });
   const dir = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "i18n-preview-"));
   try {
-    for (const lang of ["ja", "en", "fr", "de", "zh-Hant", "zh-Hans", "ko", "th", "vi"]) fs.writeFileSync(path.join(dir, `${lang}.json`), JSON.stringify(files[lang as keyof typeof files] ?? source));
-    const allFiles = Object.fromEntries(["ja", "en", "fr", "de", "zh-Hant", "zh-Hans", "ko", "th", "vi"].map(lang => [lang, files[lang as keyof typeof files] ?? source]));
+    for (const lang of LANGS) fs.writeFileSync(path.join(dir, `${lang}.json`), JSON.stringify(files[lang as keyof typeof files] ?? source));
+    const allFiles = Object.fromEntries(LANGS.map(lang => [lang, files[lang as keyof typeof files] ?? source]));
     fs.writeFileSync(path.join(dir, ".source-hashes.json"), JSON.stringify(initialHashes(source, allFiles)));
     fs.writeFileSync(path.join(dir, ".verified.json"), JSON.stringify(verified));
     const result = spawnSync("pnpm", ["exec", "tsx", "scripts/i18n-translate.ts", "--check", "--require-verified", "--lang", "fr"], { env: { ...process.env, GEMINI_API_KEY: "", ANTHROPIC_API_KEY: "", I18N_MESSAGES_DIR: dir }, encoding: "utf8" });

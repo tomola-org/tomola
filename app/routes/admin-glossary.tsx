@@ -35,7 +35,7 @@ import { m } from "~/paraglide/messages.js";
 // Available to operators and moderators assigned any language (404 for other members). Operators may add, edit, or delete all entries; moderators may change only entries whose target language is assigned to them
 // (the server checks per-entry authorization against stored rows: canEditGlossary in app/lib/glossary.server.ts; hiding a form is not authorization).
 // Record every change in history with actor, timestamp, and originating proposal post. Deletion retains the entry as deleted rather than removing it.
-// This screen retains nine language choices; member-facing /glossary uses enabled languages only. Filters: ?to=, ?from=, ?review=1 for entries needing review; default to all editable entries. Paginate 100 entries at a time.
+// This screen offers all software languages; member-facing /glossary uses enabled languages only. Filters: ?to=, ?from=, ?review=1 for entries needing review; default to all editable entries. Paginate 100 entries at a time.
 // Filtered by a target language the person may edit, the page also offers "mark as reviewed" in bulk: the checked rows, every row of the page (?select=all, a link, so it works
 // without JavaScript), or every entry of the language that needs review.
 async function loaderImplementation({ request }: Route.LoaderArgs) {
@@ -53,7 +53,7 @@ async function loaderImplementation({ request }: Route.LoaderArgs) {
     bulk,
     selectAll: bulk !== null && params.get("select") === "all",
     langs: LANGS,
-    // Target-language choices for the add form: all nine for operators, assigned languages only for moderators.
+    // Target-language choices for the add form: all software languages for operators, assigned languages only for moderators.
     targetLangs: scope.operator ? LANGS : scope.langs,
     page: query.page,
     hasNext,

@@ -420,7 +420,7 @@ export async function exportGlossary(db: Db): Promise<GlossaryFile> {
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-// Export all active, undeleted rows across nine languages, without language filtering. Use row-oriented format in glossaryVersionOf order: term, source language, target language.
+// Export all active, undeleted rows across all software languages, without language filtering. Use row-oriented format in glossaryVersionOf order: term, source language, target language.
 // Omit timestamps, editors, and history to retain import format. History is read through /glossary and Markdown. Identical glossaries yield identical content.
 export function glossaryExportFile(rows: ReadonlyArray<GlossaryRowData>): GlossaryFile {
   const sorted = [...rows].sort((a, b) => cmp(a.term, b.term) || cmp(a.lang, b.lang) || cmp(a.targetLang, b.targetLang));

@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import { quietLogger as quiet } from "./helpers/logger";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -54,7 +55,7 @@ describe("a question goes through the paths of an ordinary topic", () => {
     const queued = async (entryId: number) => (await h.db.select({ kind: jobs.kind, payload: jobs.payload }).from(jobs)).filter((j) => (j.payload as { entryId?: number } | null)?.entryId === entryId);
     const forQuestion = await queued(question);
     const forPlain = await queued(plain);
-    expect(forQuestion.filter((j) => j.kind === "translate_entry")).toHaveLength(8);
+    expect(forQuestion.filter((j) => j.kind === "translate_entry")).toHaveLength(LANGS.length - 1);
     expect(forQuestion.map((j) => j.kind).sort()).toEqual(forPlain.map((j) => j.kind).sort());
     await runDueJobs(h.db, handlers, { now: new Date(), logger: quiet, limit: 1000 });
     const done = await h.db.select({ lang: translations.lang, field: translations.field, kind: translations.kind }).from(translations).where(eq(translations.entryId, question));

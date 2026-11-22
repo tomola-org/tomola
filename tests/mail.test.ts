@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import net from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assertMailConfigured, createMailer, mailConfigFromEnv, mailDecoyTo } from "~/lib/mail/mail.server";
@@ -223,10 +224,7 @@ describe("magic link mail", () => {
   });
 
   it("only accepts the supported locales", () => {
-    expect(mailLocale("ja")).toBe("ja");
-    expect(mailLocale("en")).toBe("en");
-    // The nine supported languages; reject other and case variants.
-    for (const locale of ["fr", "de", "zh-Hant", "zh-Hans", "ko", "th", "vi"]) expect(mailLocale(locale), locale).toBe(locale);
+    for (const locale of LANGS) expect(mailLocale(locale), locale).toBe(locale);
     for (const bad of ["xx", "zh", "zh-hant", "", null, undefined, 1, "JA"]) expect(mailLocale(bad), String(bad)).toBeNull();
   });
 });

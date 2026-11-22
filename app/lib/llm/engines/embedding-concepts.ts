@@ -1,5 +1,5 @@
 // Small concept dictionary for fake-embedding.server.ts to generate nearby vectors across languages; fixed material for tests and keyless development.
-// Each concept lists phrases in nine languages. A phrase adds weight to the same concept dimension regardless of language, crudely approximating a real model's
+// Each concept lists phrases in several languages. A phrase adds weight to the same concept dimension regardless of language, crudely approximating a real model's
 // multilingual semantic similarity. Phrases are lowercased and NFKC-normalized. Match Latin-script phrases at word boundaries to avoid hitting parts of other words.
 // Japanese, Chinese, Korean and Thai use substring matching because they lack word boundaries.
 // Unknown words use hashed word dimensions, creating similarity only within the same language. Append new concepts at the end: ordering assigns dimensions.

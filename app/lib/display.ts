@@ -84,7 +84,7 @@ export function decideShown(opts: { wants: boolean; hasTranslation: boolean; has
 
 // Translation language: page override > saved preference > interface locale > first original-reading language > enabled default.
 // UI callers supply the current locale; machine reads and mail supply the stored profile locale. Every candidate must be enabled.
-// `enabled` defaults to all nine languages.
+// `enabled` defaults to all software languages.
 export function resolveDisplayLang(opts: {
   query?: string | null;
   profile: { displayLang: Lang | null; readLangs: readonly Lang[] };

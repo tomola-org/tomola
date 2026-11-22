@@ -22,7 +22,7 @@ import type { GlossaryHint, JudgeRequest, TranslationRequest } from "./types";
 // "first occurrence" is counted within one translation request.
 // v13 / chat-v4: post-local author spellings and response terminology; titles use translated body passages.
 // v14: preserve details fence lengths, nesting and flow-block boundaries.
-export const PROMPT_VERSION = "translate-v14";
+export const PROMPT_VERSION = "translate-v15";
 export const CHAT_PROMPT_VERSION = "chat-v4";
 // village-v1: the name or description of a village, short plain text translated on its own. village-v2: see v12 above.
 export const VILLAGE_PROMPT_VERSION = "village-v2";
@@ -80,6 +80,8 @@ export const LANG_NAMES: Record<Lang, string> = {
   ko: "Korean",
   th: "Thai",
   vi: "Vietnamese",
+  id: "Indonesian",
+  es: "Spanish",
 };
 
 export function translationSystemPrompt(from: SourceLang, to: Lang, nonce = "", chat = false, village?: "name" | "description", invitationNote = false, terminology = false, figure = false): string {

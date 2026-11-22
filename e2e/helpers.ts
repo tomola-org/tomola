@@ -1,5 +1,6 @@
 import { ELIGIBLE_COUNTRY, testOperator } from "./operator-fixture";
 import { formatOperatorCopy, operatorCopy } from "../app/lib/operator-settings";
+import { isLang } from "../app/lib/languages";
 import type { Message } from "../app/lib/i18n/messages";
 import fs from "node:fs";
 import path from "node:path";
@@ -256,7 +257,7 @@ export async function uiMessages(page: Page): Promise<typeof enMessages> {
   if (locale === "en") return enMessages;
   if (locale === "ja") return jaMessages;
   // Match sparse translated catalogues to the same English fallback as the UI.
-  if (!["fr", "de", "zh-Hant", "zh-Hans", "ko", "th", "vi"].includes(locale)) return enMessages;
+  if (!isLang(locale)) return enMessages;
   const messages = JSON.parse(fs.readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8"));
   return operatorMessages(locale, { ...enMessages, ...messages });
 }

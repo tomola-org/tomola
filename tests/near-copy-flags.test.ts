@@ -36,6 +36,8 @@ const SAMPLES: Record<string, string> = {
   fr: "Ceci est un texte japonais ordinaire de plus de quarante caractères, écrit un peu long pour le test, avec une phrase de plus.",
   de: "Dies ist ein gewöhnlicher japanischer Text mit mehr als vierzig Zeichen, für den Test etwas länger geschrieben, mit einem weiteren Satz.",
   vi: "Đây là một đoạn văn tiếng Nhật bình thường dài hơn bốn mươi ký tự, được viết hơi dài cho bài kiểm tra, và thêm một câu nữa.",
+  id: "Ini adalah teks bahasa Jepang biasa yang terdiri dari lebih dari empat puluh karakter, ditulis sedikit lebih panjang untuk pengujian, dengan satu kalimat tambahan.",
+  es: "Este es un texto japonés corriente de más de cuarenta caracteres, algo más largo para la prueba, al que se añade una frase más.",
   "zh-Hans": "这是一段普通的日语文章，超过四十个字，为了测试而写得稍微长一些，另外再加上一句话。",
   "zh-Hant": "這是一段普通的日語文章，超過四十個字，為了測試而寫得稍微長一些，另外再加上一句話。",
   ko: "이것은 사십 자를 넘는 평범한 일본어 문장입니다. 테스트를 위해 조금 길게 썼습니다. 한 문장을 더 덧붙여 둡니다.",

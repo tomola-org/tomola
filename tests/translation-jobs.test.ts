@@ -54,6 +54,7 @@ it.each([["title", 0], ["body", 3]] as const)("never saves leaked %s output afte
   expect(shown.translation).toBeNull();
 });
 
+const targets = LANGS.length - 1;
 const t0 = new Date("2026-10-05T00:00:00Z");
 
 
@@ -151,37 +152,37 @@ function recordingEngine(reqs: TranslationRequest[], translateFn?: (req: Transla
 }
 
 describe("enqueuing translations on publish and on edit", () => {
-  it("queues one translate_entry job per non-source language (8) for a topic and for a reply, without duplicates", async () => {
+  it("queues one translate_entry job per non-source language for a topic and for a reply, without duplicates", async () => {
     const db = await setup();
     const topicId = await newTopic(db);
     const reply = await createReply(db, "u1", topicId, { lang: "en", body: "reply" });
     if (!reply.ok) throw new Error("reply failed");
     const rows = await jobRows(db, "translate_entry");
-    expect(rows).toHaveLength(16);
-    expect(await jobRows(db, "translate_title")).toHaveLength(8);
+    expect(rows).toHaveLength(2 * targets);
+    expect(await jobRows(db, "translate_title")).toHaveLength(targets);
     const topicJobs = rows.filter((r) => (r.payload as { entryId: number }).entryId === topicId);
     expect(topicJobs.map((r) => (r.payload as { lang: string }).lang).sort()).toEqual(LANGS.filter((l) => l !== "ja").sort());
     expect(topicJobs.every((r) => r.status === "queued")).toBe(true);
     const [row] = await db.select({ h: entries.sourceHash }).from(entries).where(eq(entries.id, topicId));
     expect(topicJobs[0].dedupeKey).toBe(`translate:${topicId}:ja:${(topicJobs[0].payload as { lang: string }).lang}:${row.h}`);
     const replyLangs = rows.filter((r) => (r.payload as { entryId: number }).entryId === reply.id).map((r) => (r.payload as { lang: string }).lang);
-    expect(replyLangs).toHaveLength(8);
+    expect(replyLangs).toHaveLength(targets);
     expect(replyLangs).not.toContain("en");
     // Requeuing the same version does not duplicate jobs.
     expect(await enqueueTranslations(db, { id: topicId, lang: "ja", sourceHash: row.h! })).toBe(0);
-    expect(await jobRows(db, "translate_entry")).toHaveLength(16);
+    expect(await jobRows(db, "translate_entry")).toHaveLength(2 * targets);
   });
 
-  it("queues 8 new jobs for an edit (a new source hash) and none when nothing changed", async () => {
+  it("queues one new job per target for an edit (a new source hash) and none when nothing changed", async () => {
     const db = await setup();
     const topicId = await newTopic(db);
-    expect(await jobRows(db, "translate_entry")).toHaveLength(8);
+    expect(await jobRows(db, "translate_entry")).toHaveLength(targets);
     await editEntry(db, "u1", topicId, { title: "元の題", body: "元の本文。" });
-    expect(await jobRows(db, "translate_entry")).toHaveLength(8);
+    expect(await jobRows(db, "translate_entry")).toHaveLength(targets);
     await editEntry(db, "u1", topicId, { title: "元の題", body: "直した本文。" });
     const rows = await jobRows(db, "translate_entry");
-    expect(rows).toHaveLength(16);
-    expect(new Set(rows.map((r) => r.dedupeKey)).size).toBe(16);
+    expect(rows).toHaveLength(2 * targets);
+    expect(new Set(rows.map((r) => r.dedupeKey)).size).toBe(2 * targets);
     // Old-version jobs that have not run remain queued; running them does nothing, as the test below checks.
   });
 
@@ -199,13 +200,13 @@ describe("enqueuing translations on publish and on edit", () => {
 });
 
 describe("translate_entry", () => {
-  it("translates the title and the body into all 8 languages with the fake engine and persists them", async () => {
+  it("translates the title and the body into every target language with the fake engine and persists them", async () => {
     const db = await setup();
     const topicId = await newTopic(db, { title: "題", body: "本文。" });
     const stats = await run(db, noSecondary());
-    expect(stats).toMatchObject({ ran: 16, done: 16, failed: 0, retried: 0 });
+    expect(stats).toMatchObject({ ran: 2 * targets, done: 2 * targets, failed: 0, retried: 0 });
     const rows = await transRows(db, topicId);
-    expect(rows).toHaveLength(16);
+    expect(rows).toHaveLength(2 * targets);
     const [entry] = await db.select({ h: entries.sourceHash }).from(entries).where(eq(entries.id, topicId));
     const en = rows.filter((r) => r.lang === "en");
     expect(en.map((r) => [r.field, r.kind, r.text])).toEqual([
@@ -215,7 +216,7 @@ describe("translate_entry", () => {
     expect(en[0]).toMatchObject({ engine: "fake", model: "fake-1", promptVersion: PROMPT_VERSION, glossaryVersion: null, sourceHash: entry.h, flags: [], createdBy: null });
     expect(new Set(rows.map((r) => r.lang))).toEqual(new Set(LANGS.filter((l) => l !== "ja")));
     // The ledger also records it; fake costs zero.
-    expect(await db.select().from(llmUsage)).toHaveLength(24);
+    expect(await db.select().from(llmUsage)).toHaveLength(3 * targets);
     // Rerunning completed jobs does nothing.
     expect(await run(db, noSecondary())).toMatchObject({ ran: 0 });
   });
@@ -232,7 +233,7 @@ describe("translate_entry", () => {
     await db.delete(jobs).where(inArray(jobs.kind, ["translate_entry", "translate_title"]));
     await enqueueTranslations(db, { id: child.id, lang: "ja", sourceHash: (await db.select({ h: entries.sourceHash }).from(entries).where(eq(entries.id, child.id)))[0].h! });
     await run(db, { primary: recordingEngine(reqs), secondary: null, judge: null });
-    expect(reqs).toHaveLength(8);
+    expect(reqs).toHaveLength(targets);
     expect(reqs[0]).toMatchObject({ text: "子の返信。", from: "ja" });
     expect(reqs.every(r => r.title === undefined && r.context === undefined)).toBe(true);
     const rows = await transRows(db, child.id);
@@ -286,14 +287,14 @@ describe("translate_entry", () => {
     const engine = recordingEngine(reqs, (req) => (req.text.includes("```") && !req.retryNote ? `[${req.to}] formula $x$` : `[${req.to}] ${req.text}`));
     await run(db, { primary: engine, secondary: null, judge: null });
     const bodies = reqs.filter((r) => r.text.includes("```"));
-    expect(bodies).toHaveLength(16); // Eight languages × (first attempt + retry).
-    expect(bodies.filter((r) => r.retryNote).length).toBe(8);
+    expect(bodies).toHaveLength(2 * targets); // Every target language × (first attempt + retry).
+    expect(bodies.filter((r) => r.retryNote).length).toBe(targets);
     const rows = await db.select().from(translations).where(and(eq(translations.entryId, topicId), eq(translations.field, "body")));
-    expect(rows).toHaveLength(8);
+    expect(rows).toHaveLength(targets);
     expect(rows.every((r) => r.flags.length === 0 && r.text.includes("```"))).toBe(true);
     // The ledger also records retry costs.
     const usage = await db.select().from(llmUsage);
-    expect(usage).toHaveLength(8 * 4); // Two body calls plus provisional and final title calls.
+    expect(usage).toHaveLength(targets * 4); // Two body calls plus provisional and final title calls.
   });
 
   it("records quality_mismatch when the retry still loses a formula", async () => {
@@ -302,7 +303,7 @@ describe("translate_entry", () => {
     const engine = recordingEngine([], (req) => (req.text.includes("$") ? `[${req.to}] formula x` : `[${req.to}] ${req.text}`));
     await run(db, { primary: engine, secondary: null, judge: null });
     const rows = await db.select().from(translations).where(and(eq(translations.entryId, topicId), eq(translations.field, "body")));
-    expect(rows).toHaveLength(8);
+    expect(rows).toHaveLength(targets);
     expect(rows.every((r) => r.flags.includes("quality_mismatch"))).toBe(true);
     const title = await db.select().from(translations).where(and(eq(translations.entryId, topicId), eq(translations.field, "title")));
     expect(title.every((r) => r.flags.length === 0)).toBe(true);
@@ -338,7 +339,7 @@ describe("translate_entry", () => {
     };
     await run(db, { primary: evil, secondary: null, judge: null });
     const flagged = (await transRows(db, topicId)).filter((r) => r.field === "body");
-    expect(flagged).toHaveLength(8);
+    expect(flagged).toHaveLength(targets);
     expect(flagged.every((r) => r.flags.includes("link_mismatch"))).toBe(true);
     const [entry] = await db.select().from(entries).where(eq(entries.id, topicId));
     const shown = async () =>
@@ -372,11 +373,11 @@ describe("translate_entry", () => {
     const db = await setup();
     const topicId = await newTopic(db, { title: "題", body: "古い本文。" });
     await editEntry(db, "u1", topicId, { title: "題", body: "新しい本文。" });
-    expect(await jobRows(db, "translate_entry")).toHaveLength(16);
+    expect(await jobRows(db, "translate_entry")).toHaveLength(2 * targets);
     const stats = await run(db, noSecondary());
-    expect(stats.done).toBe(32);
+    expect(stats.done).toBe(4 * targets);
     const rows = await transRows(db, topicId);
-    expect(rows).toHaveLength(16); // Only the new version's eight languages × two fields.
+    expect(rows).toHaveLength(2 * targets); // Only the new version's target languages × two fields.
     expect(rows.filter((r) => r.field === "body").every((r) => r.text === `[${r.lang}] 新しい本文。`)).toBe(true);
     const [entry] = await db.select({ h: entries.sourceHash }).from(entries).where(eq(entries.id, topicId));
     expect(rows.every((r) => r.sourceHash === entry.h)).toBe(true);
@@ -394,9 +395,9 @@ describe("translate_entry", () => {
     expect(original.mentionRevision).toBe(0);
     const requests: TranslationRequest[] = [];
     const engines: EngineSet = { primary: recordingEngine(requests), secondary: null, judge: null };
-    expect(await run(db, engines)).toMatchObject({ done: 16, failed: 0 });
+    expect(await run(db, engines)).toMatchObject({ done: 2 * targets, failed: 0 });
     const firstBodies = (await transRows(db, topicId)).filter(row => row.field === "body");
-    expect(firstBodies).toHaveLength(8);
+    expect(firstBodies).toHaveLength(targets);
     expect(firstBodies.every(row => row.sourceHash === original.sourceHash && row.mentionRevision === 0 && row.html?.includes(firstHref))).toBe(true);
 
     expect(await editEntry(db, "u1", topicId, { title: "題", body: "別の本文。" })).toMatchObject({ ok: true });
@@ -417,18 +418,18 @@ describe("translate_entry", () => {
     expect(restored.html).not.toContain(firstHref);
     // The old primary still has the same content hash, but belongs to revision 0 and cannot satisfy revision 2.
     const before = (await transRows(db, topicId)).filter(row => row.field === "body");
-    expect(before).toHaveLength(8);
+    expect(before).toHaveLength(targets);
     expect(before.every(row => row.sourceHash === restored.sourceHash && row.mentionRevision === 0 && row.html?.includes(firstHref))).toBe(true);
     const pending = (await loadEntryDisplays(db, [{ id: topicId, kind: "topic", lang: "ja", sourceHash: restored.sourceHash }], { readLangs: ["en"], displayLang: "en" })).get(topicId)!;
     expect(pending).toEqual({ shown: "original", pending: true, translation: null });
 
     requests.length = 0;
     expect(await run(db, engines, { now: new Date(t0.getTime() + 1000) })).toMatchObject({ failed: 0, retried: 0 });
-    // The unchanged title was carried over; all eight bodies must be translated again.
-    expect(requests).toHaveLength(8);
+    // The unchanged title was carried over; all target bodies must be translated again.
+    expect(requests).toHaveLength(targets);
     expect(requests.every(request => request.text === body && request.mentions?.join(" ") === "@bob")).toBe(true);
     const redoneBodies = (await transRows(db, topicId)).filter(row => row.field === "body");
-    expect(redoneBodies).toHaveLength(8);
+    expect(redoneBodies).toHaveLength(targets);
     expect(redoneBodies.every(row => row.sourceHash === restored.sourceHash && row.mentionRevision === 2 && row.html?.includes(secondHref) && !row.html.includes(firstHref))).toBe(true);
     const shown = (await loadEntryDisplays(db, [{ id: topicId, kind: "topic", lang: "ja", sourceHash: restored.sourceHash }], { readLangs: ["en"], displayLang: "en" })).get(topicId)!.translation!;
     expect(shown).toMatchObject({ kind: "primary", stale: false });
@@ -457,7 +458,7 @@ describe("translate_entry", () => {
     // No old-version translations remain; all new-version translations are present.
     expect(rows.every((r) => r.sourceHash === entry.h)).toBe(true);
     expect(rows.filter((r) => r.field === "body").every((r) => r.text.endsWith("新しい本文。"))).toBe(true);
-    expect(rows).toHaveLength(16);
+    expect(rows).toHaveLength(2 * targets);
   });
 
   it("reschedules a running translation when edits restore its source hash with a newer mention revision", async () => {
@@ -509,7 +510,7 @@ describe("translate_entry", () => {
     const db = await setup();
     const topicId = await newTopic(db);
     await db.update(entries).set({ deletedAt: t0 }).where(eq(entries.id, topicId));
-    expect(await run(db, noSecondary())).toMatchObject({ done: 16 });
+    expect(await run(db, noSecondary())).toMatchObject({ done: 2 * targets });
     expect(await transRows(db, topicId)).toHaveLength(0);
     await db.insert(jobs).values({ kind: "translate_entry", payload: { entryId: "x" } });
     expect(await run(db, noSecondary(), { now: new Date(t0.getTime() + 1000) })).toMatchObject({ failed: 1, retried: 0 });
@@ -558,7 +559,7 @@ describe("failure handling", () => {
     const db = await setup();
     await newTopic(db);
     const rows = await jobRows(db, "translate_entry");
-    expect(rows).toHaveLength(8);
+    expect(rows).toHaveLength(targets);
     expect(rows.every((r) => r.maxAttempts === 10)).toBe(true);
   });
 
@@ -575,15 +576,15 @@ describe("failure handling", () => {
       },
     };
     const stats = await run(db, { primary: refusing, secondary: null, judge: null });
-    expect(stats).toMatchObject({ ran: 16, failed: 16, retried: 0, done: 0 });
-    expect(calls).toBe(16); // Each job runs only once.
+    expect(stats).toMatchObject({ ran: 2 * targets, failed: 2 * targets, retried: 0, done: 0 });
+    expect(calls).toBe(2 * targets); // Each job runs only once.
     const failed = await jobRows(db, "translate_entry");
     expect(failed.every((j) => j.status === "failed" && j.attempts === 1 && /refusal|SAFETY/.test(j.lastError ?? ""))).toBe(true);
     expect(await transRows(db, topicId)).toHaveLength(0);
-    expect((await db.select().from(llmUsage)).length).toBe(16);
+    expect((await db.select().from(llmUsage)).length).toBe(2 * targets);
     // Requeuing can now translate; failed jobs do not suppress duplicates.
     const [entry] = await db.select({ h: entries.sourceHash }).from(entries).where(eq(entries.id, topicId));
-    expect(await enqueueTranslations(db, { id: topicId, lang: "ja", sourceHash: entry.h! })).toBe(16);
+    expect(await enqueueTranslations(db, { id: topicId, lang: "ja", sourceHash: entry.h! })).toBe(2 * targets);
   });
 
   it.each([
@@ -628,7 +629,7 @@ describe("budget stop and resume", () => {
     await db.insert(llmUsage).values({ engine: "gemini", model: "gemini-3.1-flash-lite", purpose: "translate", costUsdMicro: 1_000_000, createdAt: t0 });
     const env = { LLM_MONTHLY_BUDGET_USD: "1" };
     const stopped = await run(db, noSecondary(), { env });
-    expect(stopped).toMatchObject({ ran: 16, deferred: 16, done: 0, failed: 0, retried: 0 });
+    expect(stopped).toMatchObject({ ran: 2 * targets, deferred: 2 * targets, done: 0, failed: 0, retried: 0 });
     expect(await transRows(db, topicId)).toHaveLength(0);
     const waiting = await jobRows(db, "translate_entry");
     expect(waiting.every((j) => j.status === "queued" && j.attempts === 0 && j.runAt > t0)).toBe(true);
@@ -637,8 +638,8 @@ describe("budget stop and resume", () => {
     // Raising the cap resumes work at the next check, 15 minutes later.
     const later = new Date(t0.getTime() + 16 * 60_000);
     const resumed = await run(db, noSecondary(), { env: { LLM_MONTHLY_BUDGET_USD: "20" }, now: later });
-    expect(resumed).toMatchObject({ done: 16, deferred: 0 });
-    expect(await transRows(db, topicId)).toHaveLength(16);
+    expect(resumed).toMatchObject({ done: 2 * targets, deferred: 0 });
+    expect(await transRows(db, topicId)).toHaveLength(2 * targets);
   });
 
   it("resumes next month even if the budget is still exhausted this month's total does not carry over", async () => {
@@ -648,8 +649,8 @@ describe("budget stop and resume", () => {
     const env = { LLM_MONTHLY_BUDGET_USD: "1" };
     await run(db, noSecondary(), { env });
     const nextMonth = new Date("2026-11-01T00:00:01Z");
-    expect(await run(db, noSecondary(), { env, now: nextMonth })).toMatchObject({ done: 16 });
-    expect(await transRows(db, topicId)).toHaveLength(16);
+    expect(await run(db, noSecondary(), { env, now: nextMonth })).toMatchObject({ done: 2 * targets });
+    expect(await transRows(db, topicId)).toHaveLength(2 * targets);
   });
 
   it("keeps the work already saved when the budget stops in the middle (title done, body deferred)", async () => {
@@ -668,15 +669,15 @@ describe("budget stop and resume", () => {
     const env = { LLM_MONTHLY_BUDGET_USD: "0.2" }; // One $0.25 call crosses the cap.
     const engines: EngineSet = { primary: costly, secondary: null, judge: null };
     const stats = await run(db, engines, { env });
-    expect(stats).toMatchObject({ ran: 16, failed: 0, retried: 0, done: 1, deferred: 15 });
+    expect(stats).toMatchObject({ ran: 2 * targets, failed: 0, retried: 0, done: 1, deferred: 2 * targets - 1 });
     expect(calls).toBe(1); // The first title call reaches the cap; make no further calls.
     const saved = await transRows(db, topicId);
     expect(saved.map((r) => [r.lang, r.field])).toEqual([["en", "title"]]);
     // On resumption, refine the provisional title and translate the remaining fields.
     const later = new Date(t0.getTime() + 20 * 60_000);
     await run(db, engines, { env: { LLM_MONTHLY_BUDGET_USD: "1000" }, now: later });
-    expect(await transRows(db, topicId)).toHaveLength(16);
-    expect(calls).toBe(8 * 3);
+    expect(await transRows(db, topicId)).toHaveLength(2 * targets);
+    expect(calls).toBe(targets * 3);
   });
 });
 
@@ -791,20 +792,20 @@ describe("edits that leave one field unchanged (per-field versions)", () => {
     expect(rowOf(rows, "en", "human", "title")).toMatchObject({ flags: ["stale"], text: "HUMAN TITLE EN" });
     // Divergence records also carry over.
     const kept = await db.select().from(divergences);
-    expect(kept.length).toBe(8);
+    expect(kept.length).toBe(targets);
     expect(kept.every((d) => d.sourceHash === entry.h)).toBe(true);
 
     const c = counting();
     const stats = await run(db, c.engines, { now: new Date(t0.getTime() + 1000) });
     expect(stats.failed).toBe(0);
-    // Retranslate only titles in eight languages; do not translate bodies or call the secondary or judge.
-    expect(c.primary.map((r) => r.text)).toEqual(Array(16).fill("新しい題"));
+    // Retranslate only titles in every target language; do not translate bodies or call the secondary or judge.
+    expect(c.primary.map((r) => r.text)).toEqual(Array(2 * targets).fill("新しい題"));
     expect(c.secondary).toHaveLength(0);
     expect(c.judged()).toBe(0);
     rows = await transRows(db, topicId);
     expect(rowOf(rows, "en", "primary", "title")).toMatchObject({ text: "[en] 新しい題", sourceHash: entry.h });
     expect(rowOf(rows, "en", "primary", "body").text).toBe(bodyBefore.text);
-    expect((await db.select().from(divergences)).length).toBe(8);
+    expect((await db.select().from(divergences)).length).toBe(targets);
   });
 
   it("a body-only edit keeps the title translations and drops the divergences at once", async () => {
@@ -820,13 +821,13 @@ describe("edits that leave one field unchanged (per-field versions)", () => {
 
     const c = counting();
     await run(db, c.engines, { now: new Date(t0.getTime() + 1000) });
-    expect(c.primary.map((r) => r.text)).toEqual(Array(8).fill("直した本文です。DIVERGE-LOW の文です。"));
-    expect(c.secondary).toHaveLength(8);
-    expect(c.judged()).toBe(8);
+    expect(c.primary.map((r) => r.text)).toEqual(Array(targets).fill("直した本文です。DIVERGE-LOW の文です。"));
+    expect(c.secondary).toHaveLength(targets);
+    expect(c.judged()).toBe(targets);
     rows = await transRows(db, topicId);
     expect(rowOf(rows, "en", "primary", "body")).toMatchObject({ text: "[en] 直した本文です。DIVERGE-LOW の文です。", sourceHash: entry.h });
     const measured = await db.select().from(divergences);
-    expect(measured.length).toBe(8);
+    expect(measured.length).toBe(targets);
     expect(measured.every((d) => d.sourceHash === entry.h && d.severity === "low")).toBe(true);
   });
 
@@ -861,7 +862,7 @@ describe("edits that leave one field unchanged (per-field versions)", () => {
     if (!reply.ok) throw new Error("reply failed");
     await run(db, noSecondary());
     await editEntry(db, "u1", reply.id, { body: "返信です。" });
-    expect(await transRows(db, reply.id)).toHaveLength(8);
+    expect(await transRows(db, reply.id)).toHaveLength(targets);
     await editEntry(db, "u1", reply.id, { body: "直した返信です。" });
     const [entry] = await db.select({ h: entries.sourceHash }).from(entries).where(eq(entries.id, reply.id));
     expect((await transRows(db, reply.id)).every((r) => r.sourceHash !== entry.h)).toBe(true);
@@ -871,7 +872,7 @@ describe("edits that leave one field unchanged (per-field versions)", () => {
     const { db, topicId } = await prepared();
     const [entry] = await db.select({ h: entries.sourceHash }).from(entries).where(eq(entries.id, topicId));
     const rows = await db.select().from(divergences);
-    expect(rows.length).toBe(8);
+    expect(rows.length).toBe(targets);
     expect(rows.every((d) => d.sourceHash === entry.h && d.judgePromptVersion === JUDGE_PROMPT_VERSION && d.judgeEngine === "fake")).toBe(true);
   });
 });
@@ -982,11 +983,11 @@ describe("measure_divergence", () => {
     if (!reply.ok) throw new Error("reply failed");
     await run(db, fakeSet());
     const measure = await jobRows(db, "measure_divergence");
-    expect(measure).toHaveLength(8); // Topics only; no reply jobs are queued.
+    expect(measure).toHaveLength(targets); // Topics only; no reply jobs are queued.
     expect(measure.every((j) => (j.payload as { entryId: number }).entryId === topicId)).toBe(true);
     expect(measure.every((j) => j.status === "done")).toBe(true);
     const secondary = await db.select().from(translations).where(eq(translations.kind, "secondary"));
-    expect(secondary).toHaveLength(8);
+    expect(secondary).toHaveLength(targets);
     expect(secondary.every((r) => r.entryId === topicId && r.field === "body" && r.engine === "fake" && r.model === "fake-1")).toBe(true);
     const rows = await db.select().from(divergences).where(eq(divergences.lang, "en"));
     expect(rows).toHaveLength(1);
@@ -994,7 +995,7 @@ describe("measure_divergence", () => {
     expect(await db.select().from(divergences).where(eq(divergences.entryId, reply.id))).toHaveLength(0);
     // The ledger records judge and secondary calls.
     const purposes = (await db.select().from(llmUsage)).map((u) => u.purpose);
-    expect(purposes.filter((p) => p === "judge")).toHaveLength(8);
+    expect(purposes.filter((p) => p === "judge")).toHaveLength(targets);
   });
 
   it("stores the category of a divergence: a shift of tone (the judge's category tone) is a record of its own", async () => {
@@ -1031,14 +1032,14 @@ describe("measure_divergence", () => {
     await run(db2, fakeSet(), { env: { LLM_MONTHLY_BUDGET_USD: "1" } });
     expect(await jobRows(db2, "measure_divergence")).toHaveLength(0);
     // Primary translation still runs in degraded mode.
-    expect((await db2.select().from(translations)).length).toBe(16);
+    expect((await db2.select().from(translations)).length).toBe(2 * targets);
   });
 
   it("skips (finishes without work) a queued measurement when the budget degraded in the meantime", async () => {
     const db = await setup();
     const topicId = await newTopic(db, { title: "題", body: "DIVERGE-HIGH。" });
     await run(db, fakeSet());
-    expect(await jobRows(db, "measure_divergence")).toHaveLength(8);
+    expect(await jobRows(db, "measure_divergence")).toHaveLength(targets);
     // Requeue measurement jobs after deleting completed ones, then run with a degraded budget.
     await db.delete(jobs).where(eq(jobs.kind, "measure_divergence"));
     await db.delete(translations).where(eq(translations.kind, "secondary"));
@@ -1054,8 +1055,8 @@ describe("measure_divergence", () => {
 });
 
 describe("enabledTargetLangs", () => {
-  it("is every language except the source when ENABLED_LANGS is unset (all nine)", () => {
-    expect(targetLangs("ja")).toHaveLength(8);
+  it("is every language except the source when ENABLED_LANGS is unset", () => {
+    expect(targetLangs("ja")).toHaveLength(targets);
     expect(targetLangs("ja")).not.toContain("ja");
     expect(targetLangs("zh-Hant")).toContain("zh-Hans");
   });

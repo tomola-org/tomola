@@ -73,6 +73,7 @@ const names: Record<Lang, string> = {
   en: "英語|English", ja: "日本語|Japanese", fr: "フランス語|French", de: "ドイツ語|German",
   "zh-Hans": "簡体字中国語|中国語（簡体字）|Simplified Chinese", "zh-Hant": "繁体字中国語|中国語（繁体字）|Traditional Chinese",
   ko: "韓国語|Korean", th: "タイ語|Thai", vi: "ベトナム語|Vietnamese",
+  id: "インドネシア語|Indonesian", es: "スペイン語|Spanish",
 };
 
 // Recognize explicit language-labelled declarations across the whole post. The

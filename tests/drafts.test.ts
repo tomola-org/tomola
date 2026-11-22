@@ -101,7 +101,7 @@ describe("createDraft, getDraft, listDrafts", () => {
   it("still rejects broken drafts", async () => {
     const { db, topicId } = await setup();
     const bad = (input: Record<string, unknown>) => createDraft(db, "u1", { kind: "topic", lang: "ja", ...input });
-    expect(await bad({ lang: "es" })).toEqual({ ok: false, error: "invalid_lang" });
+    expect(await bad({ lang: "xx" })).toEqual({ ok: false, error: "invalid_lang" });
     expect(await bad({ aiAssistance: "ghost" })).toEqual({ ok: false, error: "invalid_ai" });
     expect(await bad({ title: "t".repeat(201) })).toEqual({ ok: false, error: "invalid_title" });
     expect(await bad({ body: "a".repeat(100_001) })).toEqual({ ok: false, error: "body_too_long" });

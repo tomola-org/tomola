@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import { quietLogger as quiet } from "./helpers/logger";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
@@ -21,7 +22,7 @@ import { addMember, createTestDb } from "./helpers/db";
 // and the plain-text excerpts, and the job that hands the mentions to the engine.
 describe("the prompt", () => {
   it("tells the translator to keep every @mention as written, in every target language", () => {
-    for (const to of ["en", "fr", "zh-Hans", "zh-Hant", "ko", "th", "vi", "de"] as const) {
+    for (const to of LANGS.filter(lang => lang !== "ja")) {
       const system = translationSystemPrompt("ja", to);
       expect(system, to).toMatch(/@mention.*exactly as written/);
       const mentionRule = system.match(/Keep every @mention[^\n]+/)![0];
@@ -189,9 +190,9 @@ describe("the translation job", () => {
     await run(db, record(reqs, (r) => `[${r.to}] ${r.text.replace(/[@＠]\w+/g, "someone")}`));
     expect(reqs.filter((r) => r.text === "ただの本文。").every((r) => r.mentions === undefined)).toBe(true);
     const forReply = reqs.filter((r) => r.text.includes("見てください"));
-    // 8 languages, two calls each: the first and the retry (with a note).
-    expect(forReply.length).toBe(16);
-    expect(forReply.filter((r) => r.retryNote !== undefined)).toHaveLength(8);
+    // Two calls per target language: the first and the retry (with a note).
+    expect(forReply.length).toBe(2 * (LANGS.length - 1));
+    expect(forReply.filter((r) => r.retryNote !== undefined)).toHaveLength(LANGS.length - 1);
     const [row] = await db.select().from(translations).where(and(eq(translations.entryId, mentioned.id), eq(translations.lang, "en"), eq(translations.field, "body")));
     expect(row.flags).toContain(FLAG_QUALITY_MISMATCH);
     expect(row.promptVersion).toBe(PROMPT_VERSION);

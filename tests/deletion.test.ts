@@ -75,15 +75,15 @@ describe("softDeleteEntry cleans up in the same transaction", () => {
     const { db, topic, keep, mine } = await setup();
     // Posting queued 8 jobs each for mine, keep and topic. Make one appear running.
     const of = (id: number) => db.select().from(jobs).where(and(eq(jobs.kind, "translate_entry"), sql`${jobs.payload}->>'entryId' = ${String(id)}`));
-    expect((await of(mine)).length).toBe(8);
+    expect((await of(mine)).length).toBe(LANGS.length - 1);
     const [running] = await of(mine);
     await db.update(jobs).set({ status: "running", lockedAt: new Date() }).where(eq(jobs.id, running.id));
     await db.insert(jobs).values({ kind: "measure_divergence", payload: { entryId: mine, lang: "en", sourceHash: "h" } });
     await softDeleteEntry(db, mine);
     expect((await of(mine)).map((j) => j.status)).toEqual(["running"]);
     expect(await db.select().from(jobs).where(and(eq(jobs.kind, "measure_divergence"), sql`${jobs.payload}->>'entryId' = ${String(mine)}`))).toEqual([]);
-    expect((await of(keep)).length).toBe(8);
-    expect((await of(topic)).length).toBe(8);
+    expect((await of(keep)).length).toBe(LANGS.length - 1);
+    expect((await of(topic)).length).toBe(LANGS.length - 1);
     // A job already running cannot save a translation after post deletion; translation saves are skipped when currentSourceHash is null.
     expect(await currentSourceHash(db, mine)).toBeNull();
     expect(await currentSourceHash(db, keep)).not.toBeNull();
@@ -279,3 +279,4 @@ describe("carry-overs: replying to a deleted post, the pending API draft cap, th
     expect(await db.select().from(votes)).toEqual([]);
   });
 });
+import { LANGS } from "~/lib/languages";

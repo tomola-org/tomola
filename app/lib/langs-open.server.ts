@@ -7,7 +7,7 @@ import { computeReviewCounts, type ReviewCounts } from "~/lib/i18n/review-counts
 import { readHashes, readMessages, readVerified, readVerifiedChecks } from "~/lib/i18n/files.server";
 import { ALL_LOCALES, SOURCE_LOCALE, type Messages } from "~/lib/i18n/messages";
 import { loadReviewCounts } from "~/lib/i18n/review-counts.server";
-import { isLang, type Lang } from "~/lib/languages";
+import { isLang, LANGS, type Lang } from "~/lib/languages";
 import { primaryEngineId, primaryModelOf } from "~/lib/llm/config.server";
 import type { LlmEnv } from "~/lib/llm/types";
 import { translationThinking } from "~/lib/llm/config.server";
@@ -84,7 +84,7 @@ export async function runOpenLang(argv: readonly string[], deps: OpenLangDeps): 
 
   // 1. A language the software supports.
   if (!isLang(tag)) {
-    error(`langs:open: "${tag}" is not a language of this software. Use one of the nine tags (ja, en, fr, de, zh-Hant, zh-Hans, ko, th, vi); Chinese is named by script.\n${USAGE}`);
+    error(`langs:open: "${tag}" is not a language of this software. Use one of the supported tags (${LANGS.join(", ")}); Chinese is named by script.\n${USAGE}`);
     return 1;
   }
   // 2. Added to ENABLED_LANGS (the script and the app read the same variable; in production run it inside the app container: docker compose exec app pnpm langs:open fr).

@@ -44,7 +44,7 @@ it.each(["title", "body"] as const)("rejects leaked report retranslation for %s 
 
 // Translation-report flow: one-click reporting, one automatic retranslation on the first report using role retry and fake engines only, warnings on reported translations, then moderator handling.
 
-// One test creates a topic and reply and runs translation jobs for nine languages, so it can exceed the default five seconds during a loaded full run with other workers using real PostgreSQL.
+// One test creates a topic and reply and runs translation jobs for every target language, so it can exceed the default five seconds during a loaded full run with other workers using real PostgreSQL.
 vi.setConfig({ testTimeout: 30_000 });
 
 const t0 = new Date("2026-10-05T00:00:00Z");

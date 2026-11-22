@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import { quietLogger as quiet } from "./helpers/logger";
 import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +16,7 @@ import { captureCli } from "./helpers/cli";
 
 afterEach(() => vi.unstubAllEnvs());
 
+const targets = LANGS.length - 1;
 const t0 = new Date("2026-10-05T00:00:00Z");
 
 const fakeSet = (): EngineSet => ({ primary: createFakeEngine(), secondary: createFakeEngine(), judge: createFakeJudge() });
@@ -70,7 +72,8 @@ describe("requeueTranslations", () => {
       .map(job => (job.payload as { lang: string }).lang).sort()).toEqual(["fr", "ko"]);
     expect((await queued(db, "translate_title")).map(job => (job.payload as { lang: string }).lang).sort()).toEqual(["de", "fr", "ko"]);
     expect(await requeueTranslations(db, { env })).toMatchObject({ translate: 0 });
-    expect(await requeueTranslations(db, { env, allMissing: true })).toMatchObject({ translate: 13 });
+    // Two originals, minus the two topic bodies and one reply body already queued.
+    expect(await requeueTranslations(db, { env, allMissing: true })).toMatchObject({ translate: 2 * targets - 3 });
   });
 
   it("recovers a failed title without requesting or translating its missing body", async () => {
@@ -146,15 +149,15 @@ describe("requeueTranslations", () => {
     const { db } = await setup();
     await db.delete(jobs); // Entries without translations have no queued jobs.
     const res = await requeueTranslations(db);
-    expect(res).toEqual({ entries: 2, translate: 16, divergence: 0, divergenceSkipped: null });
+    expect(res).toEqual({ entries: 2, translate: 2 * targets, divergence: 0, divergenceSkipped: null });
     const rows = await queued(db, "translate_entry");
-    expect(rows).toHaveLength(16);
+    expect(rows).toHaveLength(2 * targets);
     expect(rows.every((r) => r.maxAttempts === 10)).toBe(true);
     // Deduplication: rerunning does not enqueue additional jobs.
     expect(await requeueTranslations(db)).toMatchObject({ translate: 0 });
-    expect(await queued(db, "translate_entry")).toHaveLength(16);
+    expect(await queued(db, "translate_entry")).toHaveLength(2 * targets);
     // Running queued jobs completes translations and leaves nothing to enqueue.
-    expect(await runAll(db, noSecondary())).toMatchObject({ done: 24, failed: 0 });
+    expect(await runAll(db, noSecondary())).toMatchObject({ done: 3 * targets, failed: 0 });
     expect(await requeueTranslations(db)).toMatchObject({ entries: 2, translate: 0 });
   });
 
@@ -186,7 +189,7 @@ describe("requeueTranslations", () => {
     await db.update(jobs).set({ status: "failed" });
     await db.update(entries).set({ deletedAt: t0 }).where(eq(entries.id, replyId));
     const res = await requeueTranslations(db);
-    expect(res).toMatchObject({ entries: 1, translate: 8 }); // Only the topic body; its title carried over and the reply was deleted.
+    expect(res).toMatchObject({ entries: 1, translate: targets }); // Only the topic body; its title carried over and the reply was deleted.
     expect((await queued(db, "translate_entry")).every((j) => (j.payload as { entryId: number }).entryId === topicId)).toBe(true);
   });
 
@@ -197,12 +200,12 @@ describe("requeueTranslations", () => {
     const plain = await requeueTranslations(db, { llm: llm(fakeSet()) });
     expect(plain).toMatchObject({ translate: 0, divergence: 0, divergenceSkipped: null });
     const res = await requeueTranslations(db, { divergence: true, llm: llm(fakeSet()) });
-    expect(res).toMatchObject({ translate: 0, divergence: 8, divergenceSkipped: null });
+    expect(res).toMatchObject({ translate: 0, divergence: targets, divergenceSkipped: null });
     const jobsQueued = await queued(db, "measure_divergence");
     expect(jobsQueued.every((j) => (j.payload as { entryId: number }).entryId === topicId)).toBe(true);
     // No duplicates; after running completes measurement, nothing remains to enqueue.
     expect(await requeueTranslations(db, { divergence: true, llm: llm(fakeSet()) })).toMatchObject({ divergence: 0 });
-    expect(await runAll(db, fakeSet(), new Date(t0.getTime() + 1000))).toMatchObject({ done: 8, failed: 0 });
+    expect(await runAll(db, fakeSet(), new Date(t0.getTime() + 1000))).toMatchObject({ done: targets, failed: 0 });
     expect(await requeueTranslations(db, { divergence: true, llm: llm(fakeSet()) })).toMatchObject({ translate: 0, divergence: 0 });
   });
 

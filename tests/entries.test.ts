@@ -72,7 +72,7 @@ describe("entries", () => {
       ok: false,
       error: "body_required",
     });
-    expect(await createTopic(db, "u1", { lang: "es", title: "t", body: "b" })).toEqual({
+    expect(await createTopic(db, "u1", { lang: "xx", title: "t", body: "b" })).toEqual({
       ok: false,
       error: "invalid_lang",
     });

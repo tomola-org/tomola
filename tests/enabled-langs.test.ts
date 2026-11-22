@@ -37,7 +37,7 @@ describe("parseEnabledLangs", () => {
     return r.langs;
   };
 
-  it("treats unset, empty and blank as all nine languages", () => {
+  it("treats unset, empty and blank as all software languages", () => {
     for (const raw of [undefined, "", "   ", "\n"]) expect(langs(raw), JSON.stringify(raw)).toEqual([...LANGS]);
   });
 
@@ -53,7 +53,7 @@ describe("parseEnabledLangs", () => {
     expect(langs("zh-hant,ZH-HANS")).toEqual(["zh-Hant", "zh-Hans"]);
     expect(langs("fr,fr,ja,FR")).toEqual(["ja", "fr"]);
     expect(langs("ja,,en,")).toEqual(["ja", "en"]);
-    expect(langs("vi,th,ko,zh-Hans,zh-Hant,de,fr,en,ja")).toEqual([...LANGS]);
+    expect(langs([...LANGS].reverse().join(","))).toEqual([...LANGS]);
   });
 
   it("rejects unknown tags, naming them, and says how Chinese is named", () => {
@@ -74,7 +74,7 @@ describe("parseEnabledLangs", () => {
 });
 
 describe("enabledLangs and its readers", () => {
-  it("reads the environment on every call (all nine when unset)", () => {
+  it("reads the environment on every call (all when unset)", () => {
     expect(enabledLangs()).toEqual([...LANGS]);
     vi.stubEnv("ENABLED_LANGS", "ja,en");
     expect(enabledLangs()).toEqual(["ja", "en"]);
@@ -287,7 +287,7 @@ describe("translation jobs are limited to the enabled languages", () => {
     expect(await queuedLangs(db, "translate_entry", topic.id)).toEqual(["ja", "ja"]);
   });
 
-  it("queues all eight other languages when ENABLED_LANGS is unset (the development default)", async () => {
+  it("queues every target language when ENABLED_LANGS is unset (the development default)", async () => {
     const db = await setup();
     const topic = await createTopic(db, "u1", { lang: "ja", title: "題", body: "本文。" });
     if (!topic.ok) throw new Error("topic failed");
@@ -296,15 +296,16 @@ describe("translation jobs are limited to the enabled languages", () => {
 
   it("finishes a queued job for a language that is not enabled any more without translating (the job is done, no row is written)", async () => {
     const db = await setup();
-    // queued while all nine languages were enabled ...
+    // queued while all software languages were enabled ...
     const topic = await createTopic(db, "u1", { lang: "ja", title: "題", body: "本文。" });
     if (!topic.ok) throw new Error("topic failed");
-    expect(await queuedLangs(db, "translate_entry", topic.id)).toHaveLength(8);
+    const targets = LANGS.length - 1;
+    expect(await queuedLangs(db, "translate_entry", topic.id)).toHaveLength(targets);
     // ... run after the language was closed
     vi.stubEnv("ENABLED_LANGS", "ja,en");
     const stats = await runJobs(db);
-    // Eight title jobs and eight body jobs (seven languages are closed), plus the English divergence measurement.
-    expect(stats).toMatchObject({ ran: 17, done: 17, failed: 0, deferred: 0 });
+    // One title and one body job per target, plus the English divergence measurement.
+    expect(stats).toMatchObject({ ran: 2 * targets + 1, done: 2 * targets + 1, failed: 0, deferred: 0 });
     const langs = [...new Set((await db.select({ lang: translations.lang }).from(translations).where(eq(translations.entryId, topic.id))).map((r) => r.lang))];
     expect(langs).toEqual(["en"]);
     expect((await db.select().from(jobs).where(eq(jobs.kind, "translate_entry"))).every((j) => j.status === "done")).toBe(true);
@@ -312,7 +313,7 @@ describe("translation jobs are limited to the enabled languages", () => {
 
   it("does not queue measure_divergence for a language that is not enabled, and finishes one that was queued without measuring", async () => {
     const db = await setup();
-    // all nine enabled: translate all, which queues a divergence measurement per language
+    // all software languages enabled: translate all, which queues a divergence measurement per language
     const topic = await createTopic(db, "u1", { lang: "ja", title: "題", body: "本文。" });
     if (!topic.ok) throw new Error("topic failed");
     const handlers = createTranslationHandlers({ llm: { engines: fakeEngines(), env: { DIVERGENCE_SAMPLE_RATE: "1" } } });
@@ -481,7 +482,7 @@ describe("the screens take their language choices from the enabled languages", (
       .replace(/^\s*\/\/.*$/gm, "")
       .replace(/([^:\w"'`])\/\/.*$/gm, "$1");
 
-  // Operator and moderator screens keep all nine languages on purpose (a language is prepared before it is opened).
+  // Operator and moderator screens keep all software languages on purpose (a language is prepared before it is opened).
   const ALLOWED = new Set(["admin-roles.tsx", "admin-glossary.tsx"]);
 
   it("app/components/*.tsx and app/routes/*.{ts,tsx} do not use LANGS (use useEnabledLangs, enabledLangs() or the data of a loader), except operator screens", () => {

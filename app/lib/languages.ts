@@ -1,4 +1,4 @@
-export const LANGS = ["ja", "en", "fr", "de", "zh-Hant", "zh-Hans", "ko", "th", "vi"] as const;
+export const LANGS = ["ja", "en", "fr", "de", "zh-Hant", "zh-Hans", "ko", "th", "vi", "id", "es"] as const;
 export type Lang = (typeof LANGS)[number];
 
 export const SOURCE_LANGS = [...LANGS, "other"] as const;
@@ -6,7 +6,7 @@ export type SourceLang = typeof SOURCE_LANGS[number];
 export type LangSource = "explicit" | "detected" | "default" | "checked";
 export const isSourceLang = (value: unknown): value is SourceLang => value === "other" || isLang(value);
 
-export const LATIN_SCRIPT_LANGS: readonly string[] = ["en", "fr", "de", "vi"] satisfies readonly Lang[];
+export const LATIN_SCRIPT_LANGS: readonly string[] = ["en", "fr", "de", "vi", "id", "es"] satisfies readonly Lang[];
 
 export const AREAS = [...LANGS, "other"] as const;
 export type Area = (typeof AREAS)[number];
@@ -22,6 +22,8 @@ export const LANG_LABELS: Record<Lang, string> = {
   ko: "한국어",
   th: "ไทย",
   vi: "Tiếng Việt",
+  id: "Bahasa Indonesia",
+  es: "Español",
 };
 
 // Name languages by script, not country/region. Choices use LANG_LABELS autonyms: 简体中文, 繁體中文. For names in the reader's language,
@@ -46,8 +48,8 @@ export function isArea(x: unknown): x is Area {
   return typeof x === "string" && (AREAS as readonly string[]).includes(x);
 }
 
-// Reads the value of ENABLED_LANGS (the languages the site uses, a subset of the nine that the software supports).
-// Unset, empty or blank means all nine (the default for development and tests; production must set it, see assertEnabledLangsConfigured).
+// Reads ENABLED_LANGS, the subset of software languages the site uses.
+// Unset, empty or blank means all software languages in development and tests. Production must set it (see assertEnabledLangsConfigured).
 // Comma separated; surrounding spaces are ignored and tags match LANGS case-insensitively ("zh-hant" is accepted); duplicates collapse to one;
 // empty segments ("ja,,en", a trailing comma) are skipped. The result follows the order of LANGS, not the order written, so every choice list is in the same order.
 // An unknown tag is an error, and so is a value that names no language at all (",").

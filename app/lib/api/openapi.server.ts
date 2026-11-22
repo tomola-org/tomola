@@ -2,7 +2,7 @@ import { MAX_DRAFT_BYTES } from "./drafts-api.server";
 import { MEDIA_LIMITS } from "~/lib/media";
 import { DRAFT_ISSUE_KINDS } from "~/lib/draft-issues";
 import { DRAFT_RESPONSE_GUIDE } from "./draft-response-guide";
-import { LANGS } from "~/lib/languages";
+import { LANGS, SOURCE_LANGS } from "~/lib/languages";
 import { MEMBER_EXPORT_VERSION } from "~/lib/exports.server";
 import { siteUrl } from "~/lib/md/urls.server";
 import { principlesLangs, principlesReviewStates } from "~/lib/principles.server";
@@ -158,7 +158,7 @@ export function openApiDocument(): Record<string, unknown> {
       "/glossary.yaml": {
         get: {
           summary: "Download of every active glossary entry, in the format that pnpm glossary:import reads",
-          description: "All nine languages, one row per entry; no arguments. The same text as pnpm glossary:export. Sent with Content-Disposition: attachment.",
+          description: "All software languages, one row per entry; no arguments. The same text as pnpm glossary:export. Sent with Content-Disposition: attachment.",
           security: readSecurity,
           parameters: [kParam],
           responses: {
@@ -273,7 +273,7 @@ export function openApiDocument(): Record<string, unknown> {
             detailsReason: { type: "string", enum: ["name", "unclosed", "attributes", "depth"] },
           },
         },
-        SourceLang: { type: "string", enum: [...LANGS, "other"], description: "Original post language. Other languages are accepted for writing and translated into every enabled target language." },
+        SourceLang: { type: "string", enum: [...SOURCE_LANGS], description: "Original post language. Other languages are accepted for writing and translated into every enabled target language." },
         DraftCreated: {
           type: "object",
           required: ["id", "approve_url", "lang", "language", "issues", "issues_truncated"],

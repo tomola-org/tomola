@@ -1,3 +1,4 @@
+import { LANGS, LANG_LABELS } from "~/lib/languages";
 import { prepareEntryFigureDisplay } from "~/lib/figure-display.server";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -644,7 +645,8 @@ describe("figure translation pipeline", () => {
   it("keeps every pixel outside the text box and renders all enabled scripts", async () => {
     const w = await world();
     const before = await sharp(w.bytes).removeAlpha().raw().toBuffer();
-    for (const [lang, label] of [["ja", "日本語"], ["zh-Hans", "简体中文"], ["zh-Hant", "繁體中文"], ["ko", "한국어"], ["th", "ภาษาไทย"], ["vi", "Tiếng Việt"], ["fr", "Français"], ["de", "Deutsch"], ["en", "English"]] as const) {
+    for (const lang of LANGS) {
+      const label = LANG_LABELS[lang];
       const rendered = await renderFigure(w.bytes, sourceReading, [label], lang); expect(rendered).not.toBeNull();
       const after = await sharp(rendered!).removeAlpha().raw().toBuffer(); let changed = 0, outsideEqual = true;
       for (let y = 0; y < 180; y++) for (let x = 0; x < 320; x++) for (let c = 0; c < 3; c++) {

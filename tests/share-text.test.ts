@@ -59,6 +59,8 @@ describe("the description of a shared preview", () => {
   it("names the Open Graph locale of each language of the site", () => {
     expect(ogLocale("ja")).toBe("ja_JP");
     expect(ogLocale("zh-Hant")).toBe("zh_TW");
+    expect(ogLocale("id")).toBe("id_ID");
+    expect(ogLocale("es")).toBe("es_ES");
     expect(ogLocale("xx")).toBeNull();
   });
 });

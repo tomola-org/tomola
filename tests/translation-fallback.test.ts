@@ -1,3 +1,4 @@
+import { LANGS } from "~/lib/languages";
 import { quietLogger as quiet } from "./helpers/logger";
 import { and, asc, eq, ne } from "drizzle-orm";
 import { createElement } from "react";
@@ -20,6 +21,7 @@ import { loadTitleDisplays } from "~/lib/entry-display.server";
 import { addMember, createTestDb } from "./helpers/db";
 import { parseBlocks } from "./helpers/md";
 
+const targets = LANGS.length - 1;
 const t0 = new Date("2026-10-05T00:00:00Z");
 
 
@@ -131,7 +133,7 @@ describe("fallback to the secondary engine", () => {
     const db = await setup();
     await newTopic(db);
     const stats = await run(db, { primary: engine("gemini", "gem-1", () => refusal()), secondary: null, judge: null });
-    expect(stats.failed).toBe(16);
+    expect(stats.failed).toBe(2 * targets);
     expect(await db.select().from(translations)).toEqual([]);
   });
 
@@ -139,7 +141,7 @@ describe("fallback to the secondary engine", () => {
     const db = await setup();
     await newTopic(db);
     const stats = await run(db, { primary: engine("gemini", "g", () => refusal()), secondary: engine("claude", "c", () => refusal()), judge: null });
-    expect(stats.failed).toBe(16);
+    expect(stats.failed).toBe(2 * targets);
     expect(await db.select().from(translations)).toEqual([]);
   });
 
@@ -152,17 +154,17 @@ describe("fallback to the secondary engine", () => {
     let now = t0;
     for (let attempt = 1; attempt < FALLBACK_AFTER_ATTEMPTS; attempt++) {
       const stats = await run(db, { primary, secondary, judge: null }, { now });
-      expect(stats.retried, `attempt ${attempt}`).toBe(16);
+      expect(stats.retried, `attempt ${attempt}`).toBe(2 * targets);
       expect(secondary.calls).toBe(0);
       now = new Date(now.getTime() + 2 * 60 * 60 * 1000);
     }
     expect(await db.select().from(translations)).toEqual([]);
     const callsBefore = primary.calls;
     const stats = await run(db, { primary, secondary, judge: null }, { now });
-    expect(stats).toMatchObject({ done: 16, retried: 0, failed: 0 });
+    expect(stats).toMatchObject({ done: 2 * targets, retried: 0, failed: 0 });
     // Each title stage calls the primary once; the body stage skips another primary attempt after its title failure. The fallback handles both titles and the body.
-    expect(primary.calls - callsBefore).toBe(16);
-    expect(secondary.calls).toBe(24);
+    expect(primary.calls - callsBefore).toBe(2 * targets);
+    expect(secondary.calls).toBe(3 * targets);
     const fr = await rows(db, id, "fr");
     expect(fr.map((r) => [r.field, r.engine, r.fallback])).toEqual([["body", "claude", true], ["title", "claude", true]]);
   });
@@ -175,13 +177,13 @@ describe("fallback to the secondary engine", () => {
     const secondary = engine("claude", "c");
     // Degraded mode: a primary refusal stays failed without using a fallback.
     let stats = await run(db, { primary: engine("gemini", "g", () => refusal()), secondary, judge: null }, { env });
-    expect(stats.failed).toBe(16);
+    expect(stats.failed).toBe(2 * targets);
     expect(secondary.calls).toBe(0);
     // Paused: the primary is also stopped, so defer without failing.
     await db.update(jobs).set({ status: "queued", attempts: 0, runAt: t0 }).where(eq(jobs.status, "failed"));
     await db.insert(llmUsage).values({ engine: "gemini", model: "x", purpose: "translate", costUsdMicro: 5_000_000, createdAt: t0 });
     stats = await run(db, { primary: engine("gemini", "g"), secondary, judge: null }, { env });
-    expect(stats).toMatchObject({ deferred: 16, failed: 0 });
+    expect(stats).toMatchObject({ deferred: 2 * targets, failed: 0 });
     expect(await rows(db, id, "fr")).toEqual([]);
   });
 
@@ -200,10 +202,10 @@ describe("fallback to the secondary engine", () => {
     await run(db, { primary: refusing, secondary, judge: createFakeJudge() });
     const secondaryRows = await db.select().from(translations).where(and(eq(translations.entryId, id), eq(translations.kind, "secondary")));
     expect(secondaryRows.map((r) => r.lang).sort()).not.toContain("en");
-    expect(secondaryRows).toHaveLength(7);
+    expect(secondaryRows).toHaveLength(targets - 1);
     const found = await db.select().from(divergences).where(eq(divergences.entryId, id));
     expect(found.map((d) => d.lang)).not.toContain("en");
-    expect(found.length).toBe(7);
+    expect(found.length).toBe(targets - 1);
   });
 
   it("shows the fallback mark in the label, the title display and the Markdown twin (fallback: true)", async () => {
