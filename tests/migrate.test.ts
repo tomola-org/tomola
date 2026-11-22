@@ -2,10 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import pg from "pg";
 import { afterEach, describe, expect, it } from "vitest";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { migrationsFolder } from "~/lib/db/client.server";
 import { explainMigrationError, migrateDatabase, MIGRATE_LOCK_KEY } from "~/lib/db/migrate.server";
-import { profiles, user } from "~/lib/db/schema";
+import { memberSignatures, profiles, signingChallenges, user } from "~/lib/db/schema";
+import { addMember, createTestDb } from "./helpers/db";
+import { migrationStatements } from "./helpers/migrations";
 import { handleKey } from "~/lib/handles";
 import { createScratchDb, REAL_PG_URL, type ScratchDb } from "./helpers/pg-real";
 
@@ -16,6 +18,31 @@ describe("migrateDatabase on PGlite", () => {
     expect(result).toMatchObject({ checked: 0, fixed: [], waited: false });
     expect(result.target).toContain("PGlite");
   });
+});
+
+it("clears the stored signing preference while preserving account data and historical evidence", async () => {
+  const db = await createTestDb();
+  await addMember(db, "signed-before", "signed_before");
+  await addMember(db, "ordinary-before", "ordinary_before");
+  await db.update(profiles).set({ signPosts: true, passkeyOnly: true, displayName: "Example Name" }).where(eq(profiles.userId, "signed-before"));
+  const evidence = {
+    userId: "signed-before", operation: "change-handle", payload: "historical payload", payloadHash: "hash",
+    challenge: "historical challenge", credentialId: "key", publicKey: "public-key", rpId: "example.org",
+    origin: "https://example.org", assertion: { fixture: true }, authenticatorData: "data", clientDataJson: "client-data", signature: "signature",
+  };
+  await db.insert(memberSignatures).values(evidence);
+  await db.insert(signingChallenges).values({
+    userId: evidence.userId, operation: evidence.operation, payload: evidence.payload, payloadHash: evidence.payloadHash,
+    challenge: evidence.challenge, formHash: "form-hash", createdAt: new Date("2024-12-31"), expiresAt: new Date("2025-01-01"),
+  });
+  const readProfiles = () => db.select().from(profiles).orderBy(profiles.userId);
+  const before = await readProfiles();
+  const signatures = await db.select().from(memberSignatures);
+  const challenges = await db.select().from(signingChallenges);
+  for (const statement of migrationStatements("disable_post_signing")) await db.execute(sql.raw(statement));
+  expect(await readProfiles()).toEqual(before.map(row => ({ ...row, signPosts: false })));
+  expect(await db.select().from(memberSignatures)).toEqual(signatures);
+  expect(await db.select().from(signingChallenges)).toEqual(challenges);
 });
 
 describe("explainMigrationError", () => {
