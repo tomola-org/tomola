@@ -106,7 +106,8 @@ it("labels a selected destination with its actual village type", async () => {
 
 
 it("includes badge counts in the notification and member menu names", async () => {
-  const html = await member("/", { ...navigation, unreadNotifications: 112, apiDrafts: 2 });
+  const apiDraftLabel = m.nav_drafts_api_count({ count: 2 });
+  const html = await member("/", { ...navigation, unreadNotifications: 112, apiDrafts: 2, apiDraftLabel });
   expect(html).toContain(`aria-label="${m.nav_notifications()} · ${m.nav_notifications_unread({ count: "99+" })}"`);
-  expect(html).toContain(`aria-label="${m.nav_menu()} @shell_reader · ${m.nav_drafts_api_count({ count: 2 })}"`);
+  expect(html).toContain(`aria-label="${m.nav_menu()} @shell_reader · ${apiDraftLabel}"`);
 });

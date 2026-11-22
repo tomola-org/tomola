@@ -44,7 +44,6 @@ export async function loader({ request }: { request: Request }) {
   const { user, profile, db } = await getReader(request);
   // loggedOut: the notice left by logging out, which now lands on the posts where reading needs no login (the middleware clears it after this read).
   if (!user) return { reader: true as const, ...(hasLogoutNotice(request) ? { loggedOut: true as const } : {}) };
-  // apiDrafts: number of API drafts awaiting approval, shown in the header's 「下書き」 badge.
   // isOperator: operator status (OPERATOR_EMAILS; roles.server.ts).
   const scopePromise = getMemberScope(request);
   // Initialize a missing display preference without adopting a shared link's language.
@@ -70,6 +69,8 @@ export async function loader({ request }: { request: Request }) {
     canInvite: canCreateInvitations(scope.operator),
     isModerator: isModerator(scope),
     ...draftBadges,
+    apiDraftLabel: draftBadges.apiDrafts ? m.nav_drafts_api_count({ count: draftBadges.apiDrafts }) : "",
+    previewedDraftLabel: draftBadges.previewedDrafts ? m.nav_drafts_previewed_count({ count: draftBadges.previewedDrafts }) : "",
     unreadNotifications: notificationState[0],
     followedUnread: notificationState[1],
     // The greeting's words are made here, in the member's language, so that the page's script carries none of them (they are used on one page view in a member's life).

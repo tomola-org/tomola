@@ -30,10 +30,9 @@ export function MemberHeader({ data, sideNavigation = false, whyLink = false }: 
   const prefill = location.pathname.startsWith("/t/new") ? newTopic?.prefill : null;
   const current = navigationSection(location.pathname);
   const joined = "villages" in data ? data.villages : [];
-  const draftBadge = <CountBadge count={data.apiDrafts} label={m.nav_drafts_api_count({ count: data.apiDrafts })} tone="strong" cap={Number.MAX_SAFE_INTEGER} />;
-  const previewedLabel = data.previewedDrafts ? m.nav_drafts_previewed_count({ count: data.previewedDrafts }) : "";
-  const previewedBadge = <CountBadge count={data.previewedDrafts} label={previewedLabel} icon={<Eye className="size-3" />} />;
-  const draftLabels = [data.apiDrafts ? m.nav_drafts_api_count({ count: data.apiDrafts }) : "", previewedLabel].filter(Boolean);
+  const draftBadge = <CountBadge count={data.apiDrafts} label={data.apiDraftLabel} tone="strong" cap={Number.MAX_SAFE_INTEGER} />;
+  const previewedBadge = <CountBadge count={data.previewedDrafts} label={data.previewedDraftLabel} icon={<Eye className="size-3" />} />;
+  const draftLabels = [data.apiDraftLabel, data.previewedDraftLabel].filter(Boolean);
   const adminLinks = <>
     <DropdownMenuItem render={<Link to="/mod" />}>{labels.nav_mod}</DropdownMenuItem>
     <DropdownMenuItem render={<Link to="/admin/translations" />}>{labels.nav_translations}</DropdownMenuItem>

@@ -114,7 +114,7 @@ export function EntryFields({
         <FieldDescription><a href={WRITING_PATH} target="_blank" rel="noreferrer" className="underline">{m.writing_guide_title()}</a></FieldDescription>
         <FieldDescription><a href="/connect" target="_blank" rel="noreferrer" className="underline">{m.footer_connect()}</a></FieldDescription>
       </details>
-      <div hidden={richActive}><EntryPreview kind={previewKind} fixedLang={fixedLang} pasteFrontmatter={pasteFrontmatter} invalidateOnEdit={invalidatePreviewOnEdit} selectedLang={previewLanguage ?? previewLang} bodyLabel={bodyPreviewLabel} /></div>
+      <div hidden={richActive}><EntryPreview kind={previewKind} fixedLang={fixedLang} pasteFrontmatter={pasteFrontmatter} invalidateOnEdit={invalidatePreviewOnEdit} selectedLang={previewLanguage ?? previewLang} label={bodyPreviewLabel ? m.draft_preview_body() : undefined} /></div>
       {showLanguage && !fixedLang && <EntryLanguage error={error} errorId={errorId} defaultLang={defaultLang} selectedLang={selectedLang} pasteFrontmatter={Boolean(pasteFrontmatter)} onChange={invalidatePreviewOnEdit ? setPreviewLang : undefined} />}
     </>
   );

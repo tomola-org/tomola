@@ -546,7 +546,8 @@ export async function action({ request, params }: Route.ActionArgs) {
     if (!(error instanceof MarkdownBusyError) && !(error instanceof SigningFailureResponse)) throw error;
     const form = await retained.formData();
     const raw = readEntryForm(form);
-    return data({ intent: "reply" as const, error: error instanceof SigningFailureResponse ? error.code : "busy", input: { body: raw.body, lang: raw.lang }, reported: false }, { status: error instanceof SigningFailureResponse ? error.status : 503, headers: error instanceof SigningFailureResponse ? { "Cache-Control": "private, no-store" } : { "Retry-After": "1" } });
+    const code = error instanceof SigningFailureResponse ? error.code : "busy";
+    return data({ intent: "reply" as const, error: code, errorText: entryErrorMessage(code, "reply"), input: { body: raw.body, lang: raw.lang }, reported: false }, { status: error instanceof SigningFailureResponse ? error.status : 503, headers: error instanceof SigningFailureResponse ? { "Cache-Control": "private, no-store" } : { "Retry-After": "1" } });
   }
 
 }
@@ -852,7 +853,7 @@ export default function Topic({ loaderData, actionData }: Route.ComponentProps) 
         <SaveButton topicId={full.id} saved={loaderData.saved} returnTo={`${returnTo}#p-${full.id}`} />
       </noscript>}
       <ReportResult entryId={full.id} result={actionData} />
-      {actionData?.intent === "intro" && actionData.error && <p role="alert">{entryErrorMessage(actionData.error)}</p>}
+      {actionData?.intent === "intro" && <p role="alert">{actionData.errorText}</p>}
     </section>
   );
   return (
@@ -1025,6 +1026,7 @@ export default function Topic({ loaderData, actionData }: Route.ComponentProps) 
             nushiAvailable={loaderData.nushiAvailable}
             owner={loaderData.ownerId} threadId={topic.id} keeper={{ scope: `reply:${topic.id}:${replyTarget?.id ?? ""}`, family: `reply:${topic.id}:`, startBody: "" }}
             error={actionData?.intent === "reply" ? actionData.error ?? undefined : undefined}
+            errorText={actionData?.intent === "reply" ? actionData.errorText : undefined}
             defaultLang={defaultLang} defaultBody={replyInput?.body} selectedLang={replyInput?.lang}
             above={<>
               {replyTarget && <p className="flex flex-wrap gap-2 ui-meta [overflow-wrap:anywhere]">

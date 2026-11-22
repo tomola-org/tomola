@@ -2,6 +2,7 @@ import { data, redirect } from "react-router";
 import type { requireWriter } from "~/lib/auth/session.server";
 import { defaultPostLang } from "~/lib/profiles.server";
 import { applyPastedFrontmatter, formString, readEntryForm, readReplyParent } from "~/lib/entry-form.server";
+import { entryErrorMessage } from "~/lib/entry-error-message";
 import { createReply, deleteOwnEntry, isEntryInThread, replyLocation } from "~/lib/entries.server";
 import { createDraft, deleteLinkedDraft, linkedDraftOf, lockLinkedClientDraft, updateDraft } from "~/lib/drafts.server";
 import { createReport } from "~/lib/moderation.server";
@@ -18,7 +19,7 @@ type TopicAction = Awaited<ReturnType<typeof requireWriter>> & { request: Reques
 async function introductionResult(result: Awaited<ReturnType<typeof setIntroduction>>, threadId: number) {
   if (!result.ok) {
     if (result.error === "not_found" || result.error === "forbidden") failure(result.error);
-    return data({ intent: "intro" as const, error: result.error, reported: false }, { status: 400 });
+    return data({ intent: "intro" as const, error: result.error, errorText: entryErrorMessage(result.error), reported: false }, { status: 400 });
   }
   throw redirect(`/t/${threadId}`);
 }
@@ -79,7 +80,7 @@ export async function reportTopicTranslation({ db, user, threadId, form, intent 
 }
 
 function replyError(form: FormData, error: string, status = 400, headers?: HeadersInit) {
-  return data({ intent: "reply" as const, error, reported: false, input: readEntryForm(form) }, { status, headers });
+  return data({ intent: "reply" as const, error, errorText: entryErrorMessage(error, "reply"), reported: false, input: readEntryForm(form) }, { status, headers });
 }
 async function replyInput({ form, profile, threadId, intent }: TopicAction) {
   const selectedParent = readReplyParent(form);

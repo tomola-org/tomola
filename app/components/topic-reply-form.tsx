@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { ReplyFields } from "~/components/reply-fields";
 import { SendButton, SignedFormFrame } from "~/components/signed-form-frame";
-import { entryErrorMessage } from "~/lib/entry-error-message";
 import { afterPageIdle } from "~/lib/initial-activation";
 import { m } from "~/paraglide/messages.js";
 
@@ -12,7 +11,7 @@ type DeferredSubmit = { form: HTMLFormElement; submitter: HTMLElement | null; sn
 const replyIdentity = (values: FormData) => JSON.stringify([values.get("body"), values.get("parentId"), values.get("intent")]);
 
 export default function TopicReplyForm({ signatureRequired, respondWithPost, children, ...fields }: Pick<Fields,
-  "nushiAvailable" | "owner" | "threadId" | "keeper" | "error" | "defaultLang" | "defaultBody" | "selectedLang" | "above" | "aiTools"
+  "nushiAvailable" | "owner" | "threadId" | "keeper" | "error" | "errorText" | "defaultLang" | "defaultBody" | "selectedLang" | "above" | "aiTools"
 > & {
   signatureRequired: boolean;
   respondWithPost: (ComponentProps<typeof SendButton> & { formAction: string }) | null;
@@ -53,7 +52,6 @@ export default function TopicReplyForm({ signatureRequired, respondWithPost, chi
     <ReplyFields
       {...fields}
       errorId="reply-error"
-      errorText={fields.error ? entryErrorMessage(fields.error, "reply") : undefined}
       actions={respondWithPost && <div className="flex flex-wrap gap-2">
         <SendButton>{m.submit_reply()}</SendButton>
         <SendButton {...respondWithPost} aria-describedby="respond-with-post-hint" />
