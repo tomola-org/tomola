@@ -5,7 +5,7 @@ import fs from "node:fs";
 import { expect, type BrowserContext, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { captureScreenshot, formatMessage, openPostSettings, openReplyMore, useMember, clientHeaders, enMessages as en, messageTitleField as titleField, waitForFormReady, state } from "./helpers";
-import { acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
 
 // Each case owns its draft and resets the shared editor in beforeEach.
 // Default ordering permits a retry of the annotated case without rerunning its siblings.
@@ -423,7 +423,7 @@ test("a deleted draft cannot silently become a new one and keeps input plus the 
 test("imported text is reviewed and signed only when the member chooses to publish", async () => {
   await enableSigningAuthenticator(page);
   await page.goto("/settings");
-  await page.getByRole("button", { name: en.settings_passkeys_add, exact: true }).click();
+  await addSettingsPasskey(page);
   await expect(page.getByText(en.settings_passkeys_added, { exact: true })).toBeVisible();
   async function preference(enabled: boolean) {
     if (!(await page.locator("#settings-advanced").evaluate(element => (element as HTMLDetailsElement).open))) await page.locator("#settings-advanced > summary").click();

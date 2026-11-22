@@ -4,6 +4,7 @@ import path from "node:path";
 import { expect } from "@playwright/test";
 import { test, richEditorTest } from "./editor-fixture";
 import { clientHeaders, state, useMember, waitForClientRoute, waitForHydration, enMessages as m } from "./helpers";
+import { settingsPasskeyAddButton } from "./signing-helper";
 
 const navigate = (page: import("@playwright/test").Page, path: string) => page.evaluate(path => {
   void (window as unknown as { __reactRouterDataRouter: { navigate(path: string): Promise<void> } }).__reactRouterDataRouter.navigate(path);
@@ -138,6 +139,7 @@ test("translation switches retain focus on the replacement link", async ({ page 
 });
 
 test("passkey actions retain busy focus, reject duplicates and recover after Later", async ({ page }) => {
+  await page.setExtraHTTPHeaders(clientHeaders("10.31.4.1"));
   await useMember(page, "a11y_passkey@example.com");
   await page.getByRole("button", { name: m.passkey_prompt_later, exact: true }).click();
   await expect(page.locator("main")).toBeFocused();
@@ -153,7 +155,7 @@ test("passkey actions retain busy focus, reject duplicates and recover after Lat
     requests++; await gate;
     await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: "passkey_failed" }) });
   });
-  const add = page.getByRole("button", { name: m.settings_passkeys_add, exact: true });
+  const add = await settingsPasskeyAddButton(page);
   try {
     await add.click();
     await expect(add).toHaveAttribute("aria-disabled", "true");

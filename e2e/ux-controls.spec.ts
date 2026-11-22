@@ -4,8 +4,8 @@ import { expect, type BrowserContext, type ElementHandle, type Page } from "@pla
 import { test, richEditorTest } from "./editor-fixture";
 import fs from "node:fs";
 import path from "node:path";
-import { useMember, waitForClientRoute, waitForFormReady, waitForHydration, state, enMessages as m, openReplyMore } from "./helpers";
-import { acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { clientHeaders, useMember, waitForClientRoute, waitForFormReady, waitForHydration, state, enMessages as m, openReplyMore } from "./helpers";
+import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
 
 const body = (page: Page) => page.locator('textarea[name="body"]');
 const post = (page: Page, url: string, text: string, lang = "en") => page.request.post(url, { form: { body: text, lang }, headers: { Origin: new URL(page.url()).origin } });
@@ -14,13 +14,13 @@ const fixture = (): { topicId: number; replyId: number; questionId: number } => 
 test.describe("signing failure guidance", () => {
   let context: BrowserContext;
   test.beforeAll(async ({ browser }) => {
-    context = await browser.newContext();
+    context = await browser.newContext({ extraHTTPHeaders: clientHeaders("10.31.4.6") });
     const page = await context.newPage();
     await useMember(page, "ux_signer@example.com", "/settings");
     await page.locator("#settings-advanced > summary").click();
     if (!await page.getByRole("checkbox", { name: m.settings_sign_posts_label, exact: true }).isChecked()) {
       await enableSigningAuthenticator(page);
-      await page.getByRole("button", { name: m.settings_passkeys_add, exact: true }).click();
+      await addSettingsPasskey(page);
       await expect(page.getByText(m.settings_passkeys_added, { exact: true })).toBeVisible();
       await page.getByRole("checkbox", { name: m.settings_sign_posts_label, exact: true }).check();
       await page.locator('form:has(input[name="intent"][value="sign-posts"])').getByRole("button", { name: m.save_changes, exact: true }).click();

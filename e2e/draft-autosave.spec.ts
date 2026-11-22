@@ -5,7 +5,7 @@ import { test } from "./editor-fixture";
 import { captureScreenshot, chooseEditorMode, clientHeaders, enMessages as en, formatMessage, messagePattern, openPostSettings, state, useMember as restoreAutosaveMember, waitForClientRoute, waitForFormReady } from "./helpers";
 import { baseOf } from "../app/lib/local-draft";
 import { LANG_LABELS } from "../app/lib/languages";
-import { acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
 import { beforeHydration } from "./support/prehydration";
 
 // Clock mocks remove Navigation Timing; explicit fresh visits need the native entries.
@@ -616,7 +616,7 @@ for (const mode of ["markdown", "rich"] as const) test(`personal destinations st
   await open(page, scenario);
   await enableSigningAuthenticator(page);
   await page.goto("/settings");
-  await page.getByRole("button", { name: en.settings_passkeys_add, exact: true }).click();
+  await addSettingsPasskey(page);
   await expect(page.getByText(en.settings_passkeys_added, { exact: true })).toBeVisible();
   const advanced = page.locator("#settings-advanced");
   if (!(await advanced.evaluate(element => (element as HTMLDetailsElement).open))) await advanced.locator("summary").first().click();

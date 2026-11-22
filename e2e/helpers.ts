@@ -232,11 +232,29 @@ export async function loginWithMagicLink(page: Page, email: string): Promise<str
   return link;
 }
 
-// Read the code only from development mail output, never from page HTML/data.
-export async function loginCodeFor(email: string, since: number): Promise<string> {
-  const code = (await mailFor(email, since)).text.match(/\b(\d{3}) (\d{3})\b/);
+export type LoginCodeInbox = {
+  position: () => number;
+  read: (email: string, since: number) => Promise<{ text: string }>;
+};
+
+// Read the code from the test mail transport.
+export async function loginCodeFor(email: string, since: number, read: LoginCodeInbox["read"] = mailFor): Promise<string> {
+  const code = (await read(email, since)).text.match(/\b(\d{3}) (\d{3})\b/);
   expect(code, "six-digit code in the email").not.toBeNull();
   return `${code![1]}${code![2]}`;
+}
+
+export async function reverifyWithEmailCode(page: Page, inbox: LoginCodeInbox = { position: logSize, read: mailFor }) {
+  await expect(page).toHaveURL(url => url.pathname === "/login" && url.searchParams.get("reauth") === "1");
+  await waitForHydration(page);
+  const messages = await uiMessages(page);
+  const address = page.getByLabel(messages.login_email, { exact: true });
+  await expect(address).toHaveJSProperty("readOnly", true);
+  const email = await address.inputValue();
+  const since = inbox.position();
+  await page.getByRole("button", { name: messages.reauth_submit, exact: true }).click();
+  await page.getByLabel(messages.login_code_label, { exact: true }).fill(await loginCodeFor(email, since, inbox.read));
+  await page.getByRole("button", { name: messages.login_code_submit, exact: true }).click();
 }
 
 // Wait for this form's client initialization, including adoption of input typed before hydration.

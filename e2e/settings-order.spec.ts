@@ -4,7 +4,7 @@ import { expect, type BrowserContext, type Page, type Route } from "@playwright/
 import { test } from "./editor-fixture";
 import { SIGNATURE_ASSERTION_FIELD, SIGNATURE_CHALLENGE_FIELD } from "../app/lib/signing";
 import { captureScreenshot, useMember, waitForClientRoute, clientHeaders, enMessages as en, formatMessage } from "./helpers";
-import { acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
 
 test.describe.configure({ mode: "serial" });
 let context: BrowserContext;
@@ -157,7 +157,7 @@ for (const width of [1280, 390]) {
     await enableSigningAuthenticator(page);
     await page.goto("/settings");
     if (await page.getByText(en.settings_passkeys_none, { exact: true }).isVisible()) {
-      await page.getByRole("button", { name: en.settings_passkeys_add, exact: true }).click();
+      await addSettingsPasskey(page);
       await expect(page.getByText(en.settings_passkeys_added, { exact: true })).toBeVisible();
     }
     await page.locator("#settings-advanced > summary").click();

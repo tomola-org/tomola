@@ -1,3 +1,4 @@
+import { addSettingsPasskey } from "./signing-helper";
 import { hostCookieName } from "./helpers";
 import { completeTrialFields } from "./helpers";
 import fs from "node:fs";
@@ -29,13 +30,13 @@ test.afterAll(async () => {
 
 const mails = (since: number) => fs.readFileSync(state().logFile).subarray(since).toString("utf8");
 
-async function logOut() {
+async function logOut(destination: string | RegExp = /\/login$/) {
   // A document navigation can finish before hydration closes the native menu.
   // Wait for the loaded page before opening it and submitting logout.
   await waitForClientRoute(page);
   const menu = await openUserMenu(page);
   await menu.getByRole("menuitem", { name: enMessages.nav_logout, exact: true }).click();
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(destination);
 }
 
 test("the emailed link opens a confirm page: opening it (as a mail scanner does) does not use the token; the button does", async () => {
@@ -263,8 +264,7 @@ test("a member signs in with a passkey and confirms its removal by email link", 
     await page.goto("/settings");
     await expect(page.getByRole("heading", { name: enMessages.settings_passkeys_heading, exact: true })).toBeVisible();
     if ((await cdp.send("WebAuthn.getCredentials", { authenticatorId })).credentials.length === 0) {
-      await page.getByLabel(/^Name \(optional/).fill("e2e key");
-      await page.getByRole("button", { name: enMessages.settings_passkeys_add }).click();
+      await addSettingsPasskey(page, { name: "e2e key" });
     }
     await expect(page.getByText(enMessages.settings_passkeys_added)).toBeVisible({ timeout: 10_000 });
   }).toPass({ timeout: 60_000 });
@@ -272,8 +272,7 @@ test("a member signs in with a passkey and confirms its removal by email link", 
   expect((await cdp.send("WebAuthn.getCredentials", { authenticatorId })).credentials).toHaveLength(1);
 
   // Log out, then sign in with a passkey, without email.
-  await logOut();
-  await expect(page).toHaveURL(/\/login$/);
+  await logOut(test.info().config.metadata.publicReading ? "/" : "/login");
   await context.addCookies([{ name: hostCookieName("tomola.reading-return"), value: "%2Ft%2F42", url: state().baseURL, secure: new URL(state().baseURL).protocol === "https:", httpOnly: true, sameSite: "Lax" }]);
   const mailsBefore = logSize();
   await expect(async () => {

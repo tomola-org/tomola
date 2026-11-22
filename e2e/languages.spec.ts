@@ -1,7 +1,7 @@
 import { expect } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { useMember, formatMessage, clientHeaders, enMessages, state, waitForFormReady, openPostSettings } from "./helpers";
-import { acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
 
 const english = "This is a place for people to share their ideas and to learn from each other.";
 const french = "Nous avons une place pour les personnes qui veulent partager leurs idées avec les autres.";
@@ -13,7 +13,7 @@ test("automatic prose language survives language reselection and a real signed p
     await useMember(page, "language_signer@example.com");
     await enableSigningAuthenticator(page);
     await page.goto("/settings");
-    await page.getByRole("button", { name: enMessages.settings_passkeys_add, exact: true }).click();
+    await addSettingsPasskey(page);
     await expect(page.getByText(enMessages.settings_passkeys_added, { exact: true })).toBeVisible();
     if (!(await page.locator("#settings-advanced").evaluate(element => (element as HTMLDetailsElement).open))) await page.locator("#settings-advanced > summary").click();
     await page.getByRole("checkbox", { name: enMessages.settings_sign_posts_label, exact: true }).check();

@@ -1,8 +1,8 @@
 import { expect, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
-import { enMessages as en, useMember, waitForFormReady } from "./helpers";
+import { clientHeaders, enMessages as en, useMember, waitForFormReady } from "./helpers";
 import { routeModule } from "./support/module-route";
-import { acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
 
 const body = (page: Page) => page.locator('textarea[name="body"]').first();
 const form = (page: Page) => page.locator("form", { has: body(page) }).first();
@@ -110,9 +110,10 @@ test("a reply draft stays clean on opening and saves writing entered before auto
 });
 
 test("signing waits for an in-flight autosave and reviews the latest saved fields", async ({ page }) => {
+  await page.setExtraHTTPHeaders(clientHeaders("10.31.4.5"));
   await useMember(page, "lazy_autosave_signing@example.com", "/settings");
   await enableSigningAuthenticator(page);
-  await page.getByRole("button", { name: en.settings_passkeys_add, exact: true }).click();
+  await addSettingsPasskey(page);
   await expect(page.getByText(en.settings_passkeys_added, { exact: true })).toBeVisible();
   await page.locator("#settings-advanced").evaluate(element => { (element as HTMLDetailsElement).open = true; });
   await page.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true }).check();

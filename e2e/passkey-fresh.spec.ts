@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect, type BrowserContext, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
-import { captureScreenshot, clientHeaders, enMessages as m, logSize, loginCodeFor, loginWithMagicLink, state, useMember, waitForClientRoute } from "./helpers";
+import { captureScreenshot, clientHeaders, enMessages as m, loginWithMagicLink, reverifyWithEmailCode, state, useMember, waitForClientRoute } from "./helpers";
 
 // An older session cannot add a passkey. These scenarios age the member's
 // session by moving the test server's clock, then check that registration
@@ -27,10 +27,7 @@ async function reverify(page: Page, email: string, link = false) {
     await loginWithMagicLink(page, email);
     return;
   }
-  const since = logSize();
-  await page.getByRole("button", { name: m.reauth_submit, exact: true }).click();
-  await page.getByLabel(m.login_code_label, { exact: true }).fill(await loginCodeFor(email, since));
-  await page.getByRole("button", { name: m.login_code_submit, exact: true }).click();
+  await reverifyWithEmailCode(page);
 }
 
 async function openAdvancedSettings(page: Page) {

@@ -1,3 +1,4 @@
+import { addSettingsPasskey } from "./signing-helper";
 import { saveEditorDraft } from "./draft-autosave-helper";
 import { expect } from "@playwright/test";
 import { test } from "./editor-fixture";
@@ -72,8 +73,7 @@ test("passkey-only sign-in rejects a pending email code and accepts a verified p
     } });
     const addKey = async (name: string) => {
       const list = page.locator("#settings-passkeys");
-      await list.getByLabel(m.settings_passkeys_name_label, { exact: true }).fill(name);
-      await list.getByRole("button", { name: m.settings_passkeys_add, exact: true }).click();
+      await addSettingsPasskey(page, { name });
       await expect(list.getByText(name, { exact: true })).toBeVisible();
     };
     const first = await addAuthenticator();

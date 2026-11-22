@@ -2,8 +2,8 @@ import { expect, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { baseOf } from "../app/lib/local-draft";
 import { beforeHydration } from "./support/prehydration";
-import { captureScreenshot, enMessages as m, state, useMember as restoreWritingMember, waitForClientRoute, waitForFormReady } from "./helpers";
-import { acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { captureScreenshot, clientHeaders, enMessages as m, state, useMember as restoreWritingMember, waitForClientRoute, waitForFormReady } from "./helpers";
+import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
 import { pressAcrossHydration } from "./support/early-actions";
 
 const body = (page: Page) => page.locator('textarea[name="body"]').first();
@@ -145,6 +145,7 @@ test("topic editing shows its fixed destination above the title without changing
 });
 
 test("each rejected destination submission returns focus and a new signing review clears stale errors", async ({ page }) => {
+  await page.setExtraHTTPHeaders(clientHeaders("10.31.4.7"));
   await open(page, "errors");
   await body(page).fill("---\nvillage: missing-destination\n---\nWriting needing a destination.");
   const submit = page.getByRole("button", { name: m.submit_post, exact: true });
@@ -157,7 +158,7 @@ test("each rejected destination submission returns focus and a new signing revie
   await body(page).fill("");
   await enableSigningAuthenticator(page);
   await page.goto("/settings");
-  await page.getByRole("button", { name: m.settings_passkeys_add, exact: true }).click();
+  await addSettingsPasskey(page);
   await expect(page.getByText(m.settings_passkeys_added, { exact: true })).toBeVisible();
   await page.locator("#settings-advanced > summary").click();
   await page.getByRole("checkbox", { name: m.settings_sign_posts_label, exact: true }).check();

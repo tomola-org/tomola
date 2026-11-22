@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { expect } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { waitForClientRoute, useMember, formatMessage, clientHeaders, enMessages, state, messageTitleField as titleField, waitForFormReady } from "./helpers";
-import { acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
 
 test("opted-in writes and both preference changes use real UV assertions; unsigned entrances are refused", async ({ browser }, info) => {
   const context = await browser.newContext({ extraHTTPHeaders: clientHeaders("10.17.0.1") });
@@ -15,7 +15,7 @@ test("opted-in writes and both preference changes use real UV assertions; unsign
     await useMember(page, "signer@example.com");
     const authenticator = await enableSigningAuthenticator(page);
     await page.goto("/settings");
-    await page.getByRole("button", { name: enMessages.settings_passkeys_add, exact: true }).click();
+    await addSettingsPasskey(page);
     await expect(page.getByText(enMessages.settings_passkeys_added, { exact: true })).toBeVisible();
     if (!(await page.locator("#settings-advanced").evaluate(element => (element as HTMLDetailsElement).open))) await page.locator("#settings-advanced > summary").click();
     await page.getByRole("checkbox", { name: enMessages.settings_sign_posts_label, exact: true }).check();

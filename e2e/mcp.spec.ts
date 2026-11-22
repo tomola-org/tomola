@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { waitForClientRoute, useMember, clientHeaders, enMessages, jaMessages, state  } from "./helpers";
-import { enableSigningAuthenticator } from "./signing-helper";
+import { addSettingsPasskey, enableSigningAuthenticator } from "./signing-helper";
 
 test("OAuth consent, draft publication, post and village review, and immediate revocation in English and Japanese", async ({ page, browser, request }) => {
   test.setTimeout(180_000);
@@ -176,12 +176,12 @@ test("OAuth consent, draft publication, post and village review, and immediate r
 
 test("MCP login offers passkeys and returns to the requested AI connection", async ({ browser, request }) => {
   const loopback = await oauthLoopback();
-  const context = await browser.newContext();
+  const context = await browser.newContext({ extraHTTPHeaders: clientHeaders("127.0.0.33") });
   const page = await context.newPage();
   try {
     await useMember(page, "ux_edit@example.com", "/settings");
     await enableSigningAuthenticator(page);
-    await page.getByRole("button", { name: enMessages.settings_passkeys_add, exact: true }).click();
+    await addSettingsPasskey(page);
     await expect(page.getByText(enMessages.settings_passkeys_added, { exact: true })).toBeVisible();
     const { baseURL } = state();
     const registration = await request.post(`${baseURL}/api/auth/oauth2/register`, { data: { client_name: "Fictional passkey client", application_type: "native", redirect_uris: [loopback.redirectURI], grant_types: ["authorization_code"], response_types: ["code"], token_endpoint_auth_method: "none", scope: "read" } });

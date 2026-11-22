@@ -284,7 +284,6 @@ export async function seedVillages(db: Db, dir: string) {
   for (const name of ["switch", "rich", "settings", "draft", "frontmatter", "screens", "conflict", "stale", "recheck", "recheck_nojs", "signed_review"]) {
     const [member] = await db.select({ id: profiles.userId }).from(profiles).where(eq(profiles.handle, `vtarget_${name}`));
     await changeVillageMembership(db, member.id, "ja", "join");
-    if (name === "signed_review") await db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, member.id));
     if (name === "draft") {
       const draft = await createDraft(db, member.id, { kind: "topic", title: "Destination approval fixture", body: "An owned draft destination.", lang: "en", village: "en" }, { via: "api", client: { key: "fixture:vtarget", id: "fixture:vtarget", name: "Destination fixture", uri: null } });
       if (!draft.ok) throw new Error(draft.error);

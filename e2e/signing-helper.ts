@@ -1,5 +1,5 @@
 import { expect, type CDPSession, type Page } from "@playwright/test";
-import { enMessages, jaMessages } from "./helpers";
+import { enMessages, jaMessages, reverifyWithEmailCode, uiMessages, waitForHydration, type LoginCodeInbox } from "./helpers";
 
 const authenticators = new WeakMap<Page, { client: CDPSession; authenticatorId: string }>();
 
@@ -15,6 +15,59 @@ export async function enableSigningAuthenticator(page: Page) {
   const current = { client, authenticatorId };
   authenticators.set(page, current);
   return current;
+}
+
+async function reverifyForPasskeyAddition(page: Page, href: string, inbox?: LoginCodeInbox) {
+  const reauth = new URL(href, page.url());
+  const settings = new URL(reauth.searchParams.get("next")!, reauth);
+  // Return to the same section without automatically enrolling an unnamed key.
+  settings.searchParams.delete("passkey");
+  reauth.searchParams.set("next", settings.pathname + settings.search + settings.hash);
+  await page.goto(reauth.href);
+  await waitForHydration(page);
+  const messages = await uiMessages(page);
+  await expect(page.getByRole("heading", { name: messages.reauth_title, exact: true })).toBeVisible();
+  if (await page.getByRole("button", { name: messages.reauth_submit, exact: true }).isVisible()) {
+    await reverifyWithEmailCode(page, inbox);
+  } else {
+    // Protected accounts use the existing passkey to reverify and to approve enrollment.
+    await page.getByRole("button", { name: messages.login_passkey, exact: true }).click();
+  }
+  await expect(page).toHaveURL(settings.href);
+  await waitForHydration(page);
+}
+
+export async function settingsPasskeyAddButton(page: Page, inbox?: LoginCodeInbox) {
+  await waitForHydration(page);
+  const messages = await uiMessages(page);
+  const section = page.locator("#settings-passkeys");
+  const label = { name: messages.settings_passkeys_add, exact: true };
+  const add = section.getByRole("button", label);
+  const reauth = section.getByRole("link", label);
+  await expect(add.or(reauth)).toBeVisible();
+  if (await reauth.isVisible()) await reverifyForPasskeyAddition(page, (await reauth.getAttribute("href"))!, inbox);
+  await expect(add).toBeVisible();
+  return add;
+}
+
+export async function addSettingsPasskey(page: Page, { name, inbox }: { name?: string; inbox?: LoginCodeInbox } = {}) {
+  const add = await settingsPasskeyAddButton(page, inbox);
+  const messages = await uiMessages(page);
+  const section = page.locator("#settings-passkeys");
+  const added = section.getByRole("status").filter({ hasText: messages.settings_passkeys_added });
+  const alert = section.getByRole("alert");
+  const reauth = page.getByRole("heading", { name: messages.reauth_title, exact: true });
+  const click = async () => {
+    if (name !== undefined) await section.getByLabel(messages.settings_passkeys_name_label, { exact: true }).fill(name);
+    await add.click();
+  };
+  await click();
+  // The session can also expire while the settings page is open.
+  await expect(added.or(alert).or(reauth)).toBeVisible();
+  if (await reauth.isVisible()) {
+    await reverifyForPasskeyAddition(page, page.url(), inbox);
+    await click();
+  }
 }
 
 // Existing posting scenarios explicitly accept their own prepared text after opening the approval screen.

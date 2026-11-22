@@ -2,8 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect } from "@playwright/test";
 import { test } from "./editor-fixture";
-import { captureScreenshot, clientHeaders, enMessages as m, logSize, loginCodeFor, openUserMenu, state, useMember, waitForClientRoute } from "./helpers";
-import { enableSigningAuthenticator } from "./signing-helper";
+import { captureScreenshot, clientHeaders, enMessages as m, openUserMenu, reverifyWithEmailCode, state, useMember, waitForClientRoute } from "./helpers";
+import { addSettingsPasskey, enableSigningAuthenticator } from "./signing-helper";
 
 const clock = () => path.join(state().dir, "server-clock.txt");
 
@@ -36,11 +36,7 @@ for (const target of ["home", "settings"] as const) {
       const scope = target === "home" ? page.getByRole("region", { name: m.passkey_prompt_register, exact: true }) : page.locator("#settings-passkeys");
       const label = target === "home" ? m.passkey_prompt_register : m.settings_passkeys_add;
       await scope.getByRole("link", { name: label, exact: true }).click();
-      await expect(page).toHaveURL(url => url.pathname === "/login" && url.searchParams.get("reauth") === "1");
-      const since = logSize();
-      await page.getByRole("button", { name: m.reauth_submit, exact: true }).click();
-      await page.getByLabel(m.login_code_label, { exact: true }).fill(await loginCodeFor(email, since));
-      await page.getByRole("button", { name: m.login_code_submit, exact: true }).click();
+      await reverifyWithEmailCode(page);
       const register = scope.getByRole("button", { name: label, exact: true });
       await expect(register).toBeFocused();
       await expect(scope.getByRole("alert")).toHaveCount(0);
@@ -69,7 +65,8 @@ for (const target of ["home", "settings"] as const) {
       await page.goBack();
       await waitForClientRoute(page);
       expect(attempts).toBe(1);
-      await register.click();
+      if (target === "settings") await addSettingsPasskey(page);
+      else await register.click();
       await expect(target === "home" ? page.getByText(m.passkey_prompt_success, { exact: true }) : scope.getByRole("status")).toContainText(target === "home" ? m.passkey_prompt_success : m.settings_passkeys_added);
       expect(attempts).toBe(2);
       expect((await authenticator.client.send("WebAuthn.getCredentials", { authenticatorId: authenticator.authenticatorId })).credentials).toHaveLength(1);

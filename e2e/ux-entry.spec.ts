@@ -1,6 +1,6 @@
 import { expect } from "@playwright/test";
 import { test } from "./editor-fixture";
-import { enableSigningAuthenticator } from "./signing-helper";
+import { addSettingsPasskey, enableSigningAuthenticator } from "./signing-helper";
 import { readPrinciplesSource } from "../tests/helpers/principles-source";
 import { clientHeaders, completeTrialFields, enMessages as en, formatMessage, logSize, requestMagicLink, confirmMagicLink, mailFor, uiMessages, useMember, waitForClientRoute } from "./helpers";
 
@@ -106,7 +106,7 @@ test("a member with a passkey is offered it from the email field, and only when 
     await useMember(page, "ux_entry_passkey@example.com", "/settings");
     await waitForClientRoute(page);
     await enableSigningAuthenticator(page);
-    await page.getByRole("button", { name: en.settings_passkeys_add, exact: true }).click();
+    await addSettingsPasskey(page);
     await expect(page.getByText(en.settings_passkeys_added, { exact: true })).toBeVisible();
     await context.request.post("/logout", { headers: { origin: new URL(page.url()).origin }, form: {} });
     await page.goto("/login");

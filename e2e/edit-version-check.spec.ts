@@ -1,11 +1,13 @@
 import { expect, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
-import { enMessages as en, state, useMember, waitForFormReady } from "./helpers";
-import { acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { clientHeaders, enMessages as en, state, useMember, waitForFormReady } from "./helpers";
+import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
 
 async function create(page: Page, kind: "topic" | "reply") {
   const headers = { origin: state().baseURL };
-  const topic = await page.request.post("/t/new", { headers, form: { title: "Version A", body: "Body A", lang: "en", asksStance: kind === "reply" ? "1" : "0" }, maxRedirects: 0 });
+  const displayed = page.locator('input[name="villageDisplayed"]');
+  const destination: Record<string, string> = await displayed.count() ? { villageDisplayed: await displayed.inputValue() } : {};
+  const topic = await page.request.post("/t/new", { headers, form: { title: "Version A", body: "Body A", lang: "en", asksStance: kind === "reply" ? "1" : "0", ...destination }, maxRedirects: 0 });
   expect(topic.status()).toBe(302);
   const topicPath = new URL(topic.headers().location, state().baseURL).pathname;
   if (kind === "topic") return `${topicPath}/edit`;
@@ -16,9 +18,10 @@ async function create(page: Page, kind: "topic" | "reply") {
 }
 
 async function optIn(page: Page) {
+  await page.setExtraHTTPHeaders(clientHeaders("10.31.4.4"));
   const authenticator = await enableSigningAuthenticator(page);
   await page.goto("/settings");
-  await page.getByRole("button", { name: en.settings_passkeys_add, exact: true }).click();
+  await addSettingsPasskey(page);
   await expect(page.getByText(en.settings_passkeys_added, { exact: true })).toBeVisible();
   if (!await page.locator("#settings-advanced").evaluate(element => (element as HTMLDetailsElement).open)) await page.locator("#settings-advanced > summary").click();
   await page.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true }).check();
@@ -30,7 +33,7 @@ async function optIn(page: Page) {
 
 for (const kind of ["topic", "reply"] as const) for (const signed of [false, true]) {
   test(`${kind}: two screens preserve the refused edit and its device copy, signing ${signed}`, async ({ page, context }) => {
-    await useMember(page, `edit_version_${kind}_${signed ? "signed" : "plain"}@example.com`);
+    await useMember(page, `edit_version_${kind}_${signed ? "signed" : "plain"}@example.com`, "/t/new");
     const path = await create(page, kind);
     const authenticator = signed ? await optIn(page) : null;
     const stale = await context.newPage();
@@ -85,7 +88,7 @@ for (const kind of ["topic", "reply"] as const) {
     const context = await browser.newContext({ javaScriptEnabled: false });
     try {
       const page = await context.newPage();
-      await useMember(page, `edit_version_${kind}_native@example.com`);
+      await useMember(page, `edit_version_${kind}_native@example.com`, "/t/new");
       const path = await create(page, kind);
       const other = await context.newPage();
       await page.goto(path);

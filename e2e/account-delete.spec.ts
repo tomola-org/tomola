@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { captureScreenshot, clientHeaders, enMessages as en, state, useMember } from "./helpers";
-import { acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
 
 type Fixture = { topicId: number; slug: string; body: string; chat: string };
 function fixture(name: string): Fixture { return JSON.parse(fs.readFileSync(path.join(state().dir, "account-delete.json"), "utf8"))[name]; }
@@ -83,7 +83,7 @@ test("signed account deletion binds the post choice and uses real passkey confir
   try {
     await useMember(page, "quit_signed_writer@example.com", "/settings");
     await enableSigningAuthenticator(page);
-    await page.getByRole("button", { name: en.settings_passkeys_add, exact: true }).click();
+    await addSettingsPasskey(page);
     await expect(page.getByText(en.settings_passkeys_added, { exact: true })).toBeVisible();
     await page.locator("#settings-advanced summary").first().click();
     await page.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true }).check();

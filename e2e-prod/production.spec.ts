@@ -1,9 +1,9 @@
-import { enableSigningAuthenticator } from "../e2e/signing-helper";
+import { addSettingsPasskey, enableSigningAuthenticator } from "../e2e/signing-helper";
 import { enMessages, formatMessage, messagePattern, openPostSettings, waitForFormReady, waitForHydration } from "../e2e/helpers";
 import fs from "node:fs";
 import path from "node:path";
 import { request as playwrightRequest, type BrowserContext, type Page } from "@playwright/test";
-import { waitForClientRoute, openUserMenu, openAdminMenu, expect, mailCount, signUp, state, test, watchCsp, type CspWatch  } from "./helpers";
+import { smtpLoginCodeInbox, waitForClientRoute, openUserMenu, openAdminMenu, expect, mailCount, mailFor, signUp, state, test, watchCsp, type CspWatch  } from "./helpers";
 
 // Exercise the production build (node server.ts, NODE_ENV=production) with production settings in a browser: security headers (nonce-bearing scripts execute without CSP console violations),
 // signup, posts (KaTeX, footnotes, external images), replies, worker translations, semantic search, Markdown twins, operator screens, passkeys, UI language switching and access-log secret removal.
@@ -556,12 +556,19 @@ test("the glossary opens for every member under the CSP, and the YAML download i
 test("an optional passkey logs in under CSP and removing the last key requires email reauthentication", async () => {
   const { client: cdp, authenticatorId } = await enableSigningAuthenticator(boss);
   await boss.goto("/settings");
-  await boss.getByRole("button", { name: enMessages.settings_passkeys_add, exact: true }).click();
+  const beforeAdding = mailCount();
+  await addSettingsPasskey(boss, { inbox: smtpLoginCodeInbox });
   await expect(boss.getByRole("status").filter({ hasText: enMessages.settings_passkeys_added })).toBeVisible();
   expect((await cdp.send("WebAuthn.getCredentials", { authenticatorId })).credentials).toHaveLength(1);
+  await mailFor("boss@example.com", beforeAdding, enMessages.passkey_notice_subject);
   await openUserMenu(boss);
   await boss.getByRole("menuitem", { name: enMessages.nav_logout }).click();
-  await expect(boss).toHaveURL(/\/login$/);
+  if (test.info().config.metadata.publicReading) {
+    await expect(boss).toHaveURL("/");
+    await boss.goto("/login");
+  } else {
+    await expect(boss).toHaveURL(/\/login$/);
+  }
   const mailsBefore = mailCount();
   await boss.getByRole("button", { name: enMessages.login_passkey }).click();
   await expect(boss.locator('[data-member-menu-trigger][title="@boss"]')).toBeVisible();

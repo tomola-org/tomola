@@ -1,7 +1,7 @@
-import { test, useMember, state } from "./helpers";
+import { smtpLoginCodeInbox, test, useMember, state } from "./helpers";
 import { expect } from "@playwright/test";
 import { clientHeaders, enMessages, formatMessage, waitForFormReady } from "../e2e/helpers";
-import { enableSigningAuthenticator, acceptSignedWrite } from "../e2e/signing-helper";
+import { addSettingsPasskey, enableSigningAuthenticator, acceptSignedWrite } from "../e2e/signing-helper";
 
 const french = "Nous avons une place pour les personnes qui veulent partager leurs idées avec les autres.";
 
@@ -12,7 +12,7 @@ test("unopened French prose preserves its language and shows a non-blocking noti
     await useMember(page, "language_fallback_prod@example.com");
     await enableSigningAuthenticator(page);
     await page.goto("/settings");
-    await page.getByRole("button", { name: enMessages.settings_passkeys_add, exact: true }).click();
+    await addSettingsPasskey(page, { inbox: smtpLoginCodeInbox });
     await expect(page.getByText(enMessages.settings_passkeys_added, { exact: true })).toBeVisible();
     if (!(await page.locator("#settings-advanced").evaluate(element => (element as HTMLDetailsElement).open))) await page.locator("#settings-advanced > summary").click();
     await page.getByRole("checkbox", { name: enMessages.settings_sign_posts_label, exact: true }).check();

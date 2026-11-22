@@ -1,7 +1,7 @@
 import fs from "node:fs";
 export { openUserMenu, openAdminMenu } from "../e2e/helpers";
 export { captureScreenshot, waitForClientRoute } from "../e2e/helpers";
-import { completeTrialFields, enMessages, openUserMenu, restoreMember, uiMessages, waitForClientRoute } from "../e2e/helpers";
+import { completeTrialFields, enMessages, openUserMenu, restoreMember, uiMessages, waitForClientRoute, type LoginCodeInbox } from "../e2e/helpers";
 import { PROD_MEMBERS } from "./member-fixtures";
 import { expect, type Page } from "@playwright/test";
 import { test as base, richEditorTest as richBase } from "../e2e/editor-fixture";
@@ -33,20 +33,22 @@ export { expect };
 export const mailCount = (): number => fs.readFileSync(state().mailFile, "utf8").split("\n").filter(Boolean).length;
 
 // Wait for the latest email to this recipient received by fake SMTP after since (a mailCount value).
-export async function mailFor(email: string, since: number): Promise<ReceivedMail> {
+export async function mailFor(email: string, since: number, subject?: string): Promise<ReceivedMail> {
   let found: ReceivedMail | undefined;
   await expect
     .poll(
       () => {
         const lines = fs.readFileSync(state().mailFile, "utf8").split("\n").filter(Boolean).slice(since);
-        found = lines.map((l) => JSON.parse(l) as ReceivedMail).filter((m) => m.to.includes(email)).at(-1);
+        found = lines.map((l) => JSON.parse(l) as ReceivedMail).filter((m) => m.to.includes(email) && (subject === undefined || m.subject === subject)).at(-1);
         return found;
       },
-      { message: `mail for ${email}`, timeout: 30_000 },
+      { message: `mail for ${email}${subject === undefined ? "" : ` with subject ${subject}`}`, timeout: 30_000 },
     )
     .toBeDefined();
   return found!;
 }
+
+export const smtpLoginCodeInbox: LoginCodeInbox = { position: mailCount, read: mailFor };
 
 export async function magicLinkFor(email: string, since: number): Promise<string> {
   const mail = await mailFor(email, since);
@@ -97,7 +99,7 @@ export async function signUp(
   await page.getByRole("combobox", { name: enMessages.onboarding_home_area, exact: true }).click();
   await page.getByRole("listbox").getByRole("option", { name: profile.mainLang === "other" ? "Other" : LANG_LABELS[profile.mainLang as keyof typeof LANG_LABELS], exact: true }).click();
   await completeTrialFields(page);
-  await page.getByRole("button", { name: enMessages.onboarding_join }).click();
+  await page.getByRole("button", { name: enMessages.onboarding_join, exact: true }).click();
   await expect(page).toHaveURL(new URL("/", state().baseURL).href);
   await expect(page.locator("[data-member-menu-trigger]")).toHaveAttribute("title", `@${profile.handle}`);
   await expect(page.locator("html")).toHaveAttribute("lang", profile.mainLang);
