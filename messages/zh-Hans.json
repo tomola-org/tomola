@@ -1092,6 +1092,7 @@
   "settings_handle_help": "您每 90 天可以更改一次（首次更改不受时间限制）。您之前的名称将保留 90 天，在此期间您可以随时换回该名称。帖子中提及旧名称的内容将保持原样。",
   "settings_handle_too_soon": "您可以在 {date} 再次更改。",
   "nav_my_page": "我的村",
+  "nav_profile": "个人资料",
   "member_page_edit_profile": "编辑个人资料",
   "member_page_write_intro": "撰写个人简介",
   "member_page_intro_hint": "您的自我介绍也会出现在自我介绍列表中。即使写得很短，也能让其他成员更容易找到您。写下您感兴趣的内容或您想在这里讨论的话题。您无需提供真实姓名或单位信息。",

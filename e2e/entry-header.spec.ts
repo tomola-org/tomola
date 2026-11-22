@@ -74,6 +74,13 @@ test("entry screens share a guest header and keep signup, confirmation and code 
     await page.getByRole("button", { name: en.onboarding_join, exact: true }).click();
     await expect(page).toHaveURL(new URL("/", state().baseURL).href);
     await expect(page.locator("[data-member-menu-trigger]")).toHaveAttribute("title", "@header_reader");
+    for (const from of ["/", "/settings?returnTo=%2F#settings-languages"]) {
+      await page.goto(from);
+      await (await openUserMenu(page)).getByRole("menuitem", { name: en.nav_profile, exact: true }).click();
+      await expect(page).toHaveURL(new URL("/settings?returnTo=%2F#settings-profile", state().baseURL).href);
+      await expect(page.locator("#settings-profile").getByRole("heading", { name: en.settings_profile_heading })).toBeInViewport();
+    }
+    await page.goto("/");
     const menu = await openUserMenu(page);
     await menu.getByRole("menuitem", { name: en.nav_logout, exact: true }).click();
     if (testInfo.config.metadata.publicReading) {

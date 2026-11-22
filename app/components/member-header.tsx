@@ -23,6 +23,9 @@ type MemberNavigation = Exclude<Awaited<ReturnType<typeof loader>>, { reader: tr
 export function MemberHeader({ data, sideNavigation = false, whyLink = false }: { data: MemberNavigation; sideNavigation?: boolean; whyLink?: boolean }) {
   const labels = useShellLabels();
   const location = useLocation();
+  const settingsReturnTo = location.pathname === "/settings"
+    ? new URLSearchParams(location.search).get("returnTo")
+    : `${location.pathname}${location.search}${location.hash}`;
   const newTopic = useRouteLoaderData<typeof topicNewLoader>("routes/topic-new");
   const prefill = location.pathname.startsWith("/t/new") ? newTopic?.prefill : null;
   const current = navigationSection(location.pathname);
@@ -84,8 +87,9 @@ export function MemberHeader({ data, sideNavigation = false, whyLink = false }: 
         <DropdownMenuContent data-member-menu align="end" className="w-64 max-w-[calc(100vw-2rem)]">
           <DropdownMenuItem render={<Link to="/drafts" />}>{labels.nav_drafts}{draftBadge}</DropdownMenuItem>
           <DropdownMenuItem render={<Link to={`/u/${data.handle}`} />}>{labels.nav_my_page}</DropdownMenuItem>
+          <DropdownMenuItem render={<Link to={withSettingsReturn("/settings#settings-profile", settingsReturnTo)} />}>{labels.nav_profile}</DropdownMenuItem>
           <DropdownMenuItem render={<Link to="/settings/stances" />}>{labels.nav_stances}</DropdownMenuItem>
-          <DropdownMenuItem render={<Link to={withSettingsReturn("/settings", location.pathname === "/settings" ? new URLSearchParams(location.search).get("returnTo") : `${location.pathname}${location.search}${location.hash}`)} />}>{labels.nav_settings}</DropdownMenuItem>
+          <DropdownMenuItem render={<Link to={withSettingsReturn("/settings", settingsReturnTo)} />}>{labels.nav_settings}</DropdownMenuItem>
           {data.canInvite && <DropdownMenuItem render={<Link to="/invites/new" />}>{labels.nav_invite}</DropdownMenuItem>}
           <LocaleMenu />
           <Form method="post" action="/logout"><DropdownMenuItem nativeButton render={<button type="submit" />}>{labels.nav_logout}</DropdownMenuItem></Form>

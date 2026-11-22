@@ -28,6 +28,7 @@ export const SHELL_LABEL_KEYS = [
   "nav_notifications",
   "nav_observation",
   "nav_places",
+  "nav_profile",
   "nav_roles",
   "nav_search_label",
   "nav_search_placeholder",
