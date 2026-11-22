@@ -119,11 +119,11 @@ test("Explicit Markdown mode persists; rich mode persists, synchronizes Markdown
     await page.keyboard.type("List item"); await tool(page, en.editor_bullet_list).click();
     await page.keyboard.press("End"); await page.keyboard.press("Enter"); await page.keyboard.press("Enter");
     await page.keyboard.type("Quoted words"); await tool(page, en.editor_quote).click();
-    await expect(page.getByRole("button", { name: en.preview, exact: true })).toBeHidden();
+    await expect(page.getByRole("button", { name: en.draft_preview_body, exact: true })).toBeHidden();
     const markdown = await body(page).inputValue();
     await mode(page, false); await expect(body(page)).toHaveValue(markdown);
-    await page.getByRole("button", { name: en.preview, exact: true }).click();
-    const preview = page.getByRole("button", { name: en.preview, exact: true }).locator("..").locator(".longread");
+    await page.getByRole("button", { name: en.draft_preview_body, exact: true }).click();
+    const preview = page.getByRole("button", { name: en.draft_preview_body, exact: true }).locator("..").locator(".longread");
     await expect(preview.locator("h2")).toHaveText("Heading words");
     await expect(preview.locator("strong")).toHaveText("Bold");
     await expect(preview.locator("em")).toHaveText("italic");

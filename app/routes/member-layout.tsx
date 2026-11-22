@@ -24,7 +24,7 @@ import { data, Outlet, useLocation, useMatches } from "react-router";
 import type { Route } from "./+types/member-layout";
 import { getReader, getMemberScope, getCredentialSessionFresh } from "~/lib/auth/session.server";
 import { readerLoginHref } from "~/lib/public-reading";
-import { countApiDrafts } from "~/lib/drafts.server";
+import { countDraftBadges } from "~/lib/drafts.server";
 import { countUnreadNotifications, hasUnreadFollowedThread } from "~/lib/notifications.server";
 import { isModerator } from "~/lib/roles.server";
 import { rememberUiLocale } from "~/lib/profiles.server";
@@ -49,10 +49,10 @@ export async function loader({ request }: { request: Request }) {
   const scopePromise = getMemberScope(request);
   // Initialize a missing display preference without adopting a shared link's language.
   const ui = negotiateUiLocale(request, enabledLangs(), profile.uiLocale);
-  const [scope, keys, apiDrafts, notificationState, joined, followedVillages, followedMembers] = await Promise.all([
+  const [scope, keys, draftBadges, notificationState, joined, followedVillages, followedMembers] = await Promise.all([
     scopePromise,
     db.select({ id: passkey.id }).from(passkey).where(eq(passkey.userId, user.id)).limit(1),
-    countApiDrafts(db, user.id),
+    countDraftBadges(db, user.id),
     synchronizeTopicRead(request).then(() => Promise.all([countUnreadNotifications(db, user.id), hasUnreadFollowedThread(db, user.id)])),
     villagesEnabled() ? joinedVillageNavigation(db, user.id, villageReaderFor(request, profile)) : Promise.resolve([]),
     villagesEnabled() ? followedVillageNavigation(db, user.id, villageReaderFor(request, profile), { excludeJoined: true }) : Promise.resolve([]),
@@ -69,7 +69,7 @@ export async function loader({ request }: { request: Request }) {
     isOperator: scope.operator,
     canInvite: canCreateInvitations(scope.operator),
     isModerator: isModerator(scope),
-    apiDrafts,
+    ...draftBadges,
     unreadNotifications: notificationState[0],
     followedUnread: notificationState[1],
     // The greeting's words are made here, in the member's language, so that the page's script carries none of them (they are used on one page view in a member's life).

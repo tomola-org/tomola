@@ -141,6 +141,7 @@ export default [
         route("t/:id/edit", "routes/topic-edit.tsx"),
         route("c/:id/edit", "routes/reply-edit.tsx"),
         route("drafts/:id", "routes/draft.tsx"),
+        route("drafts/:id/preview", "routes/draft-preview.tsx"),
         route("mcp/entry-edits/:id", "routes/mcp-entry-edit.tsx"),
         route("mcp/entries/:id/delete", "routes/mcp-entry-delete.tsx"),
       ]),

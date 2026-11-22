@@ -13,6 +13,8 @@ type SigningOptions = {
   preserveUnsavedOnSamePath?: boolean;
   confirmAiDraft?: boolean;
   signIntent?: string;
+  fixedSigningContent?: boolean;
+  draftConflictMessage?: string;
 };
 export type SignedFormProps = ComponentProps<typeof Form> & SigningOptions;
 export type SignedFormControlsProps = SigningOptions & {
@@ -26,7 +28,7 @@ export type SignedFormControlsProps = SigningOptions & {
 const FormSendingContext = createContext<string | null>(null);
 
 // The optional controls attach to the existing form, leaving native edits in place.
-export function SignedFormFrame({ children, controls: Controls, signatureRequired, protectUnsaved, unsavedInitialValues, preserveUnsavedOnSamePath, confirmAiDraft, signIntent, onSubmit, onClickCapture, action, ...props }: SignedFormProps & {
+export function SignedFormFrame({ children, controls: Controls, signatureRequired, protectUnsaved, unsavedInitialValues, preserveUnsavedOnSamePath, confirmAiDraft, signIntent, fixedSigningContent, draftConflictMessage, onSubmit, onClickCapture, action, ...props }: SignedFormProps & {
   controls?: ComponentType<SignedFormControlsProps> | null;
 }) {
   const [ready, setReady] = useState(false);
@@ -57,7 +59,7 @@ export function SignedFormFrame({ children, controls: Controls, signatureRequire
           {children}
           {signatureRequired && <noscript><p role="note">{m.signing_no_js()}</p></noscript>}
         </Form>
-        {Controls && <Controls {...{ form, bypass, review, setReady, action, signatureRequired, protectUnsaved, unsavedInitialValues, preserveUnsavedOnSamePath, confirmAiDraft, signIntent }} />}
+        {Controls && <Controls {...{ form, bypass, review, setReady, action, signatureRequired, protectUnsaved, unsavedInitialValues, preserveUnsavedOnSamePath, confirmAiDraft, signIntent, fixedSigningContent, draftConflictMessage }} />}
       </FormVillageReviewContext.Provider>
     </FormLanguageChangeContext.Provider>
   </FormSendingContext.Provider>;

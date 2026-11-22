@@ -1,19 +1,25 @@
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { action, loader } from "~/routes/draft-autosave";
-import { createDraft, deleteDraft, getDraft, listDrafts, publishDraft, updateDraft } from "~/lib/drafts.server";
+import { countDraftBadges, createDraft, deleteDraft, getDraft, listDrafts, publishDraft, updateDraft } from "~/lib/drafts.server";
 import { createTopic, softDeleteEntry } from "~/lib/entries.server";
-import { drafts, entries, profiles, rateLimits } from "~/lib/db/schema";
+import { drafts, entries, memberSignatures, profiles, rateLimits } from "~/lib/db/schema";
 import { DRAFT_RATE_LIMIT, MEMBER_RATE_LIMITS } from "~/lib/rate-limit.server";
 import { getClientDraft } from "~/lib/mcp/drafts.server";
 import { changeVillageMembership, ensureLanguageVillages } from "~/lib/villages.server";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
-import { loader as draftPageLoader } from "~/routes/draft";
+import { action as editDraft, loader as draftPageLoader } from "~/routes/draft";
 import { draftRecoveryToken } from "~/lib/draft-recovery.server";
 import { createApiToken } from "~/lib/tokens.server";
 
+import { action as publishPreview, loader as previewPage } from "~/routes/draft-preview";
+import { deleteAccount } from "~/lib/account-delete.server";
+import { buildMemberExport } from "~/lib/exports.server";
+import { addMember, createTestDb } from "./helpers/db";
+import { migrationStatements } from "./helpers/migrations";
+
 let h: RouteHarness;
-beforeAll(async () => { h = await setupRouteHarness(); for (const handle of ["writer", "other", "limited", "stopped", "recovery_writer", "recovery_alt"]) await h.signIn(handle, { homeArea: "en" }); });
+beforeAll(async () => { h = await setupRouteHarness(); for (const handle of ["writer", "other", "limited", "stopped", "recovery_writer", "recovery_alt", "article_preview", "preview_account", "preview_signer"]) await h.signIn(handle, { homeArea: "en" }); });
 afterAll(() => h.restore());
 afterEach(() => vi.unstubAllEnvs());
 const payload = (extra: Record<string, string> = {}, as = "writer") => ({ ownerId: h.ids[as], newTopic: "1", title: "", body: "A private thought", lang: "en", ...extra });
@@ -249,4 +255,102 @@ it("accepts just one of two concurrent updates to the same version", async () =>
   const responses = await Promise.all(["The first screen", "The second screen"].map(body => send({ draftId: String(first.id), version: "1", body })));
   expect(responses.map(response => response.status).sort()).toEqual([200, 409]);
   expect(await getDraft(h.db, h.ids.writer, first.id)).toMatchObject({ version: 2 });
+});
+
+it("reads only owned topic previews, marks a preview POST atomically, and clears reminders with the draft", async () => {
+  const as = "article_preview";
+  const ownerId = h.ids[as];
+  const input = { kind: "topic", title: "Private heading", body: "Private **article**", lang: "en" };
+  const made = await createDraft(h.db, ownerId, input, { via: "api" });
+  const unpreviewed = await createDraft(h.db, ownerId, { ...input, title: "Later unfinished draft" });
+  const parent = await createTopic(h.db, ownerId, { body: "Reply target", lang: "en" });
+  if (!made.ok || !unpreviewed.ok || !parent.ok) throw new Error("Could not prepare drafts");
+  const reply = await createDraft(h.db, ownerId, { kind: "reply", body: "Unfinished reply", threadId: parent.id, lang: "en" });
+  if (!reply.ok) throw new Error(reply.error);
+  const params = { id: String(made.id) };
+  const editPath = `/drafts/${made.id}`;
+  const path = `${editPath}/preview`;
+  const load = (member: string, id = made.id) => previewPage(h.args(h.request(`/drafts/${id}/preview`, { as: member }), { id: String(id) }));
+  const own = await load(as);
+  expect(new Headers(own.init?.headers).get("Cache-Control")).toBe("private, no-store");
+  expect(new Headers(own.init?.headers).get("X-Robots-Tag")).toBe("noindex");
+  expect(own.data.html).toContain("<strong>article</strong>");
+  const missing = await h.outcome(() => load(as, 999_999));
+  expect(missing).toMatchObject({ status: 404 });
+  expect(await h.outcome(() => load("other"))).toEqual(missing);
+  expect(await h.outcome(() => load(as, reply.id))).toEqual(missing);
+  expect((await countDraftBadges(h.db, ownerId)).previewedDrafts).toBe(0);
+  const row = async () => (await h.db.select().from(drafts).where(eq(drafts.id, made.id)))[0];
+  expect((await row()).previewedAt).toBeNull();
+
+  const preview = (form: Record<string, string>) => h.outcome(() => editDraft(h.args(h.request(editPath, {
+    as, form: { intent: "preview", ownerId, title: input.title, body: input.body, lang: input.lang, ...form },
+  }), params)));
+  expect(await preview({ body: "Unsaved conflict", version: "2" })).toMatchObject({ status: 409, value: { data: { error: "draft_conflict", values: { body: "Unsaved conflict" } } } });
+  expect(await preview({ version: "2" })).toMatchObject({ status: 409 });
+  expect(await row()).toMatchObject({ body: input.body, version: 1, previewedAt: null });
+  expect(await preview({ version: "1", body: "Current **article**" })).toMatchObject({ status: 302, location: path });
+  const marked = await row();
+  expect(marked).toMatchObject({ body: "Current **article**", version: 2, previewedAt: expect.any(Date) });
+  expect(await countDraftBadges(h.db, ownerId)).toEqual({ apiDrafts: 1, previewedDrafts: 1 });
+  const listed = await listDrafts(h.db, ownerId);
+  expect(listed[0].id).toBe(made.id);
+  expect(new Set(listed.slice(1).map(draft => draft.id))).toEqual(new Set([reply.id, unpreviewed.id]));
+  const exported = await buildMemberExport(h.db, ownerId);
+  expect(exported.drafts.find(draft => draft.id === made.id)?.previewed_at).toBe(marked.previewedAt?.toISOString());
+
+  const shown = (await load(as)).data;
+  const publish = (body = shown.content.body) => h.outcome(() => publishPreview(h.args(h.request(path, {
+    as, form: { intent: "publish", version: String(shown.version), title: shown.content.title!, body, lang: shown.content.lang, signingView: shown.signingView },
+  }), params)));
+  expect(await publish("A different draft body")).toMatchObject({ status: 409 });
+  await updateDraft(h.db, ownerId, made.id, { ...input, body: "A newer server version" }, { expectedVersion: 2 });
+  expect(await publish()).toMatchObject({ status: 409, value: { data: { error: "draft_conflict" } } });
+  expect(await row()).toMatchObject({ body: "A newer server version", version: 3, previewedAt: marked.previewedAt });
+  const latest = (await load(as)).data;
+  const published = await h.outcome(() => publishPreview(h.args(h.request(path, {
+    as, form: { intent: "publish", version: String(latest.version), title: latest.content.title!, body: latest.content.body, lang: latest.content.lang, signingView: latest.signingView },
+  }), params)));
+  expect(published).toMatchObject({ status: 302, location: expect.stringMatching(/^\/t\/\d+/) });
+  expect((await countDraftBadges(h.db, ownerId)).previewedDrafts).toBe(0);
+
+  const toDelete = await createDraft(h.db, ownerId, input, { preview: true });
+  if (!toDelete.ok) throw new Error(toDelete.error);
+  expect((await countDraftBadges(h.db, ownerId)).previewedDrafts).toBe(1);
+  expect(await deleteDraft(h.db, ownerId, toDelete.id)).toBe(true);
+  expect((await countDraftBadges(h.db, ownerId)).previewedDrafts).toBe(0);
+});
+
+it("removes a previewed draft when the author deletes their account", async () => {
+  const owner = h.ids.preview_account;
+  const made = await createDraft(h.db, owner, { kind: "topic", body: "Private preview", lang: "en" }, { preview: true });
+  if (!made.ok) throw new Error(made.error);
+  expect((await countDraftBadges(h.db, owner)).previewedDrafts).toBe(1);
+  await deleteAccount(h.db, owner, { confirmation: "preview_account" });
+  expect(await h.db.select().from(drafts).where(eq(drafts.id, made.id))).toEqual([]);
+});
+
+it("adds a nullable preview timestamp and preserves existing drafts", async () => {
+  const db = await createTestDb();
+  await addMember(db, "legacy-preview", "legacy_preview");
+  await db.execute(sql`alter table drafts drop column previewed_at`);
+  await db.execute(sql`insert into drafts (author_id, kind, lang, body) values ('legacy-preview', 'topic', 'en', 'Existing draft')`);
+  for (const statement of migrationStatements("draft_previewed_at")) await db.execute(sql.raw(statement));
+  expect(await db.select({ body: drafts.body, previewedAt: drafts.previewedAt }).from(drafts))
+    .toEqual([{ body: "Existing draft", previewedAt: null }]);
+});
+
+it("publishes the previewed snapshot with the normal passkey proof when signing is enabled", async () => {
+  const as = "preview_signer";
+  const owner = h.ids[as];
+  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, owner));
+  const made = await createDraft(h.db, owner, { kind: "topic", body: "A signed article preview", lang: "en" }, { preview: true });
+  if (!made.ok) throw new Error(made.error);
+  const params = { id: String(made.id) };
+  const path = `/drafts/${made.id}/preview`;
+  const { data: shown } = await previewPage(h.args(h.request(path, { as }), params));
+  const request = () => h.request(path, { as, form: { intent: "publish", version: String(shown.version), body: shown.content.body, lang: shown.content.lang, signingView: shown.signingView } });
+  expect(await h.outcome(() => publishPreview(h.args(request(), params)))).toMatchObject({ status: 403, value: { data: { error: "signature_required" } } });
+  expect(await h.outcome(async () => publishPreview(await h.signedArgs(request(), params)))).toMatchObject({ status: 302, location: expect.stringMatching(/^\/t\/\d+/) });
+  expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.userId, owner))).toHaveLength(1);
 });

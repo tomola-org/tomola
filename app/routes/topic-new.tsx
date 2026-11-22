@@ -1,9 +1,11 @@
+import { submitDraftPreview } from "~/lib/draft-preview-submit";
 import { preparePostAiMaterial, writePostAiMaterial } from "~/lib/post-ai-materials.server";
 import { POST_AI_MATERIAL_CHARS } from "~/lib/post-ai-materials";
 import { Textarea } from "~/components/ui/textarea";
 import { MarkdownBusyError, withMarkdownRead } from "~/lib/markdown-budget.server";
 import { LongFormBody } from "~/components/long-form-body";
 import { useContext, useEffect, useRef, useState } from "react";
+import { DraftPreviewButton } from "~/components/draft-preview-button";
 import { DraftAutosave } from "~/components/draft-autosave-lazy";
 import DraftKeeperContent, { type DraftKeeperProps } from "~/components/draft-keeper-content";
 import { FormLanguageChangeContext } from "~/components/form-contexts";
@@ -73,6 +75,7 @@ async function loaderImplementation({ request }: Route.LoaderArgs) {
     // Unfinished topics the member has saved: offered as a link above the form.
     aiMaterialLabels: { add: m.ai_material_add(), title: m.ai_material_title(), help: m.ai_material_input_help({ count: POST_AI_MATERIAL_CHARS }), error: m.ai_material_error() },
     draftIds: await ownTopicDraftIds(db, user.id),
+    previewFailureLabel: m.draft_autosave_failed(),
     ...(posting ? { posting } : {}),
     defaultLang,
     signPosts: profile.signPosts,
@@ -114,27 +117,33 @@ export async function action({ request }: Route.ActionArgs) {
       // publishing it or putting its text in the address. Keep the reply copy.
       return data({ error: null, values: { ...values, village: undefined, villageExplicit: undefined, title: "", body: (response?.prefill.body ?? "") + raw.body, asksStance: false, intro: false } });
     }
-    const fail = (error: string, village?: string) => data({ error, values: { ...values, ...(village === undefined ? {} : { village }) } }, { status: 400 });
+    const intent = formString(form, "intent");
+    const preview = intent === "preview";
+    const fail = (error: string, village?: string) => data({ error, ...(preview ? { previewFailed: true } : {}), values: { ...values, ...(village === undefined ? {} : { village }) } }, { status: 400 });
+    if (preview && (formString(form, "ownerId") !== user.id || (!raw.title.trim() && !raw.body.trim()))) return data({ error: "invalid_draft", previewFailed: true, values }, { status: 400 });
     const supplement = formString(form, "aiMaterial");
-    if (supplement.trim() && (!await preparePostAiMaterial(supplement) || formString(form, "intent") === "draft")) return fail("ai_material_invalid");
-    if (formString(form, "intent") === "draft") {
+    if (supplement.trim() && (!await preparePostAiMaterial(supplement) || (intent === "draft" || preview))) return fail("ai_material_invalid");
+    if (intent === "draft" || preview) {
       const rate = await hitRateLimit(db, { key: `draft:member:${user.id}`, ...DRAFT_RATE_LIMIT });
-      if (!rate.allowed) return data({ error: "rate_limited", values }, { status: 429, headers: rateLimitHeaders(rate) });
-      const pasted = (await applyPastedFrontmatter(raw, "topic", { defaultLang: defaultPostLang(profile), allowComplex: formString(form, "intent") === "draft" }));
+      if (!rate.allowed) return data({ error: "rate_limited", previewFailed: preview, values }, { status: 429, headers: rateLimitHeaders(rate) });
+      const pasted = (await applyPastedFrontmatter(raw, "topic", { defaultLang: defaultPostLang(profile), allowComplex: true }));
       if (!pasted.ok) return fail(pasted.error);
       // A draft that "Write with AI" made from this screen is updated in place (at the version this screen saw), not copied: an AI may have changed it since.
       // After a conflict, "save as a new draft" asks for a copy of what is on the screen instead.
-      const linked = new URL(request.url).searchParams.get("newdraft") === "1" ? null : linkedDraftOf(form);
+      const linked = !preview && new URL(request.url).searchParams.get("newdraft") === "1" ? null : linkedDraftOf(form);
+      if (preview && !linked && (form.has("fromDraft") || form.has("fromDraftVersion"))) return data({ error: "draft_conflict", previewFailed: true, values }, { status: 409 });
       if (linked) {
-        const updated = await updateDraft(db, user.id, linked.id, pasted.input, { expectedVersion: linked.version });
-        if (updated.ok) throw redirect(`/drafts/${linked.id}?saved=1`);
-        if (updated.error === "draft_conflict") return data({ error: "draft_conflict", values }, { status: 409 });
-        if (updated.error !== "not_found") return fail(updated.error);
+        const input = preview && villagesEnabled() && raw.villageExplicit === false && pasted.input.village === undefined
+          ? { ...pasted.input, village: null } : pasted.input;
+        const updated = await updateDraft(db, user.id, linked.id, input, { expectedVersion: linked.version, ...(preview ? { preview: true, skipUnchanged: true } : {}) });
+        if (updated.ok) throw redirect(preview ? `/drafts/${linked.id}/preview` : `/drafts/${linked.id}?saved=1`);
+        if (updated.error === "draft_conflict") return data({ error: "draft_conflict", previewFailed: preview, values }, { status: 409 });
+        if (preview || updated.error !== "not_found") return fail(updated.error);
       }
-      const draft = await createDraft(db, user.id, { kind: "topic", ...pasted.input }, { responseTo: responsePostId(new URL(request.url).searchParams) });
+      const draft = await createDraft(db, user.id, { kind: "topic", ...pasted.input }, { responseTo: responsePostId(new URL(request.url).searchParams), preview });
       if (draft.ok) {
         // The draft screen says it was saved (it is a screen of its own, and a first save is not otherwise told).
-        throw redirect(`/drafts/${draft.id}?saved=1`);
+        throw redirect(preview ? `/drafts/${draft.id}/preview` : `/drafts/${draft.id}?saved=1`);
       }
       return fail(draft.error);
     }
@@ -163,9 +172,13 @@ export async function action({ request }: Route.ActionArgs) {
     const form = await retained.formData();
     const raw = readEntryForm(form);
     const values = { aiMaterial: formString(form, "aiMaterial"), title: raw.title, body: raw.body, asksStance: raw.asksStance, lang: raw.lang, intro: formString(form, "intro") === "1", ...(villagesEnabled() ? { village: error instanceof SigningFailureResponse ? error.village ?? raw.village : raw.village, villageExplicit: raw.villageExplicit } : {}) };
-    return data({ error: error instanceof SigningFailureResponse ? error.code : "busy", values }, { status: error instanceof SigningFailureResponse ? error.status : 503, headers: error instanceof SigningFailureResponse ? { "Cache-Control": "private, no-store" } : { "Retry-After": "1" } });
+    return data({ error: error instanceof SigningFailureResponse ? error.code : "busy", previewFailed: formString(form, "intent") === "preview", values }, { status: error instanceof SigningFailureResponse ? error.status : 503, headers: error instanceof SigningFailureResponse ? { "Cache-Control": "private, no-store" } : { "Retry-After": "1" } });
   }
 
+}
+
+export function clientAction({ request, serverAction }: Route.ClientActionArgs) {
+  return submitDraftPreview(request, serverAction, { error: "busy", previewFailed: true, values: null });
 }
 
 export function meta({}: Route.MetaArgs) {
@@ -210,6 +223,7 @@ function TopicNewForm({ loaderData, actionData }: Route.ComponentProps) {
   const [asksStance, setAsksStance] = useState(actionData?.values?.asksStance ?? loaderData.asksStance);
   const [intro, setIntro] = useState(actionData?.values?.intro ?? loaderData.intro);
   const error = actionData?.error ?? loaderData.posting?.error ?? undefined;
+  const previewFailed = actionData && "previewFailed" in actionData && actionData.previewFailed;
   const posting = loaderData.posting ? { data: loaderData.posting, reset: discarded, selected: actionData?.values?.village ?? (restoredPosting?.explicit ? restoredPosting.village : loaderData.posting.selected), explicit: actionData?.values?.villageExplicit ?? restoredPosting?.explicit ?? loaderData.posting.explicit, error: actionData?.error ?? loaderData.posting.error ?? undefined, reviewedBody: actionData?.error === "village_changed" ? actionData.values?.body : undefined } : undefined;
   return (
     <main className="space-y-4">
@@ -217,6 +231,7 @@ function TopicNewForm({ loaderData, actionData }: Route.ComponentProps) {
       {draftCount > 0 && <p className="ui-meta"><Link to="/drafts" className="underline">{m.drafts_resume({ count: draftCount })}</Link></p>}
       <SignedForm protectUnsaved="new" unsavedInitialValues={loaderData.initialValues} signatureRequired={loaderData.signPosts} method="post" key={loaderData.formKey} className="group/compose space-y-3">
         <input type="hidden" {...loaderData.responseField} />
+        <input type="hidden" name="ownerId" value={loaderData.ownerId} />
         {store && <NewTopicDraftKeeper owner={loaderData.ownerId} scope={screen} store={store} onRecovery={record => setRecovery(current => ({ record, round: (current?.round ?? 0) + 1 }))} onDiscard={fields => {
           setAsksStance(fields.get("asksStance") === "1");
           setIntro(fields.get("intro") === "1");
@@ -246,10 +261,11 @@ function TopicNewForm({ loaderData, actionData }: Route.ComponentProps) {
             <Textarea id="new-ai-material" name="aiMaterial" rows={8} maxLength={POST_AI_MATERIAL_CHARS} defaultValue={actionData?.values?.aiMaterial ?? ""} />
             <p className="ui-help">{loaderData.aiMaterialLabels.help}</p>
           </details>
-          {error && !(posting && isVillageTargetError(error)) && <p id="topic-new-error" role="alert" className="text-destructive">{error === "ai_material_invalid" ? loaderData.aiMaterialLabels.error : entryErrorMessage(error)}</p>}
+          {error && (previewFailed || !(posting && isVillageTargetError(error))) && <p id="topic-new-error" role="alert" className={previewFailed ? "ui-help text-muted-foreground" : "text-destructive"}>{previewFailed && error !== "ai_material_invalid" ? loaderData.previewFailureLabel : error === "ai_material_invalid" ? loaderData.aiMaterialLabels.error : entryErrorMessage(error)}</p>}
           <div className="flex flex-wrap items-center gap-3">
             {/* The first 「投稿」 button is the default for Enter submission. */}
             <SendButton>{m.submit_post()}</SendButton>
+            {!intro && <DraftPreviewButton />}
             <noscript><SendButton variant="outline" intent="draft" formNoValidate>{m.save_draft()}</SendButton>
             {error === "draft_conflict" && <SendButton variant="outline" intent="draft" formAction={loaderData.newDraftAction} formNoValidate>{m.save_draft_as_new()}</SendButton>}</noscript>
             {!intro && <AiEditorTools ownerId={loaderData.ownerId} connectDraftLabel={loaderData.connectDraftLabel} kind="topic" />}

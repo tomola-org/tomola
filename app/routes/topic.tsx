@@ -83,8 +83,8 @@ import { PostedLine } from "~/components/posted-line";
 import { villagesEnabled } from "~/lib/villages-enabled.server";
 import { topicVillage } from "~/lib/villages.server";
 import { localizeVillage } from "~/lib/village-translations.server";
-import { villageNameTitle } from "~/lib/village-translation-view";
-import { postingVillageName, villageName } from "~/lib/village-name";
+import { ArticleByline, ArticleSignature, ArticleVillageLink } from "~/components/article-byline";
+import { postingVillageName } from "~/lib/village-name";
 import { m } from "~/paraglide/messages.js";
 import { SigningFailureResponse } from "~/lib/signing.server";
 import TopicReplyForm from "~/components/topic-reply-form";
@@ -839,7 +839,7 @@ export default function Topic({ loaderData, actionData }: Route.ComponentProps) 
             </Button>
           </Form>}
         </>}
-        {loaderData.village && loaderData.village.kind !== "personal" && !loaderData.village.language && <Link to={`/v/${loaderData.village.slug}`} title={villageNameTitle(loaderData.village)} className="ui-meta underline">{villageName(loaderData.village)}</Link>}
+        <ArticleVillageLink village={loaderData.village} className="ui-meta underline" />
         {follow && <FollowButton variant="compact" threadId={full.id} state={follow.state} returnTo={`${returnTo}#p-${full.id}`} />}
       </div>
       {loaderData.articleViews && <div data-article-views="" className="ui-meta text-muted-foreground">
@@ -919,12 +919,8 @@ export default function Topic({ loaderData, actionData }: Route.ComponentProps) 
               meta={(info, controls, view, languageMenu) => (
                 <>
                 <ShareCardAddress topicId={topic.id} originalLang={topic.lang} readingLang={view.lang} />
-                <div className="reading-byline" data-reading-byline="">
-                  <div className="article-author">
-                    <AuthorLink handle={topic.authorHandle} name={topic.authorName} latin={topic.authorNameLatin} reader={loaderData.reader} byline handleClassName="article-author-handle" />
-                  </div>
-                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 ui-meta text-muted-foreground">
-                    {loaderData.village && loaderData.village.kind !== "personal" && !loaderData.village.language && <Link to={`/v/${loaderData.village.slug}`} title={villageNameTitle(loaderData.village)} className="link-ui underline">{villageName(loaderData.village)}</Link>}
+                <ArticleByline handle={topic.authorHandle} name={topic.authorName} latin={topic.authorNameLatin} reader={loaderData.reader} details={<>
+                    <ArticleVillageLink village={loaderData.village} />
                     <LocalTime iso={topic.createdAt.toISOString()} style="date" />
                     {info && info.minutes >= 3 && <span data-reading-time="">{m.reading_minutes({ minutes: info.minutes })}</span>}
                     {languageMenu}
@@ -933,19 +929,15 @@ export default function Topic({ loaderData, actionData }: Route.ComponentProps) 
                       <DeleteEntryForm inline entryId={topic.id} kind="topic" />
                     </>}
                     <noscript className="reading-mobile-fallback"><a href={aiOpen.mdPath} className="link-ui underline">{m.open_in_ai_noscript()}</a></noscript>
-                  </div>
-                  {controls && <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 ui-meta text-muted-foreground" data-reading-language="">
+                  </>} more={controls && <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 ui-meta text-muted-foreground" data-reading-language="">
                     {view.lang !== topic.lang && (view.aiUse ? <a href="/ai-use" title={view.title} className="link-ui underline">{view.text}</a> : <span title={view.title}>{view.text}</span>)}
                     {controls}
-                  </div>}
-                </div>
+                  </div>} />
                 </>
               )}
               onReportedChange={reportTopicTranslationChange}
               readingMark={loaderData.readingMark}
-              footer={() => <p className="article-signature" data-article-signature="">
-                <AuthorLink handle={topic.authorHandle} name={topic.authorName} latin={topic.authorNameLatin} reader={loaderData.reader} byline handleClassName="article-author-handle" />
-              </p>}
+              footer={() => <ArticleSignature handle={topic.authorHandle} name={topic.authorName} latin={topic.authorNameLatin} reader={loaderData.reader} />}
             />
             </div>
             {asksQuestion ? reactions : articleEnd}

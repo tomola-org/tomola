@@ -137,7 +137,7 @@ describe("the member export has the member's own stances and the history of chan
       ["alt_of", "ai_assistance", "asks_stance", "author_area", "body", "created_at", "edited_at", "id", "kind", "lang", "parent_id", "revisions", "signature_ids", "stance_tag", "status", "thread_id", "title", "via"].sort(),
     );
     expect(Object.keys(ben.drafts[0]).sort()).toEqual(
-      ["alt_of", "ai_assistance", "asks_stance", "body", "created_at", "id", "kind", "lang", "parent_id", "raw_frontmatter", "stance_tag", "thread_id", "title", "updated_at", "version", "via"].sort(),
+      ["alt_of", "ai_assistance", "asks_stance", "body", "created_at", "id", "kind", "lang", "parent_id", "previewed_at", "raw_frontmatter", "stance_tag", "thread_id", "title", "updated_at", "version", "via"].sort(),
     );
     expect(Object.keys(ben.stances[0]).sort()).toEqual(["area", "created_at", "position", "question_id", "updated_at", "version"]);
   });

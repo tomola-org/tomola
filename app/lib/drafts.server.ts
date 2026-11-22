@@ -5,7 +5,7 @@ import { recordDraftPublication } from "./eval/signals.server";
 import { finishQuestionDraft } from "./ai-question-usage.server";
 import { checkBodyBudget } from "~/lib/markdown.server";
 import { withEntryRender } from "./entry-render-preparation.server";
-import { and, count, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, count, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { AI_ASSISTANCE, type AiAssistance } from "~/lib/ai-assistance";
@@ -70,6 +70,7 @@ export type DraftSummary = Pick<
   Draft,
   "id" | "kind" | "threadId" | "threadTitle" | "lang" | "title" | "via" | "updatedAt" | "asksStance"
 > & {
+  previewedAt: Date | null;
   excerpt: string;
   // The beginning of the body as one line (headlineFromBody). A topic draft without a title shows it in the list (the "(untitled)" mark is for a draft with no text either).
   headline: string;
@@ -186,7 +187,7 @@ async function createDraftImplementation(
   // For via = "api", preserve the token id and frontmatter exactly as received (app/lib/api/drafts-api.server.ts).
   // maxPendingApiDrafts: per-member pending API draft limit when via = "api". Lock the member row and count/insert in one transaction
   // to prevent concurrent requests exceeding the limit.
-  opts: { aiSource?: "api" | "mcp"; via?: EntryVia; now?: Date; tokenId?: number | null; rawFrontmatter?: string | null; maxPendingApiDrafts?: number; client?: { key: string; id: string; name: string; uri: string | null }; villageId?: string | null; responseTo?: number | null; request?: { id: string; hash: string } } = {},
+  opts: { aiSource?: "api" | "mcp"; via?: EntryVia; now?: Date; tokenId?: number | null; rawFrontmatter?: string | null; maxPendingApiDrafts?: number; client?: { key: string; id: string; name: string; uri: string | null }; villageId?: string | null; responseTo?: number | null; preview?: boolean; request?: { id: string; hash: string } } = {},
 ): Promise<{ ok: true; id: number } | { ok: false; error: DraftError }> {
   const parsed = createSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: fieldError(parsed.error.issues) };
@@ -244,6 +245,7 @@ async function createDraftImplementation(
     clientUpdatedAt: opts.client ? now : null,
     createdAt: now,
     updatedAt: now,
+    ...(opts.preview && d.kind === "topic" ? { previewedAt: now } : {}),
   };
   const cap = (opts.via ?? "web") === "api" ? opts.maxPendingApiDrafts : undefined;
   const clientKey = values.via === "api" ? values.clientKey ?? (values.tokenId === null ? null : `token:${values.tokenId}`) : null;
@@ -289,7 +291,7 @@ type DraftUpdateArgs<SkipUnchanged extends boolean> = [
   authorId: string,
   draftId: number,
   input: unknown,
-  opts?: { now?: Date; expectedVersion?: number; returnVersion?: boolean; villageId?: string | null; skipUnchanged?: SkipUnchanged },
+  opts?: { now?: Date; expectedVersion?: number; returnVersion?: boolean; villageId?: string | null; skipUnchanged?: SkipUnchanged; preview?: boolean },
 ];
 
 // Handle only the member's own drafts. Present others' drafts as nonexistent (not_found).
@@ -307,6 +309,8 @@ async function updateDraftImplementation(
   const [existing] = await (opts.skipUnchanged ? query.for("update") : query);
   if (!existing) return { ok: false, error: "not_found" };
   const kind = existing.kind as "topic" | "reply";
+  if (opts.preview && (kind !== "topic" || opts.expectedVersion === undefined)) return { ok: false, error: "not_found" };
+  if (opts.preview && existing.version !== opts.expectedVersion) return { ok: false, error: "draft_conflict" };
   if (!bodyWithinLimits(d.body, kind)) return { ok: false, error: "body_too_long" };
   // Question/reply-label combinations. Since altOf is immutable, do not check whether its target later became hidden/deleted here, which would block saving incomplete drafts.
   // createTopic checks original-question readability at publication. Removing asksStance while retaining altOf yields invalid_alt_of.
@@ -328,7 +332,11 @@ async function updateDraftImplementation(
   if (opts.skipUnchanged && existing.lang === d.lang && existing.title === (kind === "topic" ? d.title ?? null : null)
     && existing.body === d.body && existing.asksStance === asksStance && existing.stanceTag === stanceTag
     && (d.aiAssistance === undefined || existing.aiAssistance === d.aiAssistance)
-    && (opts.villageId === undefined || existing.villageId === opts.villageId)) return { ok: true, version: existing.version };
+    && (opts.villageId === undefined || existing.villageId === opts.villageId)) {
+    if (opts.preview) await db.update(drafts).set({ previewedAt: opts.now ?? new Date() })
+      .where(and(eq(drafts.id, draftId), eq(drafts.authorId, authorId)));
+    return { ok: true, version: existing.version };
+  }
   const updated = await db
     .update(drafts)
     .set({
@@ -343,6 +351,7 @@ async function updateDraftImplementation(
       // undefined: keep what the draft has (the draft screen does not send it); null: clear it.
       ...(d.aiAssistance === undefined ? {} : { aiAssistance: d.aiAssistance }),
       updatedAt: opts.now ?? new Date(),
+      ...(opts.preview ? { previewedAt: opts.now ?? new Date() } : {}),
     })
     .where(and(eq(drafts.id, draftId), eq(drafts.authorId, authorId), opts.expectedVersion === undefined ? undefined : eq(drafts.version, opts.expectedVersion)))
     .returning({ version: drafts.version });
@@ -420,13 +429,21 @@ export async function getDraft(db: Db, authorId: string, draftId: number): Promi
     ...(villagesEnabled() && row.draft.kind === "topic" ? { village: await villageSlug(db, row.draft.villageId) } : {}) };
 }
 
-// Count the member's own pending API drafts for the header badge.
+// Count the member's pending API drafts for the submission limit.
 export async function countApiDrafts(db: Db, authorId: string): Promise<number> {
   const [row] = await db
     .select({ n: count() })
     .from(drafts)
     .where(and(eq(drafts.authorId, authorId), eq(drafts.via, "api")));
   return Number(row.n);
+}
+
+export async function countDraftBadges(db: Db, authorId: string) {
+  const [row] = await db.select({
+    apiDrafts: sql`count(*) filter (where ${eq(drafts.via, "api")})`.mapWith(Number),
+    previewedDrafts: sql`count(*) filter (where ${and(eq(drafts.kind, "topic"), isNotNull(drafts.previewedAt))})`.mapWith(Number),
+  }).from(drafts).where(eq(drafts.authorId, authorId));
+  return row;
 }
 
 // The member's drafts of topics, for the link to unfinished writing on the new-topic screen.
@@ -441,7 +458,7 @@ export async function listDrafts(db: Db, authorId: string, opts: { limit?: numbe
     .from(drafts)
     .leftJoin(entries, and(eq(entries.id, drafts.threadId), isNull(entries.deletedAt), isNull(entries.hiddenAt)))
     .where(eq(drafts.authorId, authorId))
-    .orderBy(desc(drafts.updatedAt), desc(drafts.id))
+    .orderBy(sql`case when ${drafts.kind} = 'topic' then ${drafts.previewedAt} end desc nulls last`, desc(drafts.updatedAt), desc(drafts.id))
     .limit(opts.limit ?? 200);
   return (await Promise.all(rows.map(async ({ draft, threadTitle, threadBody }) => ({
     id: draft.id,
@@ -453,6 +470,7 @@ export async function listDrafts(db: Db, authorId: string, opts: { limit?: numbe
     via: draft.via as EntryVia,
     updatedAt: draft.updatedAt,
     asksStance: draft.asksStance,
+    previewedAt: draft.kind === "topic" ? draft.previewedAt : null,
     excerpt: (await plainExcerpt(draft.body, DRAFT_EXCERPT_CHARS)),
     headline: (await headlineFromBody(draft.body)),
   }))));

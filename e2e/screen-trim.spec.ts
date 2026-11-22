@@ -117,7 +117,7 @@ test("CJK emphasis slants in articles, replies and previews without changing its
     await openPostSettings(page);
     await page.getByRole("combobox", { name: ja.field_lang, exact: true }).click();
     await page.getByRole("option", { name: LANG_LABELS[lang], exact: true }).click();
-    await page.getByRole("button", { name: ja.preview, exact: true }).click();
+    await page.getByRole("button", { name: ja.draft_preview_body, exact: true }).click();
     await expect(page.locator("main form .longread")).toHaveAttribute("lang", lang);
     await italic(page.locator("main form .longread em"));
     await page.goto(`${url}/edit`);

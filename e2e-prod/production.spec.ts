@@ -156,7 +156,7 @@ test("a topic with math, a footnote and an external image: the preview and the p
   await boss.getByRole("listbox").getByRole("option", { name: "日本語", exact: true }).click();
   // Preview fetches the server render through JavaScript (connect-src 'self'); external images become links.
   await expect(async () => {
-    await boss.getByRole("button", { name: enMessages.preview }).click();
+    await boss.getByRole("button", { name: enMessages.draft_preview_body, exact: true }).click();
     await expect(boss.locator("div.longread .katex").first()).toBeVisible({ timeout: 5_000 });
   }).toPass({ timeout: 30_000 });
   await expect(boss.locator("div.longread").getByRole("link", { name: "外部の画像" })).toHaveAttribute("href", "https://cdn.example.net/tracker.png");
@@ -218,7 +218,7 @@ test("the handle suggestions for an @mention and the preview member link work un
   await boss.getByLabel(enMessages.field_lang).click();
   await boss.getByRole("listbox").getByRole("option", { name: enMessages.language_name_en, exact: true }).click();
   await expect(async () => {
-    await boss.getByRole("button", { name: enMessages.preview }).click();
+    await boss.getByRole("button", { name: enMessages.draft_preview_body, exact: true }).click();
     await expect(boss.locator("div.longread a.mention")).toHaveText(["@mika"], { timeout: 5_000 });
   }).toPass({ timeout: 30_000 });
   await expect(boss.locator("div.longread a.mention")).toHaveAttribute("href", /^\/u\/id\/[a-z0-9]{12}$/);

@@ -106,18 +106,7 @@ export function StancePanel({ questionId, stance, distribution, peekHref, trigge
       <input type="hidden" name="returnTo" value={returnTo} />
       <div ref={group} tabIndex={-1} role="group" aria-label={m.stance_title()} className="flex flex-wrap items-center gap-2">
         {canChoose ? (
-          POSITIONS.map((p) => (
-            <Button variant="outline"
-              key={p}
-              type="submit"
-              name="position"
-              value={p}
-              pressed={position === p}
-              pending={busy}
-            >
-              {LABELS[p]()}
-            </Button>
-          ))
+          <StanceChoices position={position} busy={busy} />
         ) : (
           position === null && <span className="ui-help text-muted-foreground">{m.stance_closed()}</span>
         )}
@@ -191,4 +180,9 @@ export function StancePanel({ questionId, stance, distribution, peekHref, trigge
       )}
     </div>
   );
+}
+
+export function StanceChoices({ position = null, busy = false, disabled = false }: { position?: Position | null; busy?: boolean; disabled?: boolean }) {
+  return POSITIONS.map(p => <Button variant="outline" key={p} type={disabled ? "button" : "submit"}
+    name="position" value={p} pressed={position === p} pending={busy} disabled={disabled}>{LABELS[p]()}</Button>);
 }

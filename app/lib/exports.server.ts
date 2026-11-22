@@ -311,7 +311,8 @@ export async function buildObservationExport(
 // Version 17 includes source-attribution snapshots belonging to the member.
 // Version 18 separates member follows from shared-village follows.
 // Version 19 includes the member's pending post edits and village proposals.
-export const MEMBER_EXPORT_VERSION = 19;
+// Version 20 added previewed_at to drafts, recording when they were last saved with Preview.
+export const MEMBER_EXPORT_VERSION = 20;
 
 export type MemberExport = {
   format: "tomola-member-export";
@@ -380,6 +381,7 @@ export type MemberExport = {
     raw_frontmatter: string | null;
     created_at: string;
     updated_at: string;
+    previewed_at: string | null;
   }>;
   // The member's own Insightful: only the post's id, never its author. voter_area is the member's area when they pressed it.
   insightful: Array<{ entry_id: number; voter_area: string; created_at: string }>;
@@ -536,6 +538,7 @@ export async function buildMemberExport(db: Db, userId: string, opts: { now?: Da
       raw_frontmatter: d.rawFrontmatter,
       created_at: d.createdAt.toISOString(),
       updated_at: d.updatedAt.toISOString(),
+      previewed_at: d.previewedAt?.toISOString() ?? null,
     })),
     insightful: voteRows.map((v) => ({ entry_id: v.entryId, voter_area: v.voterArea, created_at: v.createdAt.toISOString() })),
     stances: stanceRows.map((r) => ({ question_id: r.questionId, position: r.position, area: r.area, version: r.version, created_at: r.createdAt.toISOString(), updated_at: r.updatedAt.toISOString() })),

@@ -14,7 +14,7 @@ type State =
 // fixedLang: the post language for forms without a language field, such as editing screens.
 // pasteFrontmatter: forms that read and remove initial frontmatter on submission (the value identifies the form kind; new topics and replies). Do not show that frontmatter in the preview either
 // (other forms save the body unchanged, so an initial --- is rendered unchanged too).
-export function EntryPreview({ kind = "topic", fixedLang, pasteFrontmatter, invalidateOnEdit = false, selectedLang }: { kind?: "topic" | "reply"; fixedLang?: string; pasteFrontmatter?: "topic" | "reply"; invalidateOnEdit?: boolean; selectedLang?: string }) {
+export function EntryPreview({ kind = "topic", fixedLang, pasteFrontmatter, invalidateOnEdit = false, selectedLang, bodyLabel = false }: { kind?: "topic" | "reply"; fixedLang?: string; pasteFrontmatter?: "topic" | "reply"; invalidateOnEdit?: boolean; selectedLang?: string; bodyLabel?: boolean }) {
   const [state, setState] = useState<State>({ status: "idle" });
   // Prevent an earlier response from replacing a later one after repeated clicks.
   const latest = useRef(0);
@@ -77,7 +77,7 @@ export function EntryPreview({ kind = "topic", fixedLang, pasteFrontmatter, inva
   return (
     <div ref={element} className="space-y-2">
       <Button variant="outline" type="button" onClick={(e) => void show(e.currentTarget)}>
-        {m.preview()}
+        {bodyLabel ? m.draft_preview_body() : m.preview()}
       </Button>
       <div aria-live="polite" className="empty:sr-only">
         {state.status === "loading" && <p className="ui-help text-muted-foreground">{m.preview_loading()}</p>}

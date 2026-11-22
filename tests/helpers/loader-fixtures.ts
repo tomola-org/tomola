@@ -52,7 +52,7 @@ type MemberNavigation = Extract<MemberLayoutRoute.ComponentProps["loaderData"], 
 export const memberNavigationData = loaderFixture<MemberNavigation>(() => ({
   reader: false, userId: "fixture", handle: "fixture", passkeyPrompt: { cookieName: "fixture.prompt", deferred: false },
   hasPasskey: true, credentialFresh: false, isOperator: false, canInvite: false,
-  isModerator: false, apiDrafts: 0, unreadNotifications: 0, followedUnread: false, welcome: null,
+  isModerator: false, apiDrafts: 0, previewedDrafts: 0, unreadNotifications: 0, followedUnread: false, welcome: null,
 }));
 
 export const onboardingData = loaderFixture<OnboardingRoute.ComponentProps["loaderData"]>(() => ({

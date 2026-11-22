@@ -109,7 +109,7 @@ test("shared input makes one private draft, imports once, and posts the reviewed
   const combined = `${original}\n\nMy later note.\n\n${imported}`;
   await expect(body()).toHaveValue(combined);
   await expect(page.getByRole("button", { name: en.ai_write_apply, exact: true })).toBeDisabled();
-  await page.getByRole("button", { name: en.preview, exact: true }).click();
+  await page.getByRole("button", { name: en.draft_preview_body, exact: true }).click();
   await expect(page.locator(".longread")).toContainText("AI introduction.");
   if (evidence) {
     fs.mkdirSync(evidence, { recursive: true });
@@ -323,7 +323,7 @@ test("import preserves frontmatter as body text, rejects overflow, and undo cann
   await body().fill("[Source](https://example.org/a)\n\nOriginal comment");
   await saveEditorDraft(page);
   await expect(page).toHaveURL(/\/drafts\/\d+(?:\?saved=1)?$/);
-  await page.getByRole("button", { name: en.preview, exact: true }).click();
+  await page.getByRole("button", { name: en.draft_preview_body, exact: true }).click();
   await expect(page.locator(".longread")).toContainText("Original comment");
   await titleField(page).fill("My title");
   await openHelp();
@@ -494,11 +494,11 @@ test("reply and edit previews retain their existing behavior while an AI draft c
   await body().fill("Draft preview body");
   await saveEditorDraft(page);
   await expect(page).toHaveURL(/\/drafts\/\d+(?:\?saved=1)?$/);
-  await page.getByRole("button", { name: en.preview, exact: true }).click();
+  await page.getByRole("button", { name: en.draft_preview_body, exact: true }).click();
   await expect(page.locator(".longread")).toContainText("Draft preview body");
   await body().fill("Updated draft body");
   await expect(page.locator(".longread")).toHaveCount(0);
-  await page.getByRole("button", { name: en.preview, exact: true }).click();
+  await page.getByRole("button", { name: en.draft_preview_body, exact: true }).click();
   await expect(page.locator(".longread")).toContainText("Updated draft body");
   await openPostSettings(page);
   await page.getByRole("combobox", { name: en.field_lang, exact: true }).click();

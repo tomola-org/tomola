@@ -19,7 +19,7 @@ const comparable = (snapshot: string) => {
   try { return JSON.stringify((JSON.parse(snapshot) as [string, string][]).map(([name, value]) => [name, name === "title" || name === "body" ? value.replace(/\r\n?/g, "\n").trim() : value])); }
   catch { return snapshot; }
 };
-type SavedAction = { saved?: boolean; version?: number; signingView?: string; altRemoved?: boolean; error?: string | null };
+type SavedAction = { saved?: boolean; version?: number; signingView?: string; altRemoved?: boolean; previewFailed?: boolean; error?: string | null };
 const unpack = (snapshot: string) => {
   const form = new FormData();
   for (const [name, value] of JSON.parse(snapshot) as [string, string][]) form.append(name, value);
@@ -57,6 +57,7 @@ export default function DraftAutosave({ owner, scope, startTitle = "", startBody
   const forgetLocal = useRef((_leaving = true) => {});
   const link = useRef<ServerDraftLink | undefined>(draft);
   const paused = useRef(false);
+  const previewSubmitted = useRef(false);
   const lastSaved = useRef<AutosavedDraft | null>(null);
   const initialDraft = useRef(draft);
   initialDraft.current = draft;
@@ -111,6 +112,8 @@ export default function DraftAutosave({ owner, scope, startTitle = "", startBody
     let timer: ReturnType<typeof setTimeout> | undefined;
     let disposed = false;
     let fork = false;
+    let previewQueued = false;
+    previewSubmitted.current = false;
     let observed = capture(form);
     const initial = new FormData(form);
     if (initial.has("title")) initial.set("title", startTitle);
@@ -183,7 +186,7 @@ export default function DraftAutosave({ owner, scope, startTitle = "", startBody
         form.dispatchEvent(new CustomEvent("tomola:form-saved", { detail: unpack(snapshot) }));
       }
     }
-    const schedule = () => { clearTimeout(timer); if (!cannotWrite()) timer = setTimeout(() => { void save(); }, DELAY); };
+    const schedule = () => { clearTimeout(timer); if (!cannotWrite() && !previewQueued && !previewSubmitted.current) timer = setTimeout(() => { void save(); }, DELAY); };
     acknowledge.current = (sent, result) => {
       const values = unpack(sent);
       if (result.altRemoved) values.delete("altOf");
@@ -201,7 +204,7 @@ export default function DraftAutosave({ owner, scope, startTitle = "", startBody
     };
     async function save(leaving = false, force = false, round = 0, recovering = false): Promise<AutosavedDraft | null> {
       clearTimeout(timer);
-      if (cannotWrite()) return null;
+      if (cannotWrite() || previewQueued || (previewSubmitted.current && !force)) return null;
       if (pending) {
         await pending;
         return save(leaving, force, round, recovering);
@@ -253,6 +256,11 @@ export default function DraftAutosave({ owner, scope, startTitle = "", startBody
           if (response.status === 401 || response.type === "opaqueredirect") { form.dataset.autosaveError = "login_required"; throw new Error("Sign in required"); }
           const saved = await response.json() as AutosavedDraft & { error?: string; latest?: AutosavedDraft; previousMatches?: boolean };
           if (cannotWrite()) return null;
+          if (!response.ok && previewQueued) {
+            form.dataset.autosaveError = saved.error ?? "busy";
+            setStatus("failed");
+            return null;
+          }
           if (saved.error === "draft_conflict" && saved.latest) {
             if (saved.previousMatches) {
               attach(saved.latest);
@@ -292,7 +300,7 @@ export default function DraftAutosave({ owner, scope, startTitle = "", startBody
         } finally { pending = undefined; }
       })();
       const saved = await pending;
-      if (!cannotWrite() && retryConflict) {
+      if (!cannotWrite() && !previewQueued && retryConflict) {
         if (round < 3) return save(leaving, retryForce, round + 1);
         setStatus("failed");
       }
@@ -305,6 +313,7 @@ export default function DraftAutosave({ owner, scope, startTitle = "", startBody
       const current = capture(form);
       if (current === observed) return;
       observed = current;
+      previewSubmitted.current = false;
       if (!stopped.current) { if (newTopic) persist(); setStatus("saving"); schedule(); }
     };
     const observer = new MutationObserver(changed);
@@ -335,12 +344,31 @@ export default function DraftAutosave({ owner, scope, startTitle = "", startBody
     const submit = (event: Event) => {
       if (submitting) return;
       clearTimeout(timer);
+      const button = (event as SubmitEvent).submitter as HTMLButtonElement | null;
+      const isPreview = button?.name === "intent" && button.value === "preview";
+      if (!queued) previewSubmitted.current = isPreview;
+      if (isPreview && pending && !queued) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        queued = previewQueued = true;
+        void pending.then(saved => {
+          queued = previewQueued = false;
+          if (disposed) return;
+          previewSubmitted.current = Boolean(saved);
+          if (!saved) { setStatus("failed"); return; }
+          clearTimeout(timer);
+          paused.current = true;
+          submitting = true;
+          form.requestSubmit(button);
+          submitting = false;
+        });
+        return;
+      }
       if (!pending && !queued) { paused.current = true; return; }
       event.preventDefault();
       event.stopImmediatePropagation();
       if (queued) return;
       queued = true;
-      const button = (event as SubmitEvent).submitter as HTMLButtonElement | null;
       void save().finally(() => {
         if (disposed) return;
         paused.current = true;
@@ -391,6 +419,7 @@ export default function DraftAutosave({ owner, scope, startTitle = "", startBody
     };
   }, [owner, scope, startTitle, startBody, newTopic, language, recovered, recoveryToken, ownedStore, readLocalDraft, writeLocalDraft, removeLocalDraft]);
   useEffect(() => {
+    if (action?.previewFailed) previewSubmitted.current = false;
     if (action?.error === "not_found") { setMissing(true); setStatus("missing"); }
   }, [action]);
   useEffect(() => {

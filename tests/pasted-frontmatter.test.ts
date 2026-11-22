@@ -257,6 +257,7 @@ describe("the new topic form drawn again after a refusal (no JavaScript)", () =>
   const formData = loaderFixture<Props["loaderData"]>(() => ({
     ownerId: "fixture", connectDraftLabel: m.connect_draft_link(),
     aiMaterialLabels: { add: m.ai_material_add(), title: m.ai_material_title(), help: m.ai_material_input_help({ count: POST_AI_MATERIAL_CHARS }), error: m.ai_material_error() },
+    previewFailureLabel: m.draft_autosave_failed(),
     defaultLang: "ja", prefill: null, asksStance: false, alt: null, altNotFound: false, draftIds: [],
     signPosts: false, formKey: "plain", initialValues: { title: undefined, body: undefined },
     draftStart: { startTitle: "", startBody: "" }, draftScope: "topic-new", responseField: { name: "responseTo", value: "" },

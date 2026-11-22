@@ -45,7 +45,7 @@ for (const width of [1366, 390]) {
     await page.unroute("**/media");
     await captureScreenshot(page, { path: path.join(screenDir, `inserted-${width}.png`), fullPage: true }, "e2e-media");
     await page.keyboard.insertText("A synthetic diagram");
-    await page.getByRole("button", { name: en.preview, exact: true }).click();
+    await page.getByRole("button", { name: en.draft_preview_body, exact: true }).click();
     const preview = page.locator('main img[alt="A synthetic diagram"]'); await expect(preview).toBeVisible();
     await expect(preview).toHaveAttribute("width", "2000");
     await expect(preview).toHaveAttribute("height", "1000");

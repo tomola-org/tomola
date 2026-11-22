@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
-import { SigningChanges } from "~/components/signed-form";
+import { SigningChanges } from "~/components/signing-changes";
 import type { SigningContent } from "~/lib/signing";
 
 vi.mock("~/paraglide/messages.js", async () => ({ m: (await import("./helpers/messages-json")).jsonMessages() }));

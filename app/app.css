@@ -733,6 +733,11 @@ article[data-new-reply]::before {
   .action-panel > summary::-webkit-details-marker { display: none; }
 }
 
+/* Before hydration and without JavaScript, keep the empty preview control out of the tab order. */
+form:not([data-ready]):has(input[name="title"]:placeholder-shown):has(textarea[name="body"]:placeholder-shown) [data-draft-preview-button] {
+  visibility: hidden;
+}
+
 /* A post without a title in a list: the interface's voice, plain, at most two lines, so that a remark is not mistaken for an essay's title. a.topic-title is one step more specific than the language rules above. */
 a.topic-title[data-remark] {
   font-family: var(--font-ui);

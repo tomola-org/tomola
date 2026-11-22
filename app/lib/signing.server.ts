@@ -90,6 +90,16 @@ function readView(form: FormData, userId: string, kind: Viewed["kind"], id: numb
   return view;
 }
 
+export function assertDraftPreviewPublication(form: FormData, userId: string, draft: { id: number; version: number; kind: string; title: string | null; body: string; lang: string; asksStance: boolean }) {
+  const view = readView(form, userId, "draft", draft.id);
+  const raw = readEntryForm(form);
+  if (draft.kind !== "topic" || view?.version !== String(draft.version) || formString(form, "version") !== view.version
+    || view.body !== draft.body || view.title !== titleOrNull(draft.title) || view.lang !== draft.lang
+    || raw.body !== normalizeNewlines(draft.body) || titleOrNull(raw.title) !== view.title || raw.lang !== view.lang || raw.asksStance !== draft.asksStance) {
+    throw new SigningError("draft_conflict", 409);
+  }
+}
+
 type Intent = { preview: SigningPreview; payload: string; payloadHash: string; formHash: string };
 const contentOf = (row: { title: string | null; body: string; lang: string }): SigningContent => ({ title: titleOrNull(row.title), body: row.body, lang: row.lang });
 const publicTitle = (title: string | null) => title?.trim() || null;
@@ -110,7 +120,7 @@ function routeOperation(path: string, form: FormData): { operation: SigningOpera
     }
     throw new SigningError("invalid_target", 400);
   }
-  match = /^\/drafts\/(\d+)$/.exec(path);
+  match = /^\/drafts\/(\d+)(?:\/preview)?$/.exec(path);
   if (match && intent === "publish") return { operation: "publish-draft", id: Number(match[1]) };
   if (path === "/settings" && intent === "display-name") return { operation: "change-display-name", id: null };
   if (path === "/settings" && intent === "handle") return { operation: "change-handle", id: null };
@@ -169,6 +179,7 @@ async function loadIntent(tx: Tx, userId: string, pathname: string, form: FormDa
   } else if (operation === "publish-draft") {
     const [draft] = await tx.select().from(drafts).where(and(eq(drafts.id, id!), eq(drafts.authorId, userId))).for("update");
     if (!draft) throw new SigningError("not_found", 404);
+    if (pathname.endsWith("/preview")) assertDraftPreviewPublication(form, userId, draft);
     target.draftId = draft.id;
     target.threadId = draft.threadId;
     target.parentId = draft.parentId;

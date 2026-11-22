@@ -65,6 +65,7 @@ export const publicOnly = [
   ["return-reading", ".*"],
 ] as const;
 export const bothModes = [
+  ["draft-preview", ".*"],
   ["home-following", ".*"],
   ["load-more", "members"],
   ["introductions", ".*"],

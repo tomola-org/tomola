@@ -33,7 +33,8 @@ export default function Drafts({ loaderData }: Route.ComponentProps) {
                 {d.kind === "topic" ? m.draft_kind_topic() : m.draft_kind_reply()}
                 {d.asksStance && <> · {m.question_badge()}</>} · {d.lang === "other" ? m.source_language_other() : LANG_LABELS[d.lang]}
                 {d.kind === "reply" && d.threadTitle && <> · {m.draft_reply_to({ title: d.threadTitle })}</>}
-                {d.via === "api" && <> · {m.draft_badge_api()}</>} ·{" "}
+                {d.via === "api" && <> · {m.draft_badge_api()}</>}
+                {d.previewedAt && <> · {m.draft_previewed()}</>} ·{" "}
                 <LocalTime iso={d.updatedAt.toISOString()} formatLabel={(date) => m.draft_updated({ date })} />
               </div>
             </li>

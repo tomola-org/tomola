@@ -47,6 +47,7 @@ export function EntryFields({
   bodyPlaceholder,
   tall = false,
   previewLanguage,
+  bodyPreviewLabel = false,
 }: {
   previewKind?: "topic" | "reply";
   defaultLang?: SourceLang;
@@ -73,6 +74,7 @@ export function EntryFields({
   tall?: boolean;
   // The language the preview is drawn in, when the language control is not part of these fields (the post settings): a change of it clears a preview that was drawn.
   previewLanguage?: string;
+  bodyPreviewLabel?: boolean;
 }) {
   const bodyId = useId();
   const bodyError = entryFieldError(error, "body", errorId);
@@ -112,7 +114,7 @@ export function EntryFields({
         <FieldDescription><a href={WRITING_PATH} target="_blank" rel="noreferrer" className="underline">{m.writing_guide_title()}</a></FieldDescription>
         <FieldDescription><a href="/connect" target="_blank" rel="noreferrer" className="underline">{m.footer_connect()}</a></FieldDescription>
       </details>
-      <div hidden={richActive}><EntryPreview kind={previewKind} fixedLang={fixedLang} pasteFrontmatter={pasteFrontmatter} invalidateOnEdit={invalidatePreviewOnEdit} selectedLang={previewLanguage ?? previewLang} /></div>
+      <div hidden={richActive}><EntryPreview kind={previewKind} fixedLang={fixedLang} pasteFrontmatter={pasteFrontmatter} invalidateOnEdit={invalidatePreviewOnEdit} selectedLang={previewLanguage ?? previewLang} bodyLabel={bodyPreviewLabel} /></div>
       {showLanguage && !fixedLang && <EntryLanguage error={error} errorId={errorId} defaultLang={defaultLang} selectedLang={selectedLang} pasteFrontmatter={Boolean(pasteFrontmatter)} onChange={invalidatePreviewOnEdit ? setPreviewLang : undefined} />}
     </>
   );

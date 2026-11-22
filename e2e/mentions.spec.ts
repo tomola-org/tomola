@@ -75,7 +75,7 @@ test("typing @ and a start of a handle in the body offers the members; the arrow
   await waitForFormReady(mei.locator("form", { has: titleField(mei) }));
   await titleField(mei).fill(TITLE);
   // The preview links the named member through the public id.
-  await mei.getByRole("button", { name: enMessages.preview }).click();
+  await mei.getByRole("button", { name: enMessages.draft_preview_body, exact: true }).click();
   const preview = mei.locator(".longread");
   // The author names herself too (@mei): emphasized like any member, and not notified.
   const mentions = preview.locator("a.mention");

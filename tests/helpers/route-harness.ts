@@ -110,7 +110,7 @@ export async function setupRouteHarness(): Promise<RouteHarness> {
         const path = new URL(req.url).pathname;
         const intent = String(form.get("intent") ?? "");
         const named = ((path === "/" || path === "/t/new" || /^\/t\/\d+$/.test(path)) && !["draft", "delete", "report", "flag"].includes(intent))
-          || /^\/(t|c)\/\d+\/edit$/.test(path) || (/^\/drafts\/\d+$/.test(path) && intent === "publish")
+          || /^\/(t|c)\/\d+\/edit$/.test(path) || (/^\/drafts\/\d+(?:\/preview)?$/.test(path) && intent === "publish")
           || (path === "/settings" && ["handle", "delete-passkey", "sign-posts"].includes(intent));
         const handle = Object.keys(cookies).find(h => cookies[h] === req.headers.get("cookie"));
         if (named && handle && req.headers.get("origin") === BASE) {

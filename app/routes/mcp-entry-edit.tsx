@@ -1,7 +1,8 @@
 import { data, Form, Link, redirect } from "react-router";
 import type { Route } from "./+types/mcp-entry-edit";
 import { entryErrorMessage } from "~/components/entry-fields";
-import { SendButton, SignedForm, SigningChanges } from "~/components/signed-form";
+import { SendButton, SignedForm } from "~/components/signed-form";
+import { SigningChanges } from "~/components/signing-changes";
 import { Button } from "~/components/ui/button";
 import { requireMember, requireWriter } from "~/lib/auth/session.server";
 import { replyLocation } from "~/lib/entries.server";

@@ -89,7 +89,7 @@ export function TopicFields({ defaultLang, defaultTitle = "", defaultBody = "", 
       {sharePrefilled && <p role="status" className="ui-help text-muted-foreground">{m.share_prefill_notice()}</p>}
     </div>
     <EntryFields error={error} errorId={errorId} key="body" defaultLang={defaultLang} defaultBody={defaultBody} pasteFrontmatter={autoLang ? "topic" : undefined} onBodyInput={value => setPasted(startsWithFrontmatter(value))} showLanguage={false} rows={12} tall
-      bodyPlaceholder={asksStance || alt ? m.field_body_placeholder_question() : m.field_body_placeholder_topic()} invalidatePreviewOnEdit={invalidatePreviewOnEdit} previewLanguage={lang}
+      bodyPlaceholder={asksStance || alt ? m.field_body_placeholder_question() : m.field_body_placeholder_topic()} invalidatePreviewOnEdit={invalidatePreviewOnEdit} previewLanguage={lang} bodyPreviewLabel
       writingHelp={<MediaInsertHelp />} bodyAccessory={<><MediaInsert compact /><NushiComposerEntry /></>} BodyEditor={BodyEditor} editorLang={lang || defaultLang} />
     <div className="space-y-2">
       <PostSettings summary={summary} open={error === "invalid_lang"}>

@@ -5,7 +5,7 @@ import { DRAFT_RATE_LIMIT, MEMBER_RATE_LIMITS, hitMemberLimit, hitRateLimit } fr
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
 
 let h: RouteHarness;
-beforeAll(async () => { h = await setupRouteHarness(); await h.signIn("drafter", { homeArea: "en" }); await h.signIn("limited"); });
+beforeAll(async () => { h = await setupRouteHarness(); await h.signIn("drafter", { homeArea: "en" }); await h.signIn("limited"); await h.signIn("preview_new", { homeArea: "en" }); });
 afterAll(() => h.restore());
 async function save(as: string, form: Record<string, string> = { intent: "draft", body: "Private reviewed content" }, headers?: Record<string, string>) {
   const { action } = await import("~/routes/topic-new");
@@ -30,4 +30,11 @@ it("retains input after invalid draft choices and enforces same-origin and write
   expect(await save("drafter", undefined, { origin: "https://foreign.example" })).toMatchObject({ status: 403 });
   await h.db.update(profiles).set({ suspendedUntil: new Date(Date.now() + 60_000) }).where(eq(profiles.userId, h.ids.drafter));
   expect(await save("drafter")).toMatchObject({ status: 302, location: "/suspended" });
+});
+
+it("creates a marked draft from a native topic preview POST", async () => {
+  const res = await save("preview_new", { ownerId: h.ids.preview_new, intent: "preview", title: "Previewed topic", body: "A private article", lang: "en" });
+  expect(res).toMatchObject({ status: 302, location: expect.stringMatching(/^\/drafts\/\d+\/preview$/) });
+  const [stored] = await h.db.select().from(drafts).where(eq(drafts.authorId, h.ids.preview_new));
+  expect(stored).toMatchObject({ kind: "topic", title: "Previewed topic", body: "A private article", previewedAt: expect.any(Date) });
 });

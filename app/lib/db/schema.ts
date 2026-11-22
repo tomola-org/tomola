@@ -840,6 +840,7 @@ export const drafts = pgTable(
     clientName: text("client_name"),
     clientUri: text("client_uri"),
     clientUpdatedAt: timestamp("client_updated_at", { withTimezone: true }),
+    previewedAt: timestamp("previewed_at", { withTimezone: true }),
     // Latest API/MCP-supplied text, used only until publication. Browser edits do not replace it.
     aiBaseline: jsonb("ai_baseline").$type<{ title: string | null; body: string }>(),
     aiSource: text("ai_source").$type<"api" | "mcp">(),

@@ -14,7 +14,7 @@ import type { loader as topicNewLoader } from "~/routes/topic-new";
 import { m } from "~/paraglide/messages.js";
 import { getLocale } from "~/paraglide/runtime.js";
 import { NavigationDrawer } from "./navigation-drawer";
-import { Bell, ChevronDown, PenLine, Search } from "lucide-react";
+import { Bell, ChevronDown, Eye, PenLine, Search } from "lucide-react";
 import { navigationSection, villageWritingHref } from "~/lib/navigation";
 import { withSettingsReturn } from "~/lib/settings-return";
 
@@ -31,6 +31,9 @@ export function MemberHeader({ data, sideNavigation = false, whyLink = false }: 
   const current = navigationSection(location.pathname);
   const joined = "villages" in data ? data.villages : [];
   const draftBadge = <CountBadge count={data.apiDrafts} label={m.nav_drafts_api_count({ count: data.apiDrafts })} tone="strong" cap={Number.MAX_SAFE_INTEGER} />;
+  const previewedLabel = data.previewedDrafts ? m.nav_drafts_previewed_count({ count: data.previewedDrafts }) : "";
+  const previewedBadge = <CountBadge count={data.previewedDrafts} label={previewedLabel} icon={<Eye className="size-3" />} />;
+  const draftLabels = [data.apiDrafts ? m.nav_drafts_api_count({ count: data.apiDrafts }) : "", previewedLabel].filter(Boolean);
   const adminLinks = <>
     <DropdownMenuItem render={<Link to="/mod" />}>{labels.nav_mod}</DropdownMenuItem>
     <DropdownMenuItem render={<Link to="/admin/translations" />}>{labels.nav_translations}</DropdownMenuItem>
@@ -79,13 +82,13 @@ export function MemberHeader({ data, sideNavigation = false, whyLink = false }: 
         <DropdownMenuContent data-admin-menu align="end" className="w-64 max-w-[calc(100vw-2rem)]">{adminLinks}</DropdownMenuContent>
       </DropdownMenu>}
       <DropdownMenu key={`member-${location.key}`}>
-        <DropdownMenuTrigger data-member-menu-trigger title={`@${data.handle}`} aria-label={`${labels.nav_menu} @${data.handle}${data.apiDrafts ? ` · ${m.nav_drafts_api_count({ count: data.apiDrafts })}` : ""}`} className="min-w-0 max-w-28 shrink" render={<Button variant="ghost" className="gap-1 px-1" />}>
+        <DropdownMenuTrigger data-member-menu-trigger title={`@${data.handle}`} aria-label={`${labels.nav_menu} @${data.handle}${draftLabels.length ? ` · ${draftLabels.join(" · ")}` : ""}`} className="min-w-0 max-w-28 shrink" render={<Button variant="ghost" className="gap-1 px-1" />}>
           <span className="min-w-0 truncate">@{data.handle}</span>
-          {draftBadge}
+          {data.apiDrafts ? draftBadge : previewedBadge}
           <ChevronDown aria-hidden="true" className="size-3" />
         </DropdownMenuTrigger>
         <DropdownMenuContent data-member-menu align="end" className="w-64 max-w-[calc(100vw-2rem)]">
-          <DropdownMenuItem render={<Link to="/drafts" />}>{labels.nav_drafts}{draftBadge}</DropdownMenuItem>
+          <DropdownMenuItem render={<Link to="/drafts" />}>{labels.nav_drafts}{draftBadge}{previewedBadge}</DropdownMenuItem>
           <DropdownMenuItem render={<Link to={`/u/${data.handle}`} />}>{labels.nav_my_page}</DropdownMenuItem>
           <DropdownMenuItem render={<Link to={withSettingsReturn("/settings#settings-profile", settingsReturnTo)} />}>{labels.nav_profile}</DropdownMenuItem>
           <DropdownMenuItem render={<Link to="/settings/stances" />}>{labels.nav_stances}</DropdownMenuItem>

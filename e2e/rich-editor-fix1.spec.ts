@@ -35,14 +35,14 @@ test("Japanese compose controls show active formats and keep both editor frames 
       // Editing modes stay available beside the body while language settings are folded.
       await expect(page.locator("[data-post-settings]")).toHaveJSProperty("open", false);
       await expect(page.getByRole("group", { name: ja.editor_mode_label, exact: true })).toBeVisible();
-      await page.getByRole("button", { name: ja.preview, exact: true }).click();
-      const preview = page.getByRole("button", { name: ja.preview, exact: true }).locator("..").locator(".longread");
+      await page.getByRole("button", { name: ja.draft_preview_body, exact: true }).click();
+      const preview = page.getByRole("button", { name: ja.draft_preview_body, exact: true }).locator("..").locator(".longread");
       await expect(preview).toBeVisible();
       await captureScreenshot(page, { path: path.join(directory, `new-markdown-${width}.png`), fullPage: true }, "e2e-rich-editor-fix1");
       await chooseEditorMode(page, ja.editor_mode_rich);
       await expect(rich(page)).toBeVisible();
       await expect(page.getByText(ja.writing_tips, { exact: true })).toBeHidden();
-      await expect(page.getByRole("button", { name: ja.preview, exact: true })).toBeHidden();
+      await expect(page.getByRole("button", { name: ja.draft_preview_body, exact: true })).toBeHidden();
       await expect(preview).toBeHidden();
       await expect(tool(page, ja.media_insert)).toBeVisible();
       const frame = (await page.locator(".rich-text-editor-frame").boundingBox())!;
@@ -86,7 +86,7 @@ test("Japanese compose controls show active formats and keep both editor frames 
       await expect(tool(page, ja.editor_redo)).toBeEnabled();
       await chooseEditorMode(page, ja.editor_mode_markdown);
       await expect(page.getByText(ja.writing_tips, { exact: true })).toBeVisible();
-      await expect(page.getByRole("button", { name: ja.preview, exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: ja.draft_preview_body, exact: true })).toBeVisible();
       await expect(page.locator("[data-media-insert]")).toBeVisible();
     }
   } finally { await context.close(); }

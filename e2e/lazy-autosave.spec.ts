@@ -8,6 +8,14 @@ const body = (page: Page) => page.locator('textarea[name="body"]').first();
 const form = (page: Page) => page.locator("form", { has: body(page) }).first();
 const saved = (page: Page) => expect(page.locator("[data-draft-autosave]")).toHaveAttribute("data-draft-autosave", "saved");
 
+async function postReplyTarget(page: Page, text: string) {
+  await waitForFormReady(form(page));
+  await body(page).fill(text);
+  await form(page).getByRole("button", { name: en.submit_post, exact: true }).click();
+  await expect(page).toHaveURL(/\/t\/\d+\?posted=/);
+  return new URL(page.url()).pathname.split("/").at(-1)!;
+}
+
 for (const screen of ["new", "draft"]) test(`input and departure protection survive a delayed autosave module on the ${screen} screen`, async ({ page }) => {
   await useMember(page, `lazy_autosave_${screen}@example.com`, "/t/new");
   let id: string | undefined;
@@ -65,9 +73,7 @@ test("a reply draft stays clean on opening and saves writing entered before auto
   await expect(form(page)).toHaveAttribute("data-autosave", "ready");
   const ownerId = await page.evaluate(() => sessionStorage.getItem("tomola:draft-owner"));
   const headers = { Origin: new URL(page.url()).origin };
-  const topic = await page.request.post("/t/new", { headers, form: { body: "A thread for a reply draft", lang: "en" } });
-  expect(topic.ok()).toBe(true);
-  const threadId = new URL(topic.url()).pathname.split("/").at(-1)!;
+  const threadId = await postReplyTarget(page, "A thread for a reply draft");
   const response = await page.request.post("/drafts/ai-write", { headers, form: { ownerId: ownerId!, kind: "reply", threadId, body: "The saved reply", lang: "en" } });
   expect(response.ok()).toBe(true);
   const { id } = await response.json() as { id: number };
@@ -154,15 +160,15 @@ for (const kind of ["topic", "reply"]) test(`API ${kind} approval survives autos
   await page.getByRole("button", { name: en.tokens_create }).click();
   const token = page.locator("[role=status] code");
   await expect(token).toHaveText(/^tml_draft_[A-Za-z0-9_-]{43}$/);
+  const authorization = `Bearer ${(await token.innerText()).trim()}`;
   let target = "";
   if (kind === "reply") {
-    const topic = await page.request.post("/t/new", { headers: { Origin: new URL(page.url()).origin }, form: { body: "A thread for delayed API approval", lang: "en" } });
-    expect(topic.ok()).toBe(true);
-    target = `reply_to: p-${new URL(topic.url()).pathname.split("/").at(-1)}\n`;
+    await page.goto("/t/new");
+    target = `reply_to: p-${await postReplyTarget(page, "A thread for delayed API approval")}\n`;
   }
   const text = `Reviewed API ${kind} writing`;
   const created = await page.request.post("/api/drafts", {
-    headers: { Authorization: `Bearer ${(await token.innerText()).trim()}`, "Content-Type": "text/markdown" },
+    headers: { Authorization: authorization, "Content-Type": "text/markdown" },
     data: `---\ntype: ${kind}\n${target}lang: en\n---\n${text}\n`,
   });
   expect(created.status()).toBe(201);

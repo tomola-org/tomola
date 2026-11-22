@@ -62,6 +62,7 @@ export const VILLAGE_MEMBER_FIXTURES: readonly SeedMember[] = [
   { email: "villages_suspended@example.com", handle: "villages_suspended", homeArea: "en", uiLocale: "en" },
 ];
 export const MEMBER_FIXTURES: readonly SeedMember[] = [
+  ...["journey", "reminder", "queued", "native", "transport", "intro", "conflict", "review"].map(scenario => ({ email: `preview_${scenario}@example.com`, handle: `preview_${scenario}`, homeArea: "ja" as const, uiLocale: "en" as const })),
   { email: "zslug_creator@example.com", handle: "zslug_creator", homeArea: "en", readLangs: ["en"], uiLocale: "en" },
   ...["supp_flow_author", "supp_flow_reader", "supp_public_author"].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "en" as const, readLangs: ["en" as const], uiLocale: "en" as const })),
   ...["znushi_flow_owner", "znushi_flow_caller", "znushi_mod_owner", "znushi_expired_caller"].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "en" as const, readLangs: ["en" as const], uiLocale: "en" as const })),
