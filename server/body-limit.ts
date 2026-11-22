@@ -2,7 +2,7 @@
 // Form validation enforces the shared post limits only after reading the whole body into memory. An unbounded body could exhaust memory first.
 // Reject Content-Length above the limit with 413 Payload Too Large before reading. Without Content-Length (Transfer-Encoding: chunked), count incoming bytes and
 // return 413 when the limit is exceeded. Stop the incoming stream and close the connection after flushing the rejection, including when a chunked upload never finishes.
-// MAX_REQUEST_BODY_BYTES is in bytes, default 2 MiB. Apply the same upstream Caddy limit in deploy/Caddyfile request_body.
+// MAX_REQUEST_BODY_BYTES is in bytes, default 2 MiB. Apply the same upstream Caddy limit in the request_body rules of deploy/caddy/tomola.caddy.
 import { MEDIA_LIMITS, isMultipartMediaType } from "../app/lib/media.ts";
 import type { NextFunction, Request, Response } from "express";
 

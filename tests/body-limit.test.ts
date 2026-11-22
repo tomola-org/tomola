@@ -219,7 +219,7 @@ describe("maxRequestBodyBytes", () => {
 });
 
 it("keeps Caddy image paths and body limits aligned with the app", () => {
-  const caddy = readFileSync(new URL("../deploy/Caddyfile", import.meta.url), "utf8");
+  const caddy = readFileSync(new URL("../deploy/caddy/tomola.caddy", import.meta.url), "utf8");
   const patterns = [...caddy.matchAll(/^\s*path_regexp\s+(\S+)\s*$/gm)].map(match => match[1]);
   expect(patterns).toHaveLength(3);
   const [resetPath, uploadPath, ordinaryBodyException] = patterns;
