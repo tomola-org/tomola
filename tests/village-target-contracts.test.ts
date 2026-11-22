@@ -1,30 +1,26 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { BASE, setupRouteHarness } from "./helpers/route-harness";
-import { signingCredential } from "./helpers/signing";
 import { parseBlocks } from "./helpers/md";
 import { getAuth } from "~/lib/auth/auth.server";
 import { createApiToken } from "~/lib/tokens.server";
 import { handleDraftCreate } from "~/lib/api/drafts-api.server";
 import { handleMcpRequest } from "~/lib/mcp/server.server";
-import { ensureLanguageVillages, changeVillageMembership, languageVillage, setDefaultVillage, topicVillage } from "~/lib/villages.server";
-import { createDraft, publishDraft } from "~/lib/drafts.server";
+import { ensureLanguageVillages, changeVillageMembership, languageVillage, setDefaultVillage } from "~/lib/villages.server";
+import { createDraft } from "~/lib/drafts.server";
 import { draftMdMiddleware } from "~/lib/md/draft.server";
 import * as draftService from "~/lib/drafts.server";
-import { profiles, memberSignatures, signingChallenges, villages, villageMembers } from "~/lib/db/schema";
-import { previewSignedWrite, issueSignedWrite, withSignedWrite } from "~/lib/signing.server";
+import { profiles, signingChallenges, villages, villageMembers } from "~/lib/db/schema";
 import { action as signingAction } from "~/routes/signing";
-import { submitTopicForm } from "~/lib/entry-form.server";
 import { llmsTxt, helpAiMd, aiTxt } from "~/lib/api/guides.server";
 import { openApiDocument } from "~/lib/api/openapi.server";
-import { createTopic } from "~/lib/entries.server";
 import { MEMBER_FIXTURES, VILLAGE_MEMBER_FIXTURES } from "../e2e/member-fixtures";
 
 let shared: Awaited<ReturnType<typeof setup>>;
 beforeAll(async () => { shared = await setup(); });
 beforeEach(async () => {
   vi.stubEnv("VILLAGES", "1"); vi.stubEnv("ENABLED_LANGS", "ja,en");
-  await shared.h.db.update(profiles).set({ defaultVillageId: (await languageVillage(shared.h.db, "ja"))!.id, signPosts: false }).where(eq(profiles.userId, shared.h.ids.vt_owner));
+  await shared.h.db.update(profiles).set({ defaultVillageId: (await languageVillage(shared.h.db, "ja"))!.id }).where(eq(profiles.userId, shared.h.ids.vt_owner));
 });
 afterAll(() => shared.h.restore());
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
@@ -138,93 +134,24 @@ it("serves draft Markdown to its owner only and leaves the old route untouched w
   expect(next).toHaveBeenCalledOnce();
 });
 
-it("binds signed acceptance to the chosen village identity and refuses changed targets or defaults", async () => {
-  const { h } = shared;
-  const userId = h.ids.vt_owner;
-  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, userId));
-  const key = await signingCredential(h.db, userId);
-  const profile = { homeArea: "ja" as const, readLangs: ["ja" as const] };
-  const form = (village?: string) => { const f = new FormData(); f.set("body", "Signed destination."); f.set("lang", "en"); f.set("villageDisplayed", village ?? "ja"); if (village) f.set("village", village); return f; };
-  const sign = async (f: FormData) => {
-    const preview = await previewSignedWrite(h.db, userId, "/t/new", f);
-    expect(preview.village).toMatchObject({ slug: f.get("village") ?? "ja" });
-    const challenge = await issueSignedWrite(h.db, userId, "/t/new", f, preview.payloadHash);
-    f.set("signatureChallenge", challenge.challenge);
-    f.set("signatureAssertion", JSON.stringify(key.assert(challenge.options.challenge, { uv: true })));
-    return challenge;
-  };
-  const run = (f: FormData) => withSignedWrite(h.db, userId, h.request("/t/new", { as: "vt_owner" }), f, tx => submitTopicForm(tx, { user: { id: userId }, profile }, f));
-  const altered = form("en"); await sign(altered); altered.set("village", "ja");
-  await expect(run(altered)).rejects.toMatchObject({ status: 409 });
-  const implicit = form(); await sign(implicit); await setDefaultVillage(h.db, userId, "en");
-  await expect(run(implicit)).rejects.toMatchObject({ status: 409 });
-  const substituted = form("en"); await sign(substituted);
-  await expect(withSignedWrite(h.db, userId, h.request("/t/new", { as: "vt_owner" }), substituted, tx => createTopic(tx, userId, { body: "Signed destination.", lang: "en", village: "ja" }))).rejects.toMatchObject({ status: 409 });
-  const accepted = form("en"); const challenge = await sign(accepted);
-  const result = await run(accepted);
-  if (!result.ok) throw new Error(result.error);
-  expect((await topicVillage(h.db, result.id))?.slug).toBe("en");
-  const [receipt] = await h.db.select().from(memberSignatures).where(eq(memberSignatures.challenge, challenge.challenge));
-  expect(JSON.parse(receipt.payload).target.villageId).toBe((await languageVillage(h.db, "en"))!.id);
-  const draft = await createDraft(h.db, userId, { kind: "topic", body: "Signed stored destination.", lang: "en", village: "ja" }, { via: "api" });
-  if (!draft.ok) throw new Error(draft.error);
-  const draftForm = form(); draftForm.set("body", "Signed stored destination."); draftForm.set("intent", "publish");
-  const path = `/drafts/${draft.id}`;
-  const preview = await previewSignedWrite(h.db, userId, path, draftForm);
-  expect(preview.village?.slug).toBe("ja");
-  const options = await issueSignedWrite(h.db, userId, path, draftForm, preview.payloadHash);
-  draftForm.set("signatureChallenge", options.challenge);
-  draftForm.set("signatureAssertion", JSON.stringify(key.assert(options.options.challenge, { uv: true })));
-  const published = await withSignedWrite(h.db, userId, h.request(path, { as: "vt_owner" }), draftForm, tx => publishDraft(tx, userId, draft.id));
-  if (!published.ok) throw new Error(published.error);
-  expect((await topicVillage(h.db, published.id))?.slug).toBe("ja");
-});
-
-it("rejects a changed displayed village before issuing a signing challenge for posts and drafts", async () => {
+it("returns the public destination on draft review and only its slug on a conflict", async () => {
   const { h } = shared, userId = h.ids.vt_owner;
-  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, userId));
-  const draft = await createDraft(h.db, userId, { kind: "topic", body: "Reviewed draft", lang: "en", village: "en" });
+  const draft = await createDraft(h.db, userId, { kind: "topic", body: "Reviewed draft target", lang: "en", village: "en" }, { via: "api" });
   if (!draft.ok) throw new Error(draft.error);
-  const countBefore = (await h.db.select().from(signingChallenges)).length;
-  for (const path of ["/t/new", `/drafts/${draft.id}`]) {
-    const form = new FormData();
-    form.set("body", path === "/t/new" ? '---\n"village": en\n---\nReviewed destination' : "Reviewed draft");
-    form.set("lang", "en"); form.set("villageDisplayed", "ja");
-    if (path !== "/t/new") { form.set("intent", "publish"); form.set("village", "en"); }
-    await expect(previewSignedWrite(h.db, userId, path, form)).rejects.toMatchObject({ code: "village_changed" });
-    await expect(issueSignedWrite(h.db, userId, path, form, "unused")).rejects.toMatchObject({ code: "village_changed" });
-    form.set("villageDisplayed", "  EN  ");
-    expect((await previewSignedWrite(h.db, userId, path, form)).village?.slug).toBe("en");
-  }
-  expect(await h.db.select().from(signingChallenges)).toHaveLength(countBefore);
-});
-
-it("returns only the resolved public village slug on signing preview and challenge conflicts", async () => {
-  const { h } = shared, userId = h.ids.vt_owner;
-  // Malformed duplicate keys stay literal and resolve to the implicit default.
-  await setDefaultVillage(h.db, userId, "en");
-  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, userId));
-  const draft = await createDraft(h.db, userId, { kind: "topic", body: "Reviewed draft target", lang: "en", village: "en" });
-  if (!draft.ok) throw new Error(draft.error);
-  const countBefore = (await h.db.select().from(signingChallenges)).length;
-  const request = (intent: string, pathname: string, fields: Record<string, string>) => {
+  const pathname = `/drafts/${draft.id}`;
+  const fields = { intent: "publish", version: "1", body: "Reviewed draft target", lang: "en", village: "", villageExplicit: "0", villageDisplayed: "ja" };
+  const request = (overrides: Record<string, string> = {}) => {
     const original = h.request("/signing", { as: "vt_owner" });
-    const headers = new Headers(original.headers); headers.set("content-type", "application/json");
-    return signingAction(h.args(new Request(original, { method: "POST", headers, body: JSON.stringify({ intent, pathname, fields: Object.entries(fields), previewHash: "unused" }) })));
+    return signingAction(h.args(new Request(original, { method: "POST", body: JSON.stringify({ intent: "preview", pathname, fields: Object.entries({ ...fields, ...overrides }) }) })));
   };
-  for (const intent of ["preview", "challenge"]) {
-    for (const declaration of ['"village": en', "village : en", "{village: en}", "village: >-\n  en", 'village: ja\n"village": en']) {
-      const response = await request(intent, "/t/new", { lang: "en", body: `---\n${declaration}\n---\nReviewed target`, village: "ja", villageDisplayed: "ja", villageExplicit: "0" });
-      expect(response.status, `${intent}: ${declaration}`).toBe(409);
-      expect(await response.json()).toEqual({ error: "village_changed", village: "en" });
-    }
-    for (const pathname of ["/t/new", `/drafts/${draft.id}`]) {
-      const response = await request(intent, pathname, { intent: "publish", lang: "en", body: pathname === "/t/new" ? '---\n"village": en\n---\nReviewed target' : "Reviewed draft target", village: "en", villageDisplayed: "ja" });
-      expect(response.status).toBe(409);
-      expect(response.headers.get("cache-control")).toBe("private, no-store");
-      expect(await response.json()).toEqual({ error: "village_changed", village: "en" });
-    }
-  }
+  const conflict = await request();
+  expect(conflict.status).toBe(409);
+  expect(conflict.headers.get("cache-control")).toBe("private, no-store");
+  expect(await conflict.json()).toEqual({ error: "village_changed", village: "en" });
+  const response = await request({ villageDisplayed: "  EN  " });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ village: { slug: "en" }, confirmation: expect.any(String), signatureRequired: false });
+
   const unavailable = await h.db.insert(villages).values([
     { slug: "review-closed", name: "Private target", kind: "closed" },
     { slug: "review-unjoined", name: "Unjoined target", kind: "open" },
@@ -232,11 +159,9 @@ it("returns only the resolved public village slug on signing preview and challen
   ]).returning();
   await h.db.insert(villageMembers).values(unavailable.filter(row => row.slug !== "review-unjoined").map(row => ({ villageId: row.id, userId })));
   for (const village of unavailable) {
-    for (const intent of ["preview", "challenge"]) {
-      const response = await request(intent, "/t/new", { lang: "en", body: "Unavailable target", village: village.slug!, villageExplicit: "1", villageDisplayed: "ja" });
-      expect(response.status).toBe(400);
-      expect(await response.json()).toEqual({ error: "village_required" });
-    }
+    const response = await request({ village: village.slug!, villageExplicit: "1" });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "village_required" });
   }
-  expect(await h.db.select().from(signingChallenges)).toHaveLength(countBefore);
+  expect(await h.db.select().from(signingChallenges)).toEqual([]);
 });

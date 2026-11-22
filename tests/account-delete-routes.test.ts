@@ -1,15 +1,14 @@
 import { eq } from "drizzle-orm";
 import { afterEach, expect, it, vi } from "vitest";
 import { action, loader } from "~/routes/settings-delete-account";
-import { action as signingAction } from "~/routes/signing";
 import { setupRouteHarness, type RouteHarness, BASE } from "./helpers/route-harness";
-import { attachSigningProof, signingCredential } from "./helpers/signing";
-import { apiTokens, oauthClient, oauthConsent, oauthRefreshToken, passkey, profiles, user } from "~/lib/db/schema";
+import { apiTokens, oauthClient, oauthConsent, oauthRefreshToken, memberSignatures, signingChallenges, passkey, profiles, user } from "~/lib/db/schema";
 import { getAuth } from "~/lib/auth/auth.server";
 import { createApiToken, authenticateToken } from "~/lib/tokens.server";
 import { signOpenInAiToken, verifyOpenInAiToken } from "~/lib/open-in-ai.server";
 import { authenticateRead } from "~/lib/api/read-auth.server";
 import { withMcpAuth } from "~/lib/mcp/auth.server";
+import { signingCredential } from "./helpers/signing";
 let h: RouteHarness | undefined;
 afterEach(() => h?.restore());
 
@@ -22,19 +21,17 @@ it("requires a member, exact confirmation and same-origin POSTs", async () => {
   expect(await h.db.select().from(user).where(eq(user.id, h.ids.quit_route))).toHaveLength(1);
 });
 
-it("blocks an unsigned opted-in deletion and accepts real UV proof even while suspended", async () => {
-  h = await setupRouteHarness(); const id = await h.signIn("quit_signed");
-  const credential = await signingCredential(h.db, id);
+it("lets a suspended member delete their account with a retired signing preference", async () => {
+  h = await setupRouteHarness(); const id = await h.signIn("quit_suspended");
+  await signingCredential(h.db, id);
   await h.db.update(profiles).set({ signPosts: true, suspendedUntil: new Date(Date.now() + 86_400_000), suspendedReason: "spam" }).where(eq(profiles.userId, id));
-  const request = () => h!.request("/settings/delete-account", { as: "quit_signed", form: { intent: "delete-account", confirmation: "quit_signed", posts: "keep" } });
-  expect((await h.outcome(() => action(h!.args(request())))).status).toBe(403);
-  const previewRequest = new Request(`${BASE}/signing`, { method: "POST", headers: { origin: BASE, cookie: request().headers.get("cookie")!, "content-type": "application/json" }, body: JSON.stringify({ intent: "preview", pathname: "/settings/delete-account", fields: [...new URLSearchParams({ intent: "delete-account", confirmation: "quit_signed", posts: "keep" })] }) });
-  expect((await signingAction(h.args(previewRequest))).status).toBe(200);
-  const signed = await attachSigningProof(h.db, id, request(), credential);
-  const result = await h.outcome(() => action(h!.args(signed)));
+  const request = () => h!.request("/settings/delete-account", { as: "quit_suspended", form: { intent: "delete-account", confirmation: "quit_suspended", posts: "keep", signatureAssertion: "invalid-json" } });
+  const result = await h.outcome(() => action(h!.args(request())));
   expect(result).toMatchObject({ status: 302, location: "/login?account-deleted=1" });
   expect(await h.db.select().from(passkey).where(eq(passkey.userId, id))).toEqual([]);
-  expect((await h.outcome(() => loader(h!.args(h!.request("/settings/delete-account", { as: "quit_signed" }))))).location).toContain("/login");
+  expect(await h.db.select().from(memberSignatures)).toEqual([]);
+  expect(await h.db.select().from(signingChallenges)).toEqual([]);
+  expect((await h.outcome(() => loader(h!.args(h!.request("/settings/delete-account", { as: "quit_suspended" }))))).location).toContain("/login");
 });
 
 it("invalidates the old session, PAT, read API, MCP bearer, OAuth consent/refresh and AI link", async () => {

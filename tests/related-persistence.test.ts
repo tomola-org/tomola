@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { drafts, entries, entryReferences, entryRevisions, profiles } from "~/lib/db/schema";
+import { drafts, entries, entryReferences, entryRevisions } from "~/lib/db/schema";
 import { createDraft, publishDraft } from "~/lib/drafts.server";
 import { createReply, createTopic, editEntry } from "~/lib/entries.server";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
@@ -17,7 +17,7 @@ beforeAll(async () => {
 });
 afterAll(() => h.restore());
 
-const paths = ["topic", "reply", "edit", "draft-topic", "draft-reply", "signed-topic", "signed-reply"] as const;
+const paths = ["topic", "reply", "edit", "draft-topic", "draft-reply", "browser-topic", "browser-reply"] as const;
 type Path = typeof paths[number];
 async function prepare(path: Path, failure = false) {
   const body = `${failure ? "Reject index" : "Accept index"} ${++sequence}: [discussion](/t/${target}?k=private)`;
@@ -37,16 +37,13 @@ async function prepare(path: Path, failure = false) {
     if (path === "reply") return createReply(h.db, h.ids.reference_writer, holder, { lang: "en", body });
     if (path === "edit") return editEntry(h.db, h.ids.reference_writer, initial!, { title: "Changed reference", body });
     if (path.startsWith("draft")) return publishDraft(h.db, h.ids.reference_writer, initial!);
-    await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, h.ids.reference_writer));
-    try {
-      const reply = path === "signed-reply";
-      const url = reply ? `/t/${holder}` : "/t/new";
-      const mod = reply ? await import("~/routes/topic") : await import("~/routes/topic-new");
-      const args = await h.signedArgs(h.request(url, { as: "reference_writer", form: { title: "Signed reference", lang: "en", body } }), reply ? { id: String(holder) } : {});
-      expect(await h.outcome(() => mod.action(args))).toMatchObject({ status: 302 });
-      const [entry] = await h.db.select({ id: entries.id }).from(entries).where(eq(entries.body, body));
-      return { ok: true, id: entry.id };
-    } finally { await h.db.update(profiles).set({ signPosts: false }).where(eq(profiles.userId, h.ids.reference_writer)); }
+    const reply = path === "browser-reply";
+    const url = reply ? `/t/${holder}` : "/t/new";
+    const mod = reply ? await import("~/routes/topic") : await import("~/routes/topic-new");
+    const args = h.args(h.request(url, { as: "reference_writer", form: { title: "Browser reference", lang: "en", body } }), reply ? { id: String(holder) } : {});
+    expect(await h.outcome(() => mod.action(args))).toMatchObject({ status: 302 });
+    const [entry] = await h.db.select({ id: entries.id }).from(entries).where(eq(entries.body, body));
+    return { ok: true, id: entry.id };
   };
   return { run, body, initial };
 }

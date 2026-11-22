@@ -172,7 +172,7 @@ test("checks pause while hidden, stop at expiry, reset on menu use, and skip fai
   const deferredAssets: string[] = [];
   page.on("request", request => {
     const filename = new URL(request.url()).pathname.split("/").at(-1)!;
-    if (/^(signed-form-controls|open-in-ai-details)-.*\.js$/.test(filename)) deferredAssets.push(filename);
+    if (/^(entry-form-controls|open-in-ai-details)-.*\.js$/.test(filename)) deferredAssets.push(filename);
   });
   try {
     await page.goto(`/t/${fixture().topicId}?lang=en`);

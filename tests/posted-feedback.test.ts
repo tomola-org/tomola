@@ -67,7 +67,7 @@ describe("publication feedback", () => {
     await h.signIn(who);
     const { action } = await import("~/routes/topic");
     const body = "Αυτή είναι μια συζήτηση για τη γλώσσα και την επικοινωνία μεταξύ των ανθρώπων.";
-    const out = await h.outcome(async () => action(await h.signedArgs(h.request(`/t/${topicId}`, { as: who, form: { body, lang } }), { id: String(topicId) })));
+    const out = await h.outcome(async () => action(h.args(h.request(`/t/${topicId}`, { as: who, form: { body, lang } }), { id: String(topicId) })));
     expect(out.status).toBe(302);
     const url = new URL(out.location!, "http://localhost");
     const id = readPostedId(url)!;
@@ -139,7 +139,7 @@ describe("publication feedback", () => {
         form = { ...form, intent: "publish", version: "1" };
       }
       const { action } = kind === "draft" ? await import("~/routes/draft") : await import("~/routes/topic");
-      const out = await h.outcome(async () => action(await h.signedArgs(h.request(path, { as: who, form }), params)));
+      const out = await h.outcome(async () => action(h.args(h.request(path, { as: who, form }), params)));
       expect(out.status).toBe(302);
       const url = new URL(out.location!, "http://localhost");
       expect(url.searchParams.get("followed")).toBe(prior === null ? "1" : null);
@@ -156,7 +156,7 @@ describe("publication feedback", () => {
     const created = [];
     for (const path of ["/t/new", `/t/${topicId}?lang=en`]) {
       const mod = path === "/t/new" ? await import("~/routes/topic-new") : await import("~/routes/topic");
-      const out = await h.outcome(async () => mod.action(await h.signedArgs(h.request(path, { as: "author", form: { body: "Published" } }), path.startsWith("/t/") && path !== "/t/new" ? { id: String(topicId) } : {})));
+      const out = await h.outcome(async () => mod.action(h.args(h.request(path, { as: "author", form: { body: "Published" } }), path.startsWith("/t/") && path !== "/t/new" ? { id: String(topicId) } : {})));
       expect(out.status).toBe(302);
       const url = new URL(out.location!, "http://localhost");
       const id = readPostedId(url);
@@ -168,7 +168,7 @@ describe("publication feedback", () => {
     for (const kind of ["topic", "reply"] as const) {
       const draft = await createDraft(h.db, h.ids.author, { kind, lang: "ja", body: "Draft body", ...(kind === "reply" ? { threadId: topicId } : {}) });
       if (!draft.ok) throw new Error("draft failed");
-      const out = await h.outcome(async () => action(await h.signedArgs(h.request(`/drafts/${draft.id}`, { as: "author", form: { intent: "publish", version: "1", body: "Published draft", lang: "ja" } }), { id: String(draft.id) })));
+      const out = await h.outcome(async () => action(h.args(h.request(`/drafts/${draft.id}`, { as: "author", form: { intent: "publish", version: "1", body: "Published draft", lang: "ja" } }), { id: String(draft.id) })));
       expect(out.status).toBe(302);
       expect(readPostedId(new URL(out.location!, "http://localhost"))).toBeGreaterThan(0);
     }

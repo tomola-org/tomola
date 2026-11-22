@@ -25,7 +25,7 @@ function currentPage(): number {
 }
 
 // Loaded on the first selection gesture by a member who can reply. Keep the
-// existing uncontrolled textarea and dispatch input for previews and signing.
+// existing uncontrolled textarea and dispatch input for previews and saving.
 export function attachQuoteReply(root: HTMLElement, setReplyTarget: (id: number) => void): () => void {
   const button = document.createElement("button");
   button.type = "button";

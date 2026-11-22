@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { drafts, entries, notifications, profiles } from "~/lib/db/schema";
+import { drafts, entries, notifications } from "~/lib/db/schema";
 import { createReply, createTopic, softDeleteEntry } from "~/lib/entries.server";
 import { setFollow } from "~/lib/follows.server";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
@@ -134,17 +134,12 @@ it("keeps the first unread reply through merging and shares its destination with
   expect(unread).toMatchObject([{ firstEntryId: next, mergedCount: 1, readAt: null }]);
 });
 
-it("binds a signature's preview and published reply to the form's selected parent", async () => {
+it("publishes a reply under the selected parent when pasted frontmatter names another", async () => {
   const id = await topic(), first = await reply(id), second = await reply(id);
-  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, h.ids.return_reader));
-  try {
-    const { action } = await import("~/routes/topic");
-    const args = await h.signedArgs(h.request(`/t/${id}`, { as: "return_reader", form: {
-      parentId: String(first), lang: "en", body: `---\ntype: reply\nreply_to: c-${second}\n---\nSigned selected target.`,
-    } }), { id: String(id) });
-    expect(await h.outcome(() => action(args))).toMatchObject({ status: 302 });
-    expect((await h.db.select().from(entries).where(eq(entries.body, "Signed selected target.")))[0]).toMatchObject({ parentId: first });
-  } finally {
-    await h.db.update(profiles).set({ signPosts: false }).where(eq(profiles.userId, h.ids.return_reader));
-  }
+  const { action } = await import("~/routes/topic");
+  const args = h.args(h.request(`/t/${id}`, { as: "return_reader", form: {
+    parentId: String(first), lang: "en", body: `---\ntype: reply\nreply_to: c-${second}\n---\nSelected reply target.`,
+  } }), { id: String(id) });
+  expect(await h.outcome(() => action(args))).toMatchObject({ status: 302 });
+  expect((await h.db.select().from(entries).where(eq(entries.body, "Selected reply target.")))[0]).toMatchObject({ parentId: first });
 });

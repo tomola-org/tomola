@@ -450,14 +450,14 @@ describe("the routes: /mod and the thread page", () => {
 
   const thread = async (as: string, id = topicId) => {
     const { loader } = await import("~/routes/topic");
-    return (await loader(await h.signedArgs(h.request(`/t/${id}`, { as }), { id: String(id) }))) as unknown as {
+    return (await loader(h.args(h.request(`/t/${id}`, { as }), { id: String(id) }))) as unknown as {
       topic: { placeholder: string | null; title?: string; hidden?: boolean; canModerate?: boolean; html?: string };
     };
   };
 
   it("files a report from the thread page (rate-limited, once per post, not on your own post)", async () => {
     const { action } = await import("~/routes/topic");
-    const post = (as: string, form: Record<string, string>, id = topicId) => h.outcome(async () => action(await h.signedArgs(h.request(`/t/${id}`, { as, form: { intent: "flag", ...form } }), { id: String(id) })));
+    const post = (as: string, form: Record<string, string>, id = topicId) => h.outcome(async () => action(h.args(h.request(`/t/${id}`, { as, form: { intent: "flag", ...form } }), { id: String(id) })));
     const ok = await post("taro", { entryId: String(topicId), reason: "spam", note: "ad" });
     expect(ok).toMatchObject({ status: 200, value: { init: null } });
     expect((ok.value as { data: unknown }).data).toMatchObject({ intent: "flag", error: null, reported: true });
@@ -473,14 +473,14 @@ describe("the routes: /mod and the thread page", () => {
     const { action } = await import("~/routes/topic");
     const { hitMemberLimit } = await import("~/lib/rate-limit.server");
     for (let i = 0; i < 30; i++) expect((await hitMemberLimit(h.db, "report", h.ids.mary)).allowed).toBe(true);
-    const res = await h.outcome(async () => action(await h.signedArgs(h.request(`/t/${topicId}`, { as: "mary", form: { intent: "flag", entryId: String(topicId), reason: "spam" } }), { id: String(topicId) })));
+    const res = await h.outcome(async () => action(h.args(h.request(`/t/${topicId}`, { as: "mary", form: { intent: "flag", entryId: String(topicId), reason: "spam" } }), { id: String(topicId) })));
     expect(res.status).toBe(429);
     expect(await h.db.select().from(reports).where(eq(reports.reporterId, h.ids.mary))).toEqual([]);
   });
 
   it("/mod is for moderators and operators; it lists the reports of the language and nothing else", async () => {
     const { loader } = await import("~/routes/mod");
-    const call = (as?: string) => h.outcome(async () => (await loader(await h.signedArgs(h.request("/mod", { as })))));
+    const call = (as?: string) => h.outcome(async () => (await loader(h.args(h.request("/mod", { as })))));
     expect(await call()).toMatchObject({ status: 302, location: "/login?next=%2Fmod" });
     expect(await call("taro")).toMatchObject({ status: 404 });
     const review = await h.outcome(() => loader(h.args(h.request("/mod?tab=review", { as: "taro" }))));
@@ -495,7 +495,7 @@ describe("the routes: /mod and the thread page", () => {
 
   it("the moderator hides the post from /mod; the thread shows the placeholder to members and the content to those who may see it", async () => {
     const { action } = await import("~/routes/mod");
-    const post = (as: string, form: Record<string, string>) => h.outcome(async () => action(await h.signedArgs(h.request("/mod", { as, form }))));
+    const post = (as: string, form: Record<string, string>) => h.outcome(async () => action(h.args(h.request("/mod", { as, form }))));
     expect(await post("taro", { intent: "hide", entryId: String(topicId), reason: "spam", note: "n" })).toMatchObject({ status: 404 });
     expect(await post("mary", { intent: "hide", entryId: String(topicId), reason: "spam", note: "n" })).toMatchObject({ status: 403 });
     expect(await post("moriko", { intent: "hide", entryId: String(topicId), reason: "spam", note: "" })).toMatchObject({ status: 400 });
@@ -510,13 +510,13 @@ describe("the routes: /mod and the thread page", () => {
     expect((await thread("hana")).topic.canModerate).toBe(false);
     // Lists expose it to the author and assigned moderator, but not other members.
     const { loader: latest } = await import("~/routes/latest");
-    const titles = async (as: string) => ((await latest(await h.signedArgs(h.request("/latest", { as })))) as unknown as { topics: Array<{ id: number }> }).topics.map((t) => t.id);
+    const titles = async (as: string) => ((await latest(h.args(h.request("/latest", { as })))) as unknown as { topics: Array<{ id: number }> }).topics.map((t) => t.id);
     expect(await titles("taro")).toEqual([enTopicId]);
     expect((await titles("moriko")).sort()).toEqual([topicId, enTopicId].sort());
     expect((await titles("hana")).sort()).toEqual([topicId, enTopicId].sort());
     // Only the post author may vote (the voting route).
     const { action: voteAction } = await import("~/routes/vote");
-    expect(await h.outcome(async () => voteAction(await h.signedArgs(h.request("/vote", { as: "moriko", form: { entryId: String(topicId), on: "1" } }))))).toMatchObject({ status: 404 });
+    expect(await h.outcome(async () => voteAction(h.args(h.request("/vote", { as: "moriko", form: { entryId: String(topicId), on: "1" } }))))).toMatchObject({ status: 404 });
   });
 
   it("a moderator does not see reports on their own posts in /mod, while the operator does", async () => {
@@ -524,16 +524,16 @@ describe("the routes: /mod and the thread page", () => {
     const own = await createTopic(h.db, h.ids.moriko, { lang: "ja", title: "moriko's own topic", body: "b" });
     if (!own.ok) throw new Error("topic failed");
     await createReport(h.db, h.ids.taro, { entryId: own.id, reason: "harassment", note: "a note that may reveal the reporter" });
-    const cards = async (as: string) => ((await h.outcome(async () => (await loader(await h.signedArgs(h.request("/mod", { as })))))).value as { cards: Array<{ entryId: number }> }).cards.map((c) => c.entryId);
+    const cards = async (as: string) => ((await h.outcome(async () => (await loader(h.args(h.request("/mod", { as })))))).value as { cards: Array<{ entryId: number }> }).cards.map((c) => c.entryId);
     expect(await cards("moriko")).not.toContain(own.id);
     expect(await cards("opal")).toContain(own.id);
   });
 
   it("the moderator shows it again from the handled tab", async () => {
     const { action, loader } = await import("~/routes/mod");
-    const handled = (await h.outcome(async () => (await loader(await h.signedArgs(h.request("/mod?tab=handled", { as: "moriko" })))))).value as { cards: Array<{ entryId: number; hidden: boolean }> };
+    const handled = (await h.outcome(async () => (await loader(h.args(h.request("/mod?tab=handled", { as: "moriko" })))))).value as { cards: Array<{ entryId: number; hidden: boolean }> };
     expect(handled.cards.map((c) => [c.entryId, c.hidden])).toEqual([[topicId, true]]);
-    expect(await h.outcome(async () => action(await h.signedArgs(h.request("/mod", { as: "moriko", form: { intent: "unhide", entryId: String(topicId), reason: "other", returnTo: `/t/${topicId}#p-${topicId}` } }))))).toMatchObject({ status: 302, location: `/t/${topicId}#p-${topicId}` });
+    expect(await h.outcome(async () => action(h.args(h.request("/mod", { as: "moriko", form: { intent: "unhide", entryId: String(topicId), reason: "other", returnTo: `/t/${topicId}#p-${topicId}` } }))))).toMatchObject({ status: 302, location: `/t/${topicId}#p-${topicId}` });
     expect((await thread("taro")).topic).toMatchObject({ placeholder: null, hidden: false });
   });
 });
@@ -634,17 +634,17 @@ describe("no replies to hidden content", () => {
       await hideEntry(h.db, actor(h.ids.moriko, JA_MOD), { entryId: t.id, reason: "spam", note: "n" });
       const { action, loader } = await import("~/routes/topic");
       const params = { id: String(t.id) };
-      const posted = await h.outcome(async () => action(await h.signedArgs(h.request(`/t/${t.id}`, { as: "taro", form: { body: "reply to hidden" } }), params)));
+      const posted = await h.outcome(async () => action(h.args(h.request(`/t/${t.id}`, { as: "taro", form: { body: "reply to hidden" } }), params)));
       expect(posted.status).toBe(400);
       expect((posted.value as { data: { error: string } }).data.error).toBe("thread_not_found");
       // Drafts cannot be saved either.
-      const draft = await h.outcome(async () => action(await h.signedArgs(h.request(`/t/${t.id}`, { as: "taro", form: { body: "x", intent: "draft" } }), params)));
+      const draft = await h.outcome(async () => action(h.args(h.request(`/t/${t.id}`, { as: "taro", form: { body: "x", intent: "draft" } }), params)));
       expect(draft.status).toBe(400);
       expect(await h.db.select().from(entries).where(eq(entries.threadId, t.id))).toEqual([]);
       // UI: the assigned moderator can see the content, but there is no reply field because topic.hidden is true.
-      const view = (await h.outcome(async () => (await loader(await h.signedArgs(h.request(`/t/${t.id}`, { as: "moriko" }), params))))).value as { topic: { placeholder: string | null; hidden?: boolean } };
+      const view = (await h.outcome(async () => (await loader(h.args(h.request(`/t/${t.id}`, { as: "moriko" }), params))))).value as { topic: { placeholder: string | null; hidden?: boolean } };
       expect(view.topic).toMatchObject({ placeholder: null, hidden: true });
-      const other = (await h.outcome(async () => (await loader(await h.signedArgs(h.request(`/t/${t.id}`, { as: "taro" }), params))))).value as { topic: { placeholder: string | null } };
+      const other = (await h.outcome(async () => (await loader(h.args(h.request(`/t/${t.id}`, { as: "taro" }), params))))).value as { topic: { placeholder: string | null } };
       expect(other.topic.placeholder).toBe("hidden");
     } finally {
       h.restore();

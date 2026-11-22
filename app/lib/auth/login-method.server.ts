@@ -17,7 +17,7 @@ export function verifiedLogin(context: object | undefined, userId: string): Veri
 
 export const LOGIN_METHOD_FRESH_MS = 10 * 60 * 1000;
 export const GOOGLE_CLOCK_SKEW_MS = 60_000;
-export const protectedLogin = (profile: { signPosts: boolean; passkeyOnly: boolean }) => profile.signPosts || profile.passkeyOnly;
+export const protectedLogin = (profile: { passkeyOnly: boolean }) => profile.passkeyOnly;
 export const hasBackupPasskeys = (keys: { backedUp: boolean }[]) => keys.length >= 2 || keys.some(key => key.backedUp);
 
 export function freshLoginMethod(session: { reauthenticationMethod: string | null; reauthenticatedAt: Date | null } | undefined, now = new Date()) {

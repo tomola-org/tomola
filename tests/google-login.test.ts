@@ -438,14 +438,15 @@ describe("explicit Google reauthentication", () => {
     expect((await h.db.select().from(session)).filter(row => row.id !== h.origin.id)).toEqual([]);
   });
 
-  it("rejects starting Google for a passkey-only reauthentication or a protected member", async () => {
+  it("chooses Google reauthentication based on passkey-only login, with a retired signing preference", async () => {
     const h = await connectedMember();
     await expect(h.startReauthentication("passkey")).rejects.toMatchObject({ status: 404 });
-    for (const protection of [{ signPosts: true, passkeyOnly: false }, { signPosts: false, passkeyOnly: true }]) {
-      await h.db.update(profiles).set(protection).where(eq(profiles.userId, h.member.id));
-      await expect(h.startReauthentication()).rejects.toMatchObject({ status: 404 });
-    }
-    expect(await h.db.select().from(verification)).toEqual([]);
+    await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, h.member.id));
+    expect(await h.startReauthentication()).toBeDefined();
+    const started = await h.db.select().from(verification);
+    await h.db.update(profiles).set({ passkeyOnly: true }).where(eq(profiles.userId, h.member.id));
+    await expect(h.startReauthentication()).rejects.toMatchObject({ status: 404 });
+    expect(await h.db.select().from(verification)).toEqual(started);
   });
 });
 

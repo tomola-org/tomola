@@ -6,13 +6,12 @@ import { createTopic, createReply } from "~/lib/entries.server";
 import { drafts, entries, jobs, profiles, memberSignatures } from "~/lib/db/schema";
 import { DRAFT_RATE_LIMIT, hitRateLimit, hitMemberLimit, MEMBER_RATE_LIMITS } from "~/lib/rate-limit.server";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
-import { attachSigningProof, signingCredential } from "./helpers/signing";
 import { createApiToken } from "~/lib/tokens.server";
 import { renderInRouter } from "./helpers/render-in-router";
 import { routeElement } from "./helpers/route-fixtures";
 
 let h: RouteHarness;
-beforeAll(async () => { h = await setupRouteHarness(); for (const handle of ["drafter", "other", "limited", "stopped", "signed"]) await h.signIn(handle); });
+beforeAll(async () => { h = await setupRouteHarness(); for (const handle of ["drafter", "other", "limited", "stopped", "import_writer"]) await h.signIn(handle); });
 afterAll(() => h.restore());
 const request = (form: Record<string, string>, as = "drafter", headers?: Record<string, string>) => h.request("/drafts/ai-write", { as, form: { ownerId: h.ids[as], body: "https://example.org/a\n\n本人のコメント", lang: "ja", ...form }, headers });
 async function save(form: Record<string, string> = {}, as = "drafter", headers?: Record<string, string>) { return action(h.args(request(form, as, headers))); }
@@ -163,21 +162,15 @@ it("renders submitted title, body, language and the old version after a native s
   expect(await getDraft(h.db, h.ids.drafter, first.id)).toMatchObject({ version: 2, body: "Latest stored body" });
 });
 
-it("publishes imported text through the existing signed boundary and refuses stale approval", async () => {
+it("publishes imported text after refusing a stale browser draft version", async () => {
   const { action: edit } = await import("~/routes/draft");
-  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, h.ids.signed));
-  const credential = await signingCredential(h.db, h.ids.signed);
-  const first = await (await save({}, "signed")).json();
+  const first = await (await save({}, "import_writer")).json();
   const path = `/drafts/${first.id}`;
   const fields = { intent: "publish", version: "1", body: "https://example.org/a\n\nMy comment\n\nAI text", lang: "ja", signingView: first.signingView };
-  const unsigned = h.request(path, { as: "signed", form: fields });
-  expect(await h.outcome(() => edit(h.args(unsigned.clone(), { id: String(first.id) })))).toMatchObject({ status: 403 });
-  const proof = await attachSigningProof(h.db, h.ids.signed, unsigned, credential);
-  await updateDraft(h.db, h.ids.signed, first.id, { body: "Other editor", lang: "ja" }, { expectedVersion: 1 });
-  expect(await h.outcome(() => edit(h.args(proof, { id: String(first.id) })))).toMatchObject({ status: 409 });
-  const current = h.request(path, { as: "signed", form: { ...fields, version: "2" } });
-  const signed = await attachSigningProof(h.db, h.ids.signed, current, credential);
-  expect(await h.outcome(() => edit(h.args(signed, { id: String(first.id) })))).toMatchObject({ status: 302 });
-  expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.userId, h.ids.signed))).toHaveLength(1);
-  expect((await h.db.select().from(entries).where(eq(entries.authorId, h.ids.signed)))[0]).toMatchObject({ body: fields.body, lang: "ja", via: "web", aiAssistance: null });
+  await updateDraft(h.db, h.ids.import_writer, first.id, { body: "Other editor", lang: "ja" }, { expectedVersion: 1 });
+  const publish = (form: Record<string, string>) => h.outcome(() => edit(h.args(h.request(path, { as: "import_writer", form }), { id: String(first.id) })));
+  expect(await publish(fields)).toMatchObject({ status: 409 });
+  expect(await publish({ ...fields, version: "2" })).toMatchObject({ status: 302 });
+  expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.userId, h.ids.import_writer))).toHaveLength(0);
+  expect((await h.db.select().from(entries).where(eq(entries.authorId, h.ids.import_writer)))[0]).toMatchObject({ body: fields.body, lang: "ja", via: "web", aiAssistance: null });
 });

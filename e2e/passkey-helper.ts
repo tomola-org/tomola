@@ -1,12 +1,10 @@
 import { expect, type CDPSession, type Page } from "@playwright/test";
-import fs from "node:fs";
-import path from "node:path";
-import { enMessages, jaMessages, reverifyWithEmailCode, state, uiMessages, waitForHydration, type LoginCodeInbox } from "./helpers";
+import { reverifyWithEmailCode, uiMessages, waitForHydration, type LoginCodeInbox } from "./helpers";
 
 const authenticators = new WeakMap<Page, { client: CDPSession; authenticatorId: string }>();
 
 // Chromium's real WebAuthn implementation signs the server challenge; the server verifier is never mocked.
-export async function enableSigningAuthenticator(page: Page) {
+export async function enablePasskeyAuthenticator(page: Page) {
   const previous = authenticators.get(page);
   if (previous) return previous;
   const client = await page.context().newCDPSession(page);
@@ -17,13 +15,6 @@ export async function enableSigningAuthenticator(page: Page) {
   const current = { client, authenticatorId };
   authenticators.set(page, current);
   return current;
-}
-
-export async function installSeededSigningKey(page: Page, email: string, dir = state().dir) {
-  const { client, authenticatorId } = await enableSigningAuthenticator(page);
-  const credential = JSON.parse(fs.readFileSync(path.join(dir, "members", `${email}.webauthn.json`), "utf8"));
-  await client.send("WebAuthn.addCredential", { authenticatorId, credential });
-  return { client, authenticatorId };
 }
 
 async function reverifyForPasskeyAddition(page: Page, href: string, inbox?: LoginCodeInbox) {
@@ -77,15 +68,4 @@ export async function addSettingsPasskey(page: Page, { name, inbox }: { name?: s
     await reverifyForPasskeyAddition(page, page.url(), inbox);
     await click();
   }
-}
-
-// Existing posting scenarios explicitly accept their own prepared text after opening the approval screen.
-export async function acceptSignedWrite(page: Page) {
-  await enableSigningAuthenticator(page);
-  const messages = await page.locator("html").getAttribute("lang") === "ja" ? jaMessages : enMessages;
-  const dialog = page.getByRole("dialog", { name: messages.signing_heading, exact: true });
-  await expect(dialog).toBeVisible();
-  const accept = dialog.getByRole("button", { name: new RegExp(`^(?:${[messages.signing_accept_post, messages.signing_accept_reply, messages.signing_accept_publish, messages.signing_accept_save, messages.signing_accept_remove].join("|")})$`) });
-  await accept.click();
-  await expect(dialog).toBeHidden({ timeout: 15_000 });
 }

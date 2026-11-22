@@ -161,7 +161,7 @@ describe("the new-topic screen", () => {
   let entryId: number;
   let proposalTopicId: number;
   const route = () => import("~/routes/topic-new");
-  const load = async (query: string, as = "aki") => ((await (await route()).loader(await h.signedArgs(h.request(`/t/new${query}`, { as })))) as Awaited<Promise<Record<string, unknown>>>);
+  const load = async (query: string, as = "aki") => ((await (await route()).loader(h.args(h.request(`/t/new${query}`, { as })))) as Awaited<Promise<Record<string, unknown>>>);
 
   beforeAll(async () => {
     h = await setupRouteHarness();
@@ -203,7 +203,7 @@ describe("the new-topic screen", () => {
   it("posting the template makes an ordinary question: asks a stance, translation jobs, nothing marked as a proposal; the code spans survive the translation", async () => {
     const t = (await load(`?propose_term=1&entry=${entryId}`)).prefill as { title: string; body: string };
     const body = t.body.replace(m.proposal_body_proposed({}, ja), m.proposal_body_proposed({}, ja).replace("` `", "`矯正可能性`")).replace(m.proposal_body_reason({}, ja), `${m.proposal_body_reason({}, ja)}人が止められるという意味に近いから`);
-    const posted = await h.outcome(async () => (await route()).action(await h.signedArgs(h.request("/t/new", { as: "aki", form: { title: t.title.replace("「　」", "「矯正可能性」"), body, asksStance: "1", lang: "ja" } }))));
+    const posted = await h.outcome(async () => (await route()).action(h.args(h.request("/t/new", { as: "aki", form: { title: t.title.replace("「　」", "「矯正可能性」"), body, asksStance: "1", lang: "ja" } }))));
     expect(posted.status).toBe(302);
     proposalTopicId = Number(new URL(posted.location!, "http://localhost").pathname.split("/").pop());
     const [topic] = await h.db.select().from(entries).where(eq(entries.id, proposalTopicId));

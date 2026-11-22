@@ -6,7 +6,6 @@ import path from "node:path";
 import { expect, type BrowserContext, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { captureScreenshot, formatMessage, openPostSettings, openReplyMore, useMember, clientHeaders, enMessages as en, messageTitleField as titleField, waitForFormReady, state } from "./helpers";
-import { acceptSignedWrite, installSeededSigningKey } from "./signing-helper";
 
 // Each case owns its draft and resets the shared editor in beforeEach.
 // Default ordering permits a retry of the annotated case without rerunning its siblings.
@@ -421,14 +420,13 @@ test("a deleted draft cannot silently become a new one and keeps input plus the 
   await expect(page).toHaveURL(new URL(path, page.url()).href);
 });
 
-test("imported text is reviewed and signed only when the member chooses to publish", async () => {
-  await useMember(page, "ai_import_signed@example.com", "/settings");
-  await installSeededSigningKey(page, "ai_import_signed@example.com");
+test("imported text stays private until the member publishes it", async () => {
+  await useMember(page, "ai_import_writer@example.com", "/settings");
   await page.evaluate(() => localStorage.setItem("tomola.openInAi", JSON.stringify({ provider: "chatgpt" })));
   try {
     await page.goto("/t/new");
     await waitForFormReady(page.locator('form[method="post"]').first());
-    const original = "https://example.org/a\n\nMy signed comment";
+    const original = "https://example.org/a\n\nMy own comment";
     await body().fill(original);
     await start();
     await linkedDraft();
@@ -438,9 +436,6 @@ test("imported text is reviewed and signed only when the member chooses to publi
     const combined = `${original}\n\nReviewed AI text`;
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await page.getByRole("button", { name: en.submit_post, exact: true }).click();
-    const review = page.getByRole("dialog", { name: en.signing_heading, exact: true });
-    await expect(review.getByText(combined, { exact: true })).toBeVisible();
-    await acceptSignedWrite(page);
     await expect(page).toHaveURL(/\/t\/\d+\?posted=/);
     const posted = new URL(page.url()).pathname;
     // Retry only a reset connection on this idempotent read; HTTP failures and writes are unchanged.
@@ -609,3 +604,39 @@ for (const scenario of ["editor", "preview", "native", "expired"] as const) {
     } finally { await own.close(); }
   });
 }
+
+test("AI draft confirmation keeps the selected language in the publication", async ({ page: editor }) => {
+  const fixtures = JSON.parse(fs.readFileSync(path.join(state().dir, "draft-confirmations.json"), "utf8"));
+  const { id } = fixtures.language as { id: number };
+  await useMember(editor, "ai_confirm_language@example.com", `/drafts/${id}`);
+  await waitForFormReady(editor.locator("form", { has: body(editor) }));
+  await editor.getByRole("button", { name: en.draft_publish, exact: true }).click();
+  const review = editor.getByRole("dialog", { name: en.signing_heading });
+  await review.getByRole("combobox", { name: en.field_lang }).click();
+  await editor.getByRole("option", { name: "日本語", exact: true }).click();
+  await expect(review.getByText(en.original_lang.replace("{lang}", "日本語"), { exact: true })).toBeVisible();
+  const confirmation = review.getByRole("button", { name: en.confirm_publish, exact: true });
+  await confirmation.click();
+  await expect(editor).toHaveURL(/\/t\/\d+\?posted=/);
+  const { entries } = await (await editor.request.get("/settings/export")).json();
+  expect(entries).toMatchObject([{ lang: "ja" }]);
+});
+
+for (const { scenario, status, error, message } of [
+  { scenario: "network", status: 502, error: "network_failed", message: en.signing_network_failed },
+  { scenario: "expired_login", status: 401, error: "login_required", message: en.signing_login_required },
+  { scenario: "maintenance", status: 503, error: "maintenance_readonly", message: en.maintenance_readonly },
+  { scenario: "reload", status: 409, error: "signing_closed", message: en.draft_review_reload },
+]) test(`AI draft confirmation keeps inputs after a ${scenario} response`, async ({ page: editor }) => {
+  const fixtures = JSON.parse(fs.readFileSync(path.join(state().dir, "draft-confirmations.json"), "utf8"));
+  const { id, body: original } = fixtures[scenario] as { id: number; body: string };
+  await useMember(editor, `ai_confirm_${scenario}@example.com`, `/drafts/${id}`);
+  await waitForFormReady(editor.locator("form", { has: body(editor) }));
+  const text = original + " Keep these changes.";
+  await body(editor).fill(text);
+  await editor.route("**/signing", route => route.fulfill({ status, json: { error } }), { times: 1 });
+  await editor.getByRole("button", { name: en.draft_publish, exact: true }).click();
+  await expect(editor.getByRole("alert")).toHaveText(message);
+  await expect(body(editor)).toHaveValue(text);
+  if (scenario === "expired_login") await expect(editor.getByRole("link", { name: en.login_title, exact: true })).toHaveAttribute("href", /\/login\?next=/);
+});

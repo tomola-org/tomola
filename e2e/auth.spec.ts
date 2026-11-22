@@ -1,4 +1,4 @@
-import { addSettingsPasskey } from "./signing-helper";
+import { addSettingsPasskey } from "./passkey-helper";
 import { hostCookieName } from "./helpers";
 import { completeTrialFields } from "./helpers";
 import fs from "node:fs";

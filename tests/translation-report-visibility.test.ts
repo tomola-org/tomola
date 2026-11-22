@@ -54,7 +54,7 @@ it("withholds hidden reply reports, then restores ordinary review when unhidden"
 });
 
 
-it("keeps a visible reply reviewable under a hidden topic, matching ordinary reading and signing previews", async () => {
+it("keeps a visible reply reviewable under a hidden topic, matching ordinary reading and draft confirmation previews", async () => {
   const { db, topic, reply, input, reportId } = await world();
   await db.update(entries).set({ hiddenAt: new Date() }).where(eq(entries.id, topic.id));
   const thread = await getThread(db, topic.id);

@@ -348,7 +348,7 @@ describe("the drafts of other members do not leak into the observation export", 
   });
 });
 
-it("exports only allowed signature fields and withholds payloads without an authorized owner", async () => {
+it("exports only allowed historical signature fields and withholds payloads without an authorized owner", async () => {
   const userId = h.ids.hanako_unique;
   const evidence = {
     userId, payload: "Fixture payload", payloadHash: "fixture-hash", credentialId: "fixture-key",
@@ -365,6 +365,7 @@ it("exports only allowed signature fields and withholds payloads without an auth
   ]).returning({ id: memberSignatures.id });
   const out = await buildMemberExport(h.db, userId);
   expect(out.version).toBe(21);
+  expect(out.profile?.sign_posts).toBe(false);
   const byChallenge = new Map(out.signatures.map(signature => [signature.challenge, signature]));
   const fields = ["id", "entry_id", "source_hash", "operation", "payload_hash", "challenge", "credential_id", "public_key", "rp_id", "origin", "authenticator_data", "client_data_json", "signature", "created_at", "payload_withheld"];
   for (const challenge of ["own", "settings"]) {

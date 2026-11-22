@@ -105,7 +105,6 @@ export type Profile = {
   // Saved display language, also used for mail, or null if absent.
   uiLocale: string | null;
   colorScheme: ColorScheme | null;
-  signPosts: boolean;
   passkeyOnly: boolean;
   passkeyEnrolledAt: Date | null;
   residenceCountry: string | null;
@@ -142,7 +141,6 @@ function toProfile(row: typeof profiles.$inferSelect): Profile {
     emailPref: isEmailPref(row.emailPref) ? row.emailPref : DEFAULT_EMAIL_PREF,
     uiLocale: row.uiLocale,
     colorScheme: isColorScheme(row.colorScheme) ? row.colorScheme : null,
-    signPosts: row.signPosts,
     passkeyOnly: row.passkeyOnly,
     passkeyEnrolledAt: row.passkeyEnrolledAt,
     residenceCountry: row.residenceCountry,

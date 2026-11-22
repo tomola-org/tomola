@@ -412,7 +412,6 @@
   "mcp_personal_tokens": "Persönliche Zugriffstoken getrennt verwalten",
   "signing_failed": "Die Passkey-Prüfung wurde nicht abgeschlossen. Versuche es erneut.",
   "signing_changed": "Der Inhalt wurde während der Prüfung geändert. Lies ihn vor dem Akzeptieren erneut.",
-  "signing_no_js": "Veröffentlichen und Bearbeiten erfordern JavaScript und einen Passkey. Lesen bleibt möglich.",
   "signing_last_ai": "Letzte KI-Bearbeitung: {name} ({id}), {at}",
   "signing_changes": "Änderungen seit dem Öffnen dieser Version",
   "signing_edit_changes": "Änderungen, die du akzeptierst",

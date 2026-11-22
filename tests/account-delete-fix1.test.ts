@@ -44,7 +44,7 @@ it("creates an indistinguishable invitation for a suspended former address but w
   expect(await markInvitationUsed(h.db,"held@example.com")).toBe(0);
 });
 
-it.each([false,true])("requires a fresh login for deletion (signing %s)", async signPosts => {
+it.each([false,true])("requires a fresh login for deletion (retired preference %s)", async signPosts => {
   h=await setupRouteHarness();const id=await h.signIn("quit_stale");
   await h.db.update(profiles).set({signPosts}).where(eq(profiles.userId,id));
   await h.db.update(session).set({createdAt:new Date(Date.now()-25*3600000)}).where(eq(session.userId,id));

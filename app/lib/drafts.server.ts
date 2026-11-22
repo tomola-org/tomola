@@ -487,8 +487,7 @@ export function linkedDraftOf(form: FormData): { id: number; version: number } |
   return Number.isSafeInteger(values.id) && values.version <= 2_147_483_647 ? values : null;
 }
 
-// A browser editor can publish a linked client draft with a signature. Unsigned
-// client drafts go through the draft form's confirmation and publication checks.
+// Linked client drafts use the draft form's confirmation and publication checks.
 export async function checkLinkedClientDraft(tx: Tx, authorId: string, form: FormData): Promise<"draft_conflict" | "confirmation_required" | null> {
   const linked = linkedDraftOf(form);
   if (!linked) return null;
@@ -497,8 +496,7 @@ export async function checkLinkedClientDraft(tx: Tx, authorId: string, form: For
     .where(and(eq(drafts.id, linked.id), eq(drafts.authorId, authorId), or(eq(drafts.via, "api"), isNotNull(drafts.clientKey), isNotNull(drafts.clientId)))).for("update");
   if (draft) {
     if (draft.version !== linked.version) return "draft_conflict";
-    const [profile] = await tx.select({ signPosts: profiles.signPosts }).from(profiles).where(eq(profiles.userId, authorId));
-    return profile?.signPosts ? null : "confirmation_required";
+    return "confirmation_required";
   }
   const [consumed] = await tx.select({ id: draftReceipts.draftId }).from(draftReceipts)
     .where(and(eq(draftReceipts.draftId, linked.id), eq(draftReceipts.authorId, authorId)));

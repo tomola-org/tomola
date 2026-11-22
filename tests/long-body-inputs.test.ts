@@ -16,14 +16,15 @@ const client = { key: "long-body-client", id: "long-body-client", name: "Writer"
 const oversized = ["a".repeat(100_001), "あ".repeat(50_001), "𝄞".repeat(65_536) + "a"];
 
 describe("shared body limits at writing boundaries", () => {
-  it("previews a signed body with more than 150000 UTF-16 units and rejects oversized fields", async () => {
+  it("previews a draft body with more than 150000 UTF-16 units and rejects oversized fields", async () => {
     const { action } = await import("~/routes/signing");
     const body = "a".repeat(45_952) + "𝔄".repeat(54_048);
     expect(body.length).toBe(154_048);
     expect(bodyWithinLimits(body, "topic")).toBe(true);
+    const id = okId(await createDraft(h.db, h.ids.hana, { kind: "topic", body: "A draft for review.", lang: "en" }, { via: "api" }));
     const send = async (body: string) => {
       const session = h.request("/signing", { as: "hana" });
-      return action(h.args(new Request(session.url, { method: "POST", headers: { ...Object.fromEntries(session.headers), "content-type": "application/json" }, body: JSON.stringify({ intent: "preview", pathname: "/t/new", fields: [["lang", "en"], ["body", body]] }) }))) as Promise<Response>;
+      return action(h.args(new Request(session.url, { method: "POST", headers: { ...Object.fromEntries(session.headers), "content-type": "application/json" }, body: JSON.stringify({ intent: "preview", pathname: `/drafts/${id}`, fields: [["intent", "publish"], ["version", "1"], ["lang", "en"], ["body", body]] }) }))) as Promise<Response>;
     };
     const preview = await send(body);
     expect(preview.status).toBe(200);

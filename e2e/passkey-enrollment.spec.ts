@@ -1,4 +1,4 @@
-import { addSettingsPasskey } from "./signing-helper";
+import { addSettingsPasskey } from "./passkey-helper";
 import { saveEditorDraft } from "./draft-autosave-helper";
 import { expect } from "@playwright/test";
 import { test } from "./editor-fixture";
@@ -17,7 +17,7 @@ test("a member without passkeys publishes browser drafts and exports unsigned po
     await expect(page).toHaveURL(/\/t\/(\d+)\?posted=\1$/);
     await page.goto("/settings");
     if (!(await page.locator("#settings-advanced").evaluate(element => (element as HTMLDetailsElement).open))) await page.locator("#settings-advanced > summary").click();
-    await expect(page.getByRole("checkbox", { name: enMessages.settings_sign_posts_label, exact: true })).toHaveCount(0);
+    await expect(page.locator('form:has(input[name="intent"][value="sign-posts"])')).toHaveCount(0);
     await page.locator("#settings-handle summary").click();
     await page.getByLabel(enMessages.onboarding_handle, { exact: true }).fill("new_enrollment");
     await page.getByRole("button", { name: enMessages.settings_handle_heading, exact: true }).click();
@@ -120,5 +120,43 @@ test("passkey-only sign-in rejects a pending email code and accepts a verified p
     await waitForClientRoute(page);
     await page.getByRole("button", { name: m.login_passkey, exact: true }).click();
     await expect(page.locator('[data-member-menu-trigger][title="@login_methods_flow"]').first()).toBeVisible();
+
+    await page.goto("/settings#settings-passkeys");
+    await waitForClientRoute(page);
+    const signing: string[] = [];
+    page.on("request", request => { if (new URL(request.url()).pathname === "/signing") signing.push(request.url()); });
+    const keys = page.locator("#settings-passkeys");
+    const spare = keys.getByRole("listitem").filter({ hasText: "予備の端末" });
+    await spare.getByRole("button", { name: m.settings_passkeys_remove, exact: true }).click();
+    await expect(keys.getByRole("status").filter({ hasText: m.settings_passkeys_removed })).toBeVisible();
+    await expect(spare).toHaveCount(0);
+    await expect(keys.getByRole("button", { name: m.settings_passkeys_remove, exact: true })).toBeDisabled();
+    expect(signing).toEqual([]);
   } finally { await guest.close(); await member.close(); }
+});
+
+test("a legacy publication form still publishes", async ({ page }) => {
+  await useMember(page, "legacy_form_writer@example.com", "/t/new");
+  const form = page.locator("form", { has: titleField(page) });
+  await waitForFormReady(form);
+  await form.evaluate(element => {
+    for (const name of ["signatureChallenge", "signatureAssertion"]) {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      input.value = "obsolete field value";
+      element.append(input);
+    }
+  });
+  const body = "A post submitted from a form with retired fields.";
+  await page.getByRole("textbox", { name: enMessages.field_body, exact: true }).fill(body);
+  const publish = page.waitForRequest(request => request.method() === "POST" && /^\/t\/new(?:\.data)?$/.test(new URL(request.url()).pathname));
+  await page.getByRole("button", { name: enMessages.submit_post, exact: true }).click();
+  const submitted = new URLSearchParams((await publish).postData() ?? "");
+  expect(submitted.has("signatureChallenge")).toBe(true);
+  expect(submitted.has("signatureAssertion")).toBe(true);
+  await expect(page).toHaveURL(/\/t\/(\d+)\?posted=\1$/);
+  await expect(page.getByRole("paragraph").filter({ hasText: body })).toBeVisible();
+  const data = await (await page.request.get("/settings/export")).json();
+  expect(data.signatures).toEqual([]);
 });

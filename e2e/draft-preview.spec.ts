@@ -99,7 +99,7 @@ test("shows the API draft comparison below the banner and keeps the editor when 
 
   await banner.getByRole("link", { name: en.draft_preview_back }).click();
   await waitForFormReady(editor);
-  const module = await routeModule(page, "app/components/signing-review.tsx", route => route.abort());
+  const module = await routeModule(page, "app/components/draft-confirmation-review.tsx", route => route.abort());
   try {
     await editor.getByRole("button", { name: en.draft_publish, exact: true }).click();
     await module.assertHit();

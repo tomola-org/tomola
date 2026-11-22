@@ -7,7 +7,7 @@ import { formString, readEntryForm } from "~/lib/entry-form.server";
 import { parseId } from "~/lib/params.server";
 import { hitMemberLimit, rateLimitHeaders } from "~/lib/rate-limit.server";
 import { postedLocation } from "~/lib/posted-ui";
-import { SigningFailureResponse, signingViewToken, withSignedWrite } from "~/lib/signing.server";
+import { SigningFailureResponse, signingViewToken, withMemberWrite } from "~/lib/signing.server";
 import { titleOrNull } from "~/lib/text";
 import { villagesEnabled } from "~/lib/villages-enabled.server";
 
@@ -70,7 +70,7 @@ export async function draftAction({ request, params }: { request: Request; param
       let didSave = false;
       let res;
       try {
-        res = await withSignedWrite(db, user.id, request, form, async tx => {
+        res = await withMemberWrite(db, user.id, request, form, async tx => {
           // Save inside the publication transaction, before creating the post.
           const saved = await updateDraft(tx, user.id, id, input, versionOptions);
           if (!saved.ok) return saved;

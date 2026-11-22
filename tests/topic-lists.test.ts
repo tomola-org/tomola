@@ -212,22 +212,22 @@ describe("home, latest and area pages (routes)", () => {
     }
     const latest = await import("~/routes/latest");
     const area = await import("~/routes/area");
-    const all = (await latest.loader(await h.signedArgs(h.request("/latest", { as: "hana" })))) as { topics: Array<{ id: number }>; page: number; hasNext: boolean };
+    const all = (await latest.loader(h.args(h.request("/latest", { as: "hana" })))) as { topics: Array<{ id: number }>; page: number; hasNext: boolean };
     expect(all.topics).toHaveLength(30);
     expect(all.hasNext).toBe(true);
-    const page2 = (await latest.loader(await h.signedArgs(h.request("/latest?page=2", { as: "hana" })))) as { topics: unknown[] };
+    const page2 = (await latest.loader(h.args(h.request("/latest?page=2", { as: "hana" })))) as { topics: unknown[] };
     expect(page2.topics.length).toBeGreaterThan(0);
-    const ko = (await area.loader(await h.signedArgs(h.request("/a/ko", { as: "hana" }), { lang: "ko" }))) as { lang: string; topics: Array<{ id: number; lang: string }> };
+    const ko = (await area.loader(h.args(h.request("/a/ko", { as: "hana" }), { lang: "ko" }))) as { lang: string; topics: Array<{ id: number; lang: string }> };
     expect(ko.lang).toBe("ko");
     expect(titles(ko.topics)).toEqual(["한국어1"]);
-    const de = (await area.loader(await h.signedArgs(h.request("/a/de", { as: "hana" }), { lang: "de" }))) as { topics: unknown[] };
+    const de = (await area.loader(h.args(h.request("/a/de", { as: "hana" }), { lang: "de" }))) as { topics: unknown[] };
     expect(de.topics).toHaveLength(1);
-    const hant = (await area.loader(await h.signedArgs(h.request("/a/zh-Hant", { as: "hana" }), { lang: "zh-Hant" }))) as { topics: unknown[] };
+    const hant = (await area.loader(h.args(h.request("/a/zh-Hant", { as: "hana" }), { lang: "zh-Hant" }))) as { topics: unknown[] };
     expect(hant.topics).toEqual([]);
     for (const lang of ["xx", "other", "JA", "ja-JP", ""]) {
-      expect((await h.outcome(async () => (await area.loader(await h.signedArgs(h.request(`/a/${lang}`, { as: "hana" }), { lang }))))).status, lang).toBe(404);
+      expect((await h.outcome(async () => (await area.loader(h.args(h.request(`/a/${lang}`, { as: "hana" }), { lang }))))).status, lang).toBe(404);
     }
-    expect((await h.outcome(async () => (await area.loader(await h.signedArgs(h.request("/a/ja?page=0", { as: "hana" }), { lang: "ja" }))))).status).toBe(404);
+    expect((await h.outcome(async () => (await area.loader(h.args(h.request("/a/ja?page=0", { as: "hana" }), { lang: "ja" }))))).status).toBe(404);
   });
 
   it("the member pages require a login", async () => {
@@ -237,7 +237,7 @@ describe("home, latest and area pages (routes)", () => {
       ["area", () => import("~/routes/area")],
     ] as const) {
       const mod = await load();
-      expect(await h.outcome(async () => (await mod.loader(await h.signedArgs(h.request("/x"), { lang: "ja" })))), name).toMatchObject({ status: 302, location: "/login?next=%2Fx" });
+      expect(await h.outcome(async () => (await mod.loader(h.args(h.request("/x"), { lang: "ja" })))), name).toMatchObject({ status: 302, location: "/login?next=%2Fx" });
     }
   });
 
@@ -248,20 +248,20 @@ describe("home, latest and area pages (routes)", () => {
     await seedReplies(h.db, h.ids.hana, t.id, Array.from({ length: 100 }, (_, i) => ({ body: `r${i}`, createdAt: at(301 + i) })));
     const params = { id: String(t.id) };
     type TopicData = { replies: unknown[]; page: number; hasNextPage: boolean };
-    const p1 = (await topicRoute.loader(await h.signedArgs(h.request(`/t/${t.id}`, { as: "hana" }), params))) as unknown as TopicData;
+    const p1 = (await topicRoute.loader(h.args(h.request(`/t/${t.id}`, { as: "hana" }), params))) as unknown as TopicData;
     expect(p1).toMatchObject({ page: 1, hasNextPage: false });
     expect(p1.replies).toHaveLength(100);
-    expect((await h.outcome(async () => (await topicRoute.loader(await h.signedArgs(h.request(`/t/${t.id}?page=2`, { as: "hana" }), params))))).status).toBe(404);
-    const posted = await h.outcome(async () => topicRoute.action(await h.signedArgs(h.request(`/t/${t.id}`, { as: "hana", form: { body: "101番目", lang: "ja" } }), params)));
+    expect((await h.outcome(async () => (await topicRoute.loader(h.args(h.request(`/t/${t.id}?page=2`, { as: "hana" }), params))))).status).toBe(404);
+    const posted = await h.outcome(async () => topicRoute.action(h.args(h.request(`/t/${t.id}`, { as: "hana", form: { body: "101番目", lang: "ja" } }), params)));
     expect(posted.status).toBe(302);
     const published = new URL(posted.location!, "http://localhost");
     expect(published.pathname).toBe(`/t/${t.id}`);
     expect(published.searchParams.get("page")).toBe("2");
     expect(published.searchParams.get("posted")).toMatch(/^[1-9]\d*$/);
     expect(published.hash).toBe(`#c-${published.searchParams.get("posted")}`);
-    const p2 = (await topicRoute.loader(await h.signedArgs(h.request(`/t/${t.id}?page=2`, { as: "hana" }), params))) as unknown as TopicData;
+    const p2 = (await topicRoute.loader(h.args(h.request(`/t/${t.id}?page=2`, { as: "hana" }), params))) as unknown as TopicData;
     expect(p2).toMatchObject({ page: 2, hasNextPage: false });
     expect(p2.replies).toHaveLength(1);
-    expect((await topicRoute.loader(await h.signedArgs(h.request(`/t/${t.id}`, { as: "hana" }), params)) as unknown as TopicData).hasNextPage).toBe(true);
+    expect((await topicRoute.loader(h.args(h.request(`/t/${t.id}`, { as: "hana" }), params)) as unknown as TopicData).hasNextPage).toBe(true);
   });
 });

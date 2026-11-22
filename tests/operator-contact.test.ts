@@ -20,7 +20,7 @@ it("keeps the configured contact on an early error even when root loader data is
 
 it("uses the privacy contact for a failed account deletion", async () => {
   const settings = { ...testOperator, privacyEmail: "privacy@community.example" };
-  const markup = await renderInRouter(() => routeElement(DeleteAccount, { loaderData: { handle: "test", signPosts: false, completionKey: "fixture", villages: [] }, actionData: { error: "failed" } }), "/", undefined, { operator: settings });
+  const markup = await renderInRouter(() => routeElement(DeleteAccount, { loaderData: { handle: "test", completionKey: "fixture", villages: [] }, actionData: { error: "failed" } }), "/", undefined, { operator: settings });
   expect(markup).toContain(settings.privacyEmail);
 });
 

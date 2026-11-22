@@ -5,7 +5,6 @@ import { test } from "./editor-fixture";
 import { captureScreenshot, chooseEditorMode, clientHeaders, enMessages as en, formatMessage, messagePattern, openPostSettings, state, useMember as restoreAutosaveMember, waitForClientRoute, waitForFormReady } from "./helpers";
 import { baseOf } from "../app/lib/local-draft";
 import { LANG_LABELS } from "../app/lib/languages";
-import { acceptSignedWrite, installSeededSigningKey } from "./signing-helper";
 import { beforeHydration } from "./support/prehydration";
 
 // Clock mocks remove Navigation Timing; explicit fresh visits need the native entries.
@@ -610,11 +609,10 @@ test("saved and failed states stay compact on both writing screens", async ({ pa
   await evidence(page, "draft-failed");
 });
 
-for (const mode of ["markdown", "rich"] as const) test(`personal destinations stay implicit while ${mode} drafts save and publish with signing enabled`, async ({ page, context }) => {
+for (const mode of ["markdown", "rich"] as const) test(`personal destinations stay implicit while ${mode} drafts save and publish`, async ({ page, context }) => {
   const scenario = mode === "rich" ? "personal_rich" : "personal_md";
   await context.setExtraHTTPHeaders(clientHeaders(mode === "rich" ? "10.45.80.1" : "10.45.80.2"));
   await open(page, scenario);
-  await installSeededSigningKey(page, `draft_autosave_${scenario}@example.com`);
   await page.goto("/t/new");
   await waitForFormReady(page.locator("form", { has: body(page) }).first());
   if (mode === "rich") await chooseEditorMode(page, en.editor_mode_rich);
@@ -625,14 +623,12 @@ for (const mode of ["markdown", "rich"] as const) test(`personal destinations st
   await expect(page.getByRole("dialog")).toHaveCount(0);
   const id = await draftId(page);
   expect(await (await page.request.get(`/drafts/${id}.md`)).text()).toContain("village: null");
-  await page.getByRole("button", { name: en.submit_post, exact: true }).click();
-  await expect(page.getByRole("dialog").locator("[data-signing-village]")).toContainText(formatMessage(en.village_personal_destination, { handle: `draft_autosave_${scenario}` }));
   const version = await page.locator('input[name="fromDraftVersion"]').inputValue();
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await expect(page.locator("form[data-draft-recovery=ready]")).toHaveCount(1);
   await autosaveQuiet(page);
   await expect(page.locator('input[name="fromDraftVersion"]')).toHaveValue(version);
-  await acceptSignedWrite(page);
+  await page.getByRole("button", { name: en.submit_post, exact: true }).click();
   await expect(page).toHaveURL(/\/t\/\d+\?posted=/);
   expect(await ownDraftIds(page)).toEqual([]);
   await expect(page.locator(".longread").first()).toContainText(text);

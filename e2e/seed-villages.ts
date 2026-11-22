@@ -281,7 +281,7 @@ export async function seedVillages(db: Db, dir: string) {
     fs.writeFileSync(path.join(dir, "chat-translation.json"), JSON.stringify({ oldId: history[0].id }));
   }
   // Destination scenarios are part of this enabled-only fixture. Private seeds stay unchanged.
-  for (const name of ["switch", "rich", "settings", "draft", "frontmatter", "screens", "conflict", "stale", "recheck", "recheck_nojs", "signed_review"]) {
+  for (const name of ["switch", "rich", "settings", "draft", "frontmatter", "screens", "conflict", "stale", "recheck", "recheck_nojs"]) {
     const [member] = await db.select({ id: profiles.userId }).from(profiles).where(eq(profiles.handle, `vtarget_${name}`));
     await changeVillageMembership(db, member.id, "ja", "join");
     if (name === "draft") {

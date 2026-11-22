@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { captureScreenshot, clientHeaders, enMessages as en, state, useMember } from "./helpers";
-import { installSeededSigningKey } from "./signing-helper";
+import { captureScreenshot, clientHeaders, enMessages as en, state, useMember, waitForClientRoute } from "./helpers";
 
 type Fixture = { topicId: number; slug: string; body: string; chat: string };
 function fixture(name: string): Fixture { return JSON.parse(fs.readFileSync(path.join(state().dir, "account-delete.json"), "utf8"))[name]; }
@@ -77,25 +76,6 @@ for (const scenario of ["keep", "delete"]) {
   });
 }
 
-test("signed account deletion binds the post choice and uses real passkey confirmation", async ({ browser }) => {
-  const context = await browser.newContext({ locale: "en-US", extraHTTPHeaders: clientHeaders("10.47.1.3") });
-  const page = await context.newPage();
-  try {
-    await useMember(page, "quit_signed_writer@example.com", "/settings");
-    await installSeededSigningKey(page, "quit_signed_writer@example.com");
-    await page.goto("/settings/delete-account");
-    await page.locator('form[data-ready="true"]').waitFor();
-    await page.locator('input[name="confirmation"]').fill("quit_signed_writer");
-    await page.getByRole("button", { name: en.account_delete_confirm, exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: en.signing_heading, exact: true });
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByText(en.account_delete_chat_help, { exact: false })).toBeVisible();
-    await dialog.getByRole("button", { name: en.signing_accept_remove, exact: true }).click();
-    await expect(page).toHaveURL(/\/login\?account-deleted=1$/);
-  } finally { await context.close(); }
-});
-
-
 test("native account deletion transfers a sole-owned village and repeats the completion safely", async ({ browser }) => {
   const context = await browser.newContext({ javaScriptEnabled: false, locale: "en-US", extraHTTPHeaders: clientHeaders("10.47.1.4") });
   const page = await context.newPage(); const f = fixture("duplicate");
@@ -125,7 +105,7 @@ test("native account deletion requires an explicit village choice with JavaScrip
   const page = await context.newPage(); const f = fixture("choose");
   try {
     await useMember(page, "quit_choose_writer@example.com", "/settings/delete-account");
-    await page.locator('form[data-ready="true"]').waitFor();
+    await waitForClientRoute(page);
     const choices = await requireVillageChoice(page, "quit_choose_writer");
     await page.setViewportSize({ width: 390, height: 844 });
     await captureScreenshot(page, { path: info.outputPath("account-delete-village-required.png"), fullPage: true }, "account-delete");

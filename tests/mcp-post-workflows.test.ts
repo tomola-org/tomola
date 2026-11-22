@@ -1,8 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { draftReceipts, drafts, entries, entryEditProposals, memberSignatures, profiles } from "~/lib/db/schema";
+import { draftReceipts, drafts, entries, entryEditProposals, memberSignatures, signingChallenges } from "~/lib/db/schema";
 import { publishDraft } from "~/lib/drafts.server";
-import { previewSignedWrite } from "~/lib/signing.server";
+import { previewDraftPublication } from "~/lib/signing.server";
 import { createReply, createTopic, deleteOwnEntry, editEntry } from "~/lib/entries.server";
 import { createClientDraft, deleteClientDraft, getClientDraftStatus, updateClientDraft, type McpClientIdentity } from "~/lib/mcp/drafts.server";
 import { confirmEntryDeletion, discardEntryEdit, exportOwnEntryEditProposals, getClientEntryEdit, getClientEntryEditStatus, getEntryDeletionReview, prepareEntryDeletion, prepareEntryEdit, pruneEntryEditProposals } from "~/lib/mcp/post-proposals.server";
@@ -10,7 +10,6 @@ import { addMember } from "./helpers/db";
 import { expectSettlesWithin, holdTx, waitForLockWait } from "./helpers/pg-concurrency";
 import { createScratchDb, REAL_PG_URL, type ScratchDb } from "./helpers/pg-real";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
-import { attachSigningProof, signingCredential } from "./helpers/signing";
 
 const client: McpClientIdentity = { key: "oauth:test-editor", id: "test-editor", name: "Test editor", uri: null, tokenId: null };
 const otherClient: McpClientIdentity = { ...client, key: "oauth:other-editor", id: "other-editor" };
@@ -48,7 +47,7 @@ describe("MCP post approvals through the browser routes", () => {
     expect(await getClientDraftStatus(h.db, differentMember, client, made.id)).toEqual({ draftId: made.id, status: "unknown" });
     const path = `/drafts/${made.id}`;
     const form = await h.request(path, { form: { intent: "publish", version: "2", title: input.title, body, lang: "en" } }).formData();
-    const { confirmation } = await previewSignedWrite(h.db, owner, path, form);
+    const { confirmation } = await previewDraftPublication(h.db, owner, path, form);
     const published = await submit("publish", 2, confirmation);
     expect(published).toMatchObject({ status: 302 });
     const [post] = await h.db.select().from(entries).where(eq(entries.title, input.title));
@@ -71,7 +70,7 @@ describe("MCP post approvals through the browser routes", () => {
     const { action: draftAction } = await import("~/routes/draft");
     const path = `/drafts/${made.id}`;
     const form = { intent: "publish", version: "1", body, lang: "en" };
-    const { confirmation } = await previewSignedWrite(h.db, owner, path, await h.request(path, { form }).formData());
+    const { confirmation } = await previewDraftPublication(h.db, owner, path, await h.request(path, { form }).formData());
     const approval = h.request(path, { as: "workflow_owner", form: { ...form, confirmation: confirmation! } });
     expect(await h.outcome(() => draftAction(h.args(approval, { id: String(made.id) })))).toMatchObject({ status: 302 });
     expect(await submit()).toMatchObject({ status: 409 });
@@ -79,7 +78,7 @@ describe("MCP post approvals through the browser routes", () => {
     expect(await getClientDraftStatus(h.db, owner, client, made.id)).toMatchObject({ status: "published", entryUrl: expect.stringContaining(`#c-${reply.id}`) });
   });
 
-  it("keeps edit proposals private and binds the signed browser approval to the saved proposal", async () => {
+  it("keeps edit proposals private and binds the browser approval to the saved proposal", async () => {
     const { action, loader } = await import("~/routes/mcp-entry-edit");
     const topic = success(await createTopic(h.db, owner, { title: "Edit target", body: "Original source text.", lang: "en" }));
     const made = success(await prepareEntryEdit(h.db, owner, client, topic.id, { title: null, body }));
@@ -94,27 +93,20 @@ describe("MCP post approvals through the browser routes", () => {
     expect(await h.outcome(() => loader(h.args(h.request(path, { as: "workflow_reader" }), params)))).toMatchObject({ status: 404 });
     expect(await h.outcome(() => loader(h.args(h.request(path, { as: "workflow_owner" }), params)))).toMatchObject({ value: { data: { content: { body }, current: { body: "Original source text." } } } });
     const form = { intent: "apply", entryId: String(topic.id), entryKind: "topic", version: "1", body, lang: "en" };
-    const request = (fields = form, headers?: Record<string, string>) => h.request(path, { as: "workflow_owner", form: fields, headers });
+    const request = (fields: Record<string, string> = form, headers?: Record<string, string>) => h.request(path, { as: "workflow_owner", form: fields, headers });
     const submit = (req: Request) => h.outcome(() => action(h.args(req, params)));
     expect(await submit(request(form, { origin: "https://other.example" }))).toMatchObject({ status: 403 });
     expect(await submit(request({ ...form, body: "Changed hidden field" }))).toMatchObject({ status: 409 });
-    const key = await signingCredential(h.db, owner);
-    await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, owner));
-    try {
-      expect(await submit(request())).toMatchObject({ status: 403, value: { data: { error: "signature_required" } } });
-      const proof = await attachSigningProof(h.db, owner, request(), key);
-      expect(await submit(proof)).toMatchObject({ status: 302, location: `/t/${topic.id}?edited=${topic.id}` });
-      expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.entryId, topic.id))).toMatchObject([{ operation: "edit-topic" }]);
-      expect(await getClientEntryEdit(h.db, owner, client, id)).toBeNull();
-      expect(await h.db.select({ title: entryEditProposals.title, body: entryEditProposals.body, state: entryEditProposals.state }).from(entryEditProposals)
-        .where(eq(entryEditProposals.id, id))).toEqual([{ title: null, body: null, state: "applied" }]);
-      expect(await getClientEntryEditStatus(h.db, owner, client, id)).toMatchObject({ status: "applied", version: 2 });
-      expect(await h.db.select().from(entries).where(eq(entries.id, topic.id))).toMatchObject([{ title: null, body }]);
-      await deleteOwnEntry(h.db, owner, topic.id);
-      expect(await getClientEntryEditStatus(h.db, owner, client, id)).toEqual({ id, version: 2, status: "applied" });
-    } finally {
-      await h.db.update(profiles).set({ signPosts: false }).where(eq(profiles.userId, owner));
-    }
+    expect(await submit(request({ ...form, signatureAssertion: "invalid-json" }))).toMatchObject({ status: 302, location: `/t/${topic.id}?edited=${topic.id}` });
+    expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.entryId, topic.id))).toEqual([]);
+    expect(await h.db.select().from(signingChallenges).where(eq(signingChallenges.userId, owner))).toEqual([]);
+expect(await getClientEntryEdit(h.db, owner, client, id)).toBeNull();
+    expect(await h.db.select({ title: entryEditProposals.title, body: entryEditProposals.body, state: entryEditProposals.state }).from(entryEditProposals)
+      .where(eq(entryEditProposals.id, id))).toEqual([{ title: null, body: null, state: "applied" }]);
+    expect(await getClientEntryEditStatus(h.db, owner, client, id)).toMatchObject({ status: "applied", version: 2 });
+    expect(await h.db.select().from(entries).where(eq(entries.id, topic.id))).toMatchObject([{ title: null, body }]);
+    await deleteOwnEntry(h.db, owner, topic.id);
+    expect(await getClientEntryEditStatus(h.db, owner, client, id)).toEqual({ id, version: 2, status: "applied" });
   });
 
   it("rejects stale and expired edits, exports current proposals and discards their text", async () => {

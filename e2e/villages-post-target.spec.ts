@@ -2,7 +2,6 @@ import { saveEditorDraft } from "./draft-autosave-helper";
 import fs from "node:fs";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
-import { acceptSignedWrite, installSeededSigningKey } from "./signing-helper";
 import { test } from "./editor-fixture";
 import { localizedLanguageLabel } from "../app/lib/language-label";
 import { captureScreenshot, clientHeaders, enMessages as m, openUserMenu, openPlaces, state, useMember, waitForClientRoute, waitForFormReady, chooseEditorMode, openPostSettings, uiMessages, formatMessage } from "./helpers";
@@ -298,86 +297,6 @@ test("frontmatter stays in Markdown through destination review and rich editing 
     await page.getByRole("button", { name: m.submit_post, exact: true }).click();
     await placement(page, declaration.includes('"village": en') ? "en" : "ja");
   }
-});
-
-test("signed frontmatter conflicts update the displayed village before the second submission", async ({ page }) => {
-  await page.setExtraHTTPHeaders(clientHeaders("10.31.4.2"));
-  await useMember(page, "vtarget_signed_review@example.com", "/settings");
-  await installSeededSigningKey(page, "vtarget_signed_review@example.com");
-  let challenges = 0;
-  page.on("request", request => { if (new URL(request.url()).pathname === "/signing" && request.postDataJSON()?.intent === "challenge") challenges++; });
-  for (const declaration of ['"village": ja', 'village: ja\n"village": en']) {
-    await page.goto("/t/new"); await waitForClientRoute(page);
-    await expect(page.locator('form[data-ready="true"]')).toBeVisible();
-    const body = `---\n${declaration}\n---\nAn owned signed destination.`;
-    const input = page.locator('textarea[name="body"]');
-    await input.fill(body);
-    const expected = declaration.includes('"village": en') ? "en" : "ja";
-    const previousChallenges = challenges;
-    const response = page.waitForResponse(response => new URL(response.url()).pathname === "/signing" && response.request().postDataJSON()?.intent === "preview");
-    await page.getByRole("button", { name: m.submit_post, exact: true }).click();
-    const rejected = await response;
-    expect(rejected.status()).toBe(409);
-    expect(await rejected.json()).toEqual({ error: "village_changed", village: expected });
-    await expect(page.getByText(m.village_changed, { exact: true })).toBeVisible();
-    await expect(page.getByRole("dialog")).toHaveCount(0);
-    await expect(page.locator('input[name="villageDisplayed"]')).toHaveValue(expected);
-    await expect(page.locator('input[name="village"]')).toHaveValue(expected);
-    await expect(page.locator('input[name="villageExplicit"]')).toHaveValue("0");
-    await openPostSettings(page);
-    await expect(destination(page)).toContainText(name(expected));
-    await expect(input).toHaveValue(body);
-    expect(challenges).toBe(previousChallenges);
-    await input.dispatchEvent("input");
-    await expect(page.locator('input[name="villageDisplayed"]')).toHaveValue(expected);
-    await page.getByRole("button", { name: m.submit_post, exact: true }).click();
-    await expect(page.getByRole("dialog").locator("[data-signing-village]")).toContainText(name(expected));
-    await acceptSignedWrite(page);
-    await placement(page, expected);
-    expect(challenges).toBe(previousChallenges + 1);
-  }
-  // A late destination correction must not overwrite text edited while previewing.
-  await page.goto("/t/new"); await waitForClientRoute(page);
-  const input = page.locator('textarea[name="body"]');
-  await input.fill('---\n"village": ja\n---\nA pending reviewed body.');
-  let release!: () => void, captured = false;
-  const gate = new Promise<void>(resolve => { release = resolve; });
-  await page.route("**/signing", async route => {
-    if (route.request().postDataJSON()?.intent !== "preview") return route.continue();
-    const response = await route.fetch(); captured = true;
-    await gate;
-    await route.fulfill({ response });
-  });
-  try {
-    await page.getByRole("button", { name: m.submit_post, exact: true }).click();
-    await expect.poll(() => captured).toBe(true);
-    await input.fill("A new body entered while previewing.");
-  } finally { release(); }
-  await expect(page.getByText(m.signing_changed, { exact: true })).toBeVisible();
-  await expect(input).toHaveValue("A new body entered while previewing.");
-  await expect(page.locator('input[name="villageDisplayed"]')).toHaveValue("en");
-  await page.unroute("**/signing");
-  await page.getByRole("button", { name: m.submit_post, exact: true }).click();
-  await acceptSignedWrite(page);
-  await placement(page, "en");
-
-  // An unavailable destination fails during the signature preview too. Keep its
-  // error on the destination, without starting a passkey challenge.
-  await page.goto("/t/new"); await waitForClientRoute(page);
-  await input.fill("---\nvillage: missing-target\n---\nAn owned unavailable signed destination.");
-  const previousChallenges = challenges;
-  await page.getByRole("button", { name: m.submit_post, exact: true }).click();
-  const target = page.locator("[data-village-target]");
-  await expect(target.getByRole("alert")).toHaveText(m.village_required);
-  await expect(target.getByRole("button")).toBeFocused();
-  await expect(target.getByRole("button")).toHaveAccessibleDescription(`${m.village_public_reach} ${m.village_required}`);
-  await expect(page.getByRole("alert")).toHaveCount(1);
-  await expect(page.locator('input[name="villageDisplayed"]')).toHaveValue("missing-target");
-  expect(challenges).toBe(previousChallenges);
-  await select(page, "en");
-  await page.getByRole("button", { name: m.submit_post, exact: true }).click();
-  await acceptSignedWrite(page);
-  await placement(page, "en");
 });
 
 for (const locale of ["en", "ja"] as const) test(`keeps the destination above writing and out of settings in ${locale}`, async ({ page }) => {

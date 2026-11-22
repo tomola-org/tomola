@@ -11,73 +11,60 @@ import { action as publishPreview, loader as loadDraftPreview } from "~/routes/d
 import { action as reviewDraft } from "~/routes/signing";
 import { createApiToken } from "~/lib/tokens.server";
 import { createClientDraft, updateClientDraft } from "~/lib/mcp/drafts.server";
-import { withSignedWrite } from "~/lib/signing.server";
+import { withMemberWrite } from "~/lib/signing.server";
 import { changeVillageMembership, ensureLanguageVillages, setDefaultVillage } from "~/lib/villages.server";
 import type { SigningPreview } from "~/lib/signing";
-import { attachSigningProof, signingCredential } from "./helpers/signing";
 let h: RouteHarness;
 let queries: string[] | null = null;
 beforeAll(async () => {
   h = await setupRouteHarness({ logger: { logQuery(query) { queries?.push(query); } } });
-  await h.signIn("hana");
-  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, h.ids.hana));
+
 });
 afterAll(() => h.restore());
 
-it("rejects every named HTTP write with a real member session but no signature, preserving all rows", async () => {
-  const topic = await createTopic(h.db, h.ids.hana, { title: "Original", body: "Original body", lang: "ja" }); if (!topic.ok) throw new Error(topic.error);
-  const reply = await createReply(h.db, h.ids.hana, topic.id, { body: "Original reply", lang: "ja" }); if (!reply.ok) throw new Error(reply.error);
-  const draft = await createDraft(h.db, h.ids.hana, { kind: "topic", body: "Unpublished draft", lang: "ja" }); if (!draft.ok) throw new Error(draft.error);
+it.each([{}, { signatureChallenge: "retired", signatureAssertion: "invalid-json" }])("accepts ordinary browser writes with retired signing fields %j", async legacy => {
+  const as = Object.keys(legacy).length ? "old_form_writer" : "ordinary_writer";
+  const author = await h.signIn(as);
+  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, author));
+  const topic = await createTopic(h.db, author, { title: "Original", body: "Original body", lang: "ja" });
+  if (!topic.ok) throw new Error(topic.error);
+  const reply = await createReply(h.db, author, topic.id, { body: "Original reply", lang: "ja" });
+  if (!reply.ok) throw new Error(reply.error);
+  const draft = await createDraft(h.db, author, { kind: "topic", body: "Unpublished draft", lang: "ja" });
+  if (!draft.ok) throw new Error(draft.error);
   const cases = [
-    ["topic-new", "/t/new", {}, { body: "Forged topic", lang: "ja" }],
-    ["topic", `/t/${topic.id}`, { id: String(topic.id) }, { body: "Forged reply", lang: "ja" }],
-    ["topic-edit", `/t/${topic.id}/edit`, { id: String(topic.id) }, { title: "Forged title", body: "Forged edit" }],
-    ["reply-edit", `/c/${reply.id}/edit`, { id: String(reply.id) }, { body: "Forged reply edit" }],
-    ["draft", `/drafts/${draft.id}`, { id: String(draft.id) }, { intent: "publish", body: "Forged draft publication", lang: "ja" }],
-    ["settings", "/settings", {}, { intent: "handle", handle: "forged" }],
+    ["topic-new", "/t/new", {}, { body: "New topic", lang: "ja" }],
+    ["topic", `/t/${topic.id}`, { id: String(topic.id) }, { body: "New reply", lang: "ja" }],
+    ["topic-edit", `/t/${topic.id}/edit`, { id: String(topic.id) }, { title: "Edited title", body: "Edited topic" }],
+    ["reply-edit", `/c/${reply.id}/edit`, { id: String(reply.id) }, { body: "Edited reply" }],
+    ["draft", `/drafts/${draft.id}`, { id: String(draft.id) }, { intent: "publish", version: "1", body: "Published draft", lang: "ja" }],
+    ["settings", "/settings", {}, { intent: "display-name", displayName: "Example Writer", displayNameLatin: "" }],
+    ["settings", "/settings", {}, { intent: "handle", handle: `${as}_new` }],
   ] as const;
-  const before = await h.db.select().from(entries);
-  const draftBefore = await h.db.select().from(drafts);
-  for (const [name, path, params, form] of cases) {
-    const mod = await import(`../app/routes/${name}.tsx`);
-    const request = h.request(path, { as: "hana", form });
-    expect(request.method).toBe("POST");
-    expect(await h.outcome(() => mod.action(h.args(request, params))), name).toMatchObject({ status: 403 });
+  for (const [name, path, params, fields] of cases) {
+    const { action } = await import(`../app/routes/${name}.tsx`);
+    const request = h.request(path, { as, form: { ...fields, ...legacy } as Record<string, string> });
+    expect(await h.outcome(() => action(h.args(request, params))), name).toMatchObject({ status: 302 });
   }
-  expect(await h.db.select().from(entries)).toEqual(before);
-  expect(await h.db.select().from(drafts)).toEqual(draftBefore);
-  expect((await h.db.select().from(profiles).where(eq(profiles.userId, h.ids.hana)))[0].handle).toBe("hana");
-  expect(await h.db.select().from(memberSignatures)).toHaveLength(0);
+  const stored = await h.db.select().from(entries).where(eq(entries.authorId, author));
+  expect(stored.map(row => row.body).sort()).toEqual(["Edited reply", "Edited topic", "New reply", "New topic", "Published draft"]);
+  expect(stored.find(row => row.id === reply.id)?.threadId).toBe(topic.id);
+  expect(await h.db.select().from(drafts).where(eq(drafts.id, draft.id))).toEqual([]);
+  expect(await h.db.select().from(profiles).where(eq(profiles.userId, author))).toMatchObject([{ handle: `${as}_new`, displayName: "Example Writer", signPosts: true }]);
+  expect(await h.db.select().from(memberSignatures)).toEqual([]);
+  expect(await h.db.select().from(signingChallenges)).toEqual([]);
 });
 
-it("refuses an invalid signing proof through all six write paths without changing posts, drafts or the handle", async () => {
-  const topic = await createTopic(h.db, h.ids.hana, { body: "Original signed target", lang: "ja" });
-  if (!topic.ok) throw new Error(topic.error);
-  const reply = await createReply(h.db, h.ids.hana, topic.id, { body: "Original reply", lang: "ja" });
-  if (!reply.ok) throw new Error(reply.error);
-  const draft = await createDraft(h.db, h.ids.hana, { kind: "topic", body: "Unpublished draft", lang: "ja" });
-  if (!draft.ok) throw new Error(draft.error);
-  const before = await h.db.select().from(entries);
-  const draftBefore = await h.db.select().from(drafts);
-  const handleBefore = (await h.db.select().from(profiles).where(eq(profiles.userId, h.ids.hana)))[0].handle;
-  const version = String(draftBefore.find(row => row.id === draft.id)!.version);
-  for (const [name, url, params, form] of [
-    ["topic-new", "/t/new", {}, { body: "Forged topic", lang: "ja" }],
-    ["topic", `/t/${topic.id}`, { id: String(topic.id) }, { body: "Forged reply", lang: "ja" }],
-    ["topic-edit", `/t/${topic.id}/edit`, { id: String(topic.id) }, { body: "Forged edit", lang: "ja" }],
-    ["reply-edit", `/c/${reply.id}/edit`, { id: String(reply.id) }, { body: "Forged reply edit", lang: "ja" }],
-    ["draft", `/drafts/${draft.id}`, { id: String(draft.id) }, { intent: "publish", body: "Forged draft publication", lang: "ja", version }],
-    ["settings", "/settings", {}, { intent: "handle", handle: "forged" }],
-  ] as const) {
-    const mod = await import(`../app/routes/${name}.tsx`);
-    const response = await h.outcome(() => mod.action(h.args(h.request(url, { as: "hana", form: { ...form, signatureChallenge: "invalid", signatureAssertion: "invalid-json" } }), params)));
-    expect(response.status, name).toBe(403);
-    expect(response.value, name).toMatchObject({ data: { error: "invalid_signature" } });
-    expect(await h.db.select().from(entries), name).toEqual(before);
-    expect(await h.db.select().from(drafts), name).toEqual(draftBefore);
-    expect((await h.db.select().from(profiles).where(eq(profiles.userId, h.ids.hana)))[0].handle, name).toBe(handleBefore);
-    expect(await h.db.select().from(memberSignatures), name).toHaveLength(0);
-  }
+it("refuses the old challenge operation without issuing a challenge", async () => {
+  const as = "retired_challenge";
+  await h.signIn(as);
+  const basis = h.request("/signing", { as });
+  const response = await reviewDraft(h.args(new Request(basis, {
+    method: "POST", body: JSON.stringify({ intent: "challenge", pathname: "/t/new", fields: [], previewHash: "old" }),
+  })));
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: "signing_closed" });
+  expect(await h.db.select().from(signingChallenges)).toEqual([]);
 });
 
 describe("AI draft confirmation through browser routes", () => {
@@ -92,6 +79,7 @@ describe("AI draft confirmation through browser routes", () => {
     const token = await createApiToken(h.db, owner, { name: "Draft tool", kind: "draft" });
     if (!token.ok) throw new Error(token.error);
     apiToken = token.token;
+    await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, owner));
   });
 
   const pathFor = (id: number) => `/drafts/${id}`;
@@ -169,9 +157,9 @@ describe("AI draft confirmation through browser routes", () => {
     expect(expiresAt - Date.now()).toBeGreaterThan(599_000);
     expect(expiresAt - Date.now()).toBeLessThanOrEqual(600_000);
     const mutate = vi.fn(async () => ({ ok: false }));
-    await expect(withSignedWrite(h.db, owner, h.request(path), form, mutate, { now: new Date(expiresAt - 1) })).resolves.toEqual({ ok: false });
+    await expect(withMemberWrite(h.db, owner, h.request(path), form, mutate, { now: new Date(expiresAt - 1) })).resolves.toEqual({ ok: false });
     mutate.mockClear();
-    await expect(withSignedWrite(h.db, owner, h.request(path), form, mutate, { now: new Date(expiresAt) }))
+    await expect(withMemberWrite(h.db, owner, h.request(path), form, mutate, { now: new Date(expiresAt) }))
       .rejects.toMatchObject({ code: "confirmation_expired", status: 409 });
     expect(mutate).not.toHaveBeenCalled();
   });
@@ -187,7 +175,7 @@ describe("AI draft confirmation through browser routes", () => {
     const current = await review(path, fields);
     const form = await h.request(path, { form: { ...fields, confirmation: current.confirmation! } }).formData();
     const before = await h.db.select().from(entries);
-    await expect(withSignedWrite(h.db, owner, h.request(path), form, async tx => {
+    await expect(withMemberWrite(h.db, owner, h.request(path), form, async tx => {
       await tx.delete(drafts).where(eq(drafts.id, draft.id));
       return createTopic(tx, owner, { body: "Incorrect publication.", lang: "en" });
     })).rejects.toMatchObject({ code: "published_content_changed", status: 409 });
@@ -226,7 +214,7 @@ describe("AI draft confirmation through browser routes", () => {
     expect(await publish(secondId, { ...fieldsFor(), confirmation: second.data.confirmation!, signingView: second.data.signingView })).toMatchObject({ status: 302 });
   });
 
-  it("issues no confirmation to API credentials, other members, browser drafts or signed members", async () => {
+  it("issues no confirmation to API credentials, other members, browser drafts", async () => {
     const id = await makeApiDraft();
     const path = pathFor(id);
     const args = (as?: string, headers?: Record<string, string>) => h.args(h.request(path + "/preview", { as, headers }), paramsFor(id));
@@ -240,15 +228,6 @@ describe("AI draft confirmation through browser routes", () => {
     expect((await review(pathFor(browser.id), fieldsFor())).confirmation).toBeUndefined();
     expect(await publish(browser.id, fieldsFor())).toMatchObject({ status: 302 });
 
-    const signedDraft = await createDraft(h.db, h.ids.hana, { kind: "topic", body, lang: "en" }, { via: "api" });
-    if (!signedDraft.ok) throw new Error(signedDraft.error);
-    const signedPath = pathFor(signedDraft.id);
-    const preview = await review(signedPath, fieldsFor(), "hana");
-    expect(preview.signatureRequired).toBe(true);
-    expect(preview.confirmation).toBeUndefined();
-    const key = await signingCredential(h.db, h.ids.hana);
-    const request = await attachSigningProof(h.db, h.ids.hana, h.request(signedPath, { as: "hana", form: fieldsFor() }), key);
-    expect(await h.outcome(() => publishDraftScreen(h.args(request, paramsFor(signedDraft.id))))).toMatchObject({ status: 302 });
   });
 
   it("binds the resolved posting village when the stored draft has no explicit village", async () => {

@@ -184,14 +184,14 @@ describe("/settings (route)", () => {
     expect(loaded).toMatchObject({ handle: "settings_changed", saved: "handle" });
   });
 
-  it("returns a rejected signing change to its advanced section without changing the preference", async () => {
+  it("rejects the retired settings intent as an unknown request", async () => {
     const route = await import("~/routes/settings");
-    const before = (await getProfile(h.db, h.ids.hana))!.signPosts;
+    const before = await getProfile(h.db, h.ids.hana);
     const result = await h.outcome(() => route.action(h.args(h.request("/settings", {
       as: "hana", form: { intent: "sign-posts", signPosts: "1" },
     }))));
-    expect(result).toMatchObject({ status: 409, value: { data: { intent: "sign-posts", error: "signing_closed" } } });
-    expect((await getProfile(h.db, h.ids.hana))!.signPosts).toBe(before);
+    expect(result).toMatchObject({ status: 400 });
+    expect(await getProfile(h.db, h.ids.hana)).toEqual(before);
   });
 
 });

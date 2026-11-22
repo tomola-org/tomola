@@ -13,7 +13,7 @@ import { fixEntry } from "~/lib/moderation.server";
 import { failure, parseId } from "~/lib/params.server";
 import { getViewer } from "~/lib/roles.server";
 import { m } from "~/paraglide/messages.js";
-import { SigningFailureResponse, signingViewToken, withSignedWrite } from "~/lib/signing.server";
+import { SigningFailureResponse, withMemberWrite } from "~/lib/signing.server";
 import { editedLocation } from "~/lib/posted-ui";
 import { villagesEnabled } from "~/lib/villages-enabled.server";
 import { topicVillage } from "~/lib/villages.server";
@@ -39,8 +39,7 @@ async function loaderImplementation({ request, params }: Route.LoaderArgs) {
   const destination = village?.kind === "personal" ? { ...village, name: village.slug ?? village.name } : village;
   return { ownerId: user.id, entry: { id, kind, lang, title, body }, asksStance, locked: mode === "author-locked", fix: mode === "moderator-fix", sourceHash,
     destination: villagesEnabled() ? destination ? postingVillageName(await localizeVillage(db, destination, villageReaderFor(request, profile)), profile.handle) : m.village_target_unavailable() : null,
-    signPosts: profile.signPosts, editVersion: entryEditVersion(found.entry),
-    signingView: signingViewToken({ userId: user.id, kind: "entry", id, version: found.entry.sourceHash ?? "", title, body, lang }) };
+    editVersion: entryEditVersion(found.entry) };
 }
 
 // Moderator correction errors reuse existing moderation and post-validation messages.
@@ -85,7 +84,7 @@ export async function action({ request, params }: Route.ActionArgs) {
     // Assigned moderators and operators may correct typos in locked questions (fix_entry).
     if (found.entry.mode === "moderator-fix") {
       const note = formString(form, "note");
-      const fixed = await withSignedWrite(db, user.id, request, form, tx => fixEntry(tx, { id: user.id, scope: viewer.scope }, { entryId: id, title, body, note, sourceHash: formString(form, "sourceHash") }));
+      const fixed = await withMemberWrite(db, user.id, request, form, tx => fixEntry(tx, { id: user.id, scope: viewer.scope }, { entryId: id, title, body, note, sourceHash: formString(form, "sourceHash") }));
       if (fixed.ok) throw redirect(`/t/${id}`);
       if (fixed.error === "not_found") failure("not_found");
       if (fixed.error === "forbidden") failure("forbidden");
@@ -93,7 +92,7 @@ export async function action({ request, params }: Route.ActionArgs) {
       if (fixed.error === "invalid_state") return data({ error: fixed.error, fix: true, values: undefined }, { status: 409 });
       return data({ error: fixed.error, fix: true, values: { title, body, note } }, { status: 400 });
     }
-    const res = await withSignedWrite(db, user.id, request, form, tx => editEntry(tx, user.id, id, { title, body, ...(form.has("lang") ? { lang } : {}) }, { kind: "topic", expectedVersion: editFormVersion(form) }));
+    const res = await withMemberWrite(db, user.id, request, form, tx => editEntry(tx, user.id, id, { title, body, ...(form.has("lang") ? { lang } : {}) }, { kind: "topic", expectedVersion: editFormVersion(form) }));
     if (res.ok) throw redirect(editedLocation(`/t/${res.id}`, res.id));
     if (res.error === "not_found" || res.error === "forbidden") failure(res.error);
     // The first stance arrived between loading and submission; reopen this screen to switch to guidance.
@@ -114,7 +113,7 @@ export function meta({}: Route.MetaArgs) {
 }
 
 export default function TopicEdit({ loaderData, actionData }: Route.ComponentProps) {
-  const { entry, asksStance, locked, fix, sourceHash, signingView } = loaderData;
+  const { entry, asksStance, locked, fix, sourceHash } = loaderData;
   const materialLink = <Link className="underline ui-meta" to={`/t/${entry.id}/ai-materials/edit`}>{m.ai_material_title()}</Link>;
   const destination = loaderData.destination && <div data-village-target className="space-y-1">
     <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm"><span>{m.field_village()}</span><span className="wrap-anywhere">{loaderData.destination}</span></div>
@@ -155,8 +154,6 @@ export default function TopicEdit({ loaderData, actionData }: Route.ComponentPro
         fixNote
         baseSourceHash={sourceHash ?? ""}
         keeper={{ owner: loaderData.ownerId, scope: `edit:topic:${entry.id}` }}
-        signingView={signingView}
-        signPosts={loaderData.signPosts}
       />
     );
   }
@@ -174,8 +171,6 @@ export default function TopicEdit({ loaderData, actionData }: Route.ComponentPro
       cancelTo={`/t/${entry.id}`}
       warning={asksStance ? m.edit_lock_warning() : undefined}
       keeper={{ owner: loaderData.ownerId, scope: `edit:topic:${entry.id}` }}
-      signingView={signingView}
-      signPosts={loaderData.signPosts}
     />
   );
 }

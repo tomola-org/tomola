@@ -93,7 +93,7 @@ describe("the draft that writing with an AI made", () => {
   it("is updated in place by Save draft, and kept when an AI changed it since", async () => {
     const { action } = await import("~/routes/topic-new");
     const id = await ownDraft("writer", "First text");
-    const save = (version: number, body: string) => h.outcome(async () => action(await h.signedArgs(h.request("/t/new", { as: "writer", form: { intent: "draft", body, fromDraft: String(id), fromDraftVersion: String(version) } }))));
+    const save = (version: number, body: string) => h.outcome(async () => action(h.args(h.request("/t/new", { as: "writer", form: { intent: "draft", body, fromDraft: String(id), fromDraftVersion: String(version) } }))));
     const before = (await h.db.select().from(drafts).where(eq(drafts.authorId, h.ids.writer))).length;
     const first = await save(1, "Edited text");
     expect(first).toMatchObject({ status: 302, location: `/drafts/${id}?saved=1` });
@@ -104,7 +104,7 @@ describe("the draft that writing with an AI made", () => {
     expect(stale).toMatchObject({ status: 409, value: { data: { error: "draft_conflict" } } });
     expect(await getDraft(h.db, h.ids.writer, id)).toMatchObject({ body: "Edited text", version: 2 });
     // "Save as a new draft" keeps what is on the screen as a copy, and leaves the draft that moved on as it is.
-    const copy = await h.outcome(async () => action(await h.signedArgs(h.request("/t/new?newdraft=1", { as: "writer", form: { intent: "draft", body: "Overwriting text", fromDraft: String(id), fromDraftVersion: "1" } }))));
+    const copy = await h.outcome(async () => action(h.args(h.request("/t/new?newdraft=1", { as: "writer", form: { intent: "draft", body: "Overwriting text", fromDraft: String(id), fromDraftVersion: "1" } }))));
     expect(copy.status).toBe(302);
     expect(copy.location).not.toContain(`/drafts/${id}?`);
     expect(await getDraft(h.db, h.ids.writer, id)).toMatchObject({ body: "Edited text", version: 2 });
@@ -116,7 +116,7 @@ describe("the draft that writing with an AI made", () => {
     const kept = await ownDraft("writer", "Moved on");
     const removed = await ownDraft("writer", "Unchanged");
     await updateDraft(h.db, h.ids.writer, kept, { lang: "en", body: "The AI's version" }, { expectedVersion: 1 });
-    const post = (id: number, version: number, body: string) => h.outcome(async () => action(await h.signedArgs(h.request("/t/new", { as: "writer", form: { body, fromDraft: String(id), fromDraftVersion: String(version) } }))));
+    const post = (id: number, version: number, body: string) => h.outcome(async () => action(h.args(h.request("/t/new", { as: "writer", form: { body, fromDraft: String(id), fromDraftVersion: String(version) } }))));
     expect((await post(kept, 1, "Posted from the first screen")).status).toBe(302);
     expect(await getDraft(h.db, h.ids.writer, kept)).not.toBeNull();
     expect((await post(removed, 1, "Posted without a change")).status).toBe(302);

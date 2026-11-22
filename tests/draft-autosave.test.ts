@@ -340,17 +340,16 @@ it("adds a nullable preview timestamp and preserves existing drafts", async () =
     .toEqual([{ body: "Existing draft", previewedAt: null }]);
 });
 
-it("publishes the previewed snapshot with the normal passkey proof when signing is enabled", async () => {
+it("publishes the previewed snapshot with a retired signing preference", async () => {
   const as = "preview_signer";
   const owner = h.ids[as];
   await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, owner));
-  const made = await createDraft(h.db, owner, { kind: "topic", body: "A signed article preview", lang: "en" }, { preview: true });
+  const made = await createDraft(h.db, owner, { kind: "topic", body: "An article preview", lang: "en" }, { preview: true });
   if (!made.ok) throw new Error(made.error);
   const params = { id: String(made.id) };
   const path = `/drafts/${made.id}/preview`;
   const { data: shown } = await previewPage(h.args(h.request(path, { as }), params));
   const request = () => h.request(path, { as, form: { intent: "publish", version: String(shown.version), body: shown.content.body, lang: shown.content.lang, signingView: shown.signingView } });
-  expect(await h.outcome(() => publishPreview(h.args(request(), params)))).toMatchObject({ status: 403, value: { data: { error: "signature_required" } } });
-  expect(await h.outcome(async () => publishPreview(await h.signedArgs(request(), params)))).toMatchObject({ status: 302, location: expect.stringMatching(/^\/t\/\d+/) });
-  expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.userId, owner))).toHaveLength(1);
+  expect(await h.outcome(async () => publishPreview(h.args(request(), params)))).toMatchObject({ status: 302, location: expect.stringMatching(/^\/t\/\d+/) });
+  expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.userId, owner))).toHaveLength(0);
 });

@@ -6,18 +6,16 @@ import type { UnsavedInitialValues } from "~/components/unsaved-form-guard";
 import { m } from "~/paraglide/messages.js";
 
 export type FormSubmitHandler = NonNullable<ComponentProps<typeof Form>["onSubmit"]>;
-type SigningOptions = {
-  signatureRequired: boolean;
+type EntryFormOptions = {
   protectUnsaved?: "new" | "edit";
   unsavedInitialValues?: UnsavedInitialValues;
   preserveUnsavedOnSamePath?: boolean;
   confirmAiDraft?: boolean;
-  signIntent?: string;
-  fixedSigningContent?: boolean;
+  fixedContent?: boolean;
   draftConflictMessage?: string;
 };
-export type SignedFormProps = ComponentProps<typeof Form> & SigningOptions;
-export type SignedFormControlsProps = SigningOptions & {
+export type EntryFormProps = ComponentProps<typeof Form> & EntryFormOptions;
+export type EntryFormControlsProps = EntryFormOptions & {
   action: ComponentProps<typeof Form>["action"];
   form: RefObject<HTMLFormElement | null>;
   bypass: RefObject<boolean>;
@@ -28,8 +26,8 @@ export type SignedFormControlsProps = SigningOptions & {
 const FormSendingContext = createContext<string | null>(null);
 
 // The optional controls attach to the existing form, leaving native edits in place.
-export function SignedFormFrame({ children, controls: Controls, signatureRequired, protectUnsaved, unsavedInitialValues, preserveUnsavedOnSamePath, confirmAiDraft, signIntent, fixedSigningContent, draftConflictMessage, onSubmit, onClickCapture, action, ...props }: SignedFormProps & {
-  controls?: ComponentType<SignedFormControlsProps> | null;
+export function EntryFormFrame({ children, controls: Controls, protectUnsaved, unsavedInitialValues, preserveUnsavedOnSamePath, confirmAiDraft, fixedContent, draftConflictMessage, onSubmit, onClickCapture, action, ...props }: EntryFormProps & {
+  controls?: ComponentType<EntryFormControlsProps> | null;
 }) {
   const [ready, setReady] = useState(false);
   const form = useRef<HTMLFormElement>(null);
@@ -57,9 +55,8 @@ export function SignedFormFrame({ children, controls: Controls, signatureRequire
             if (!event.defaultPrevented) review.current?.(event);
           }}>
           {children}
-          {signatureRequired && <noscript><p role="note">{m.signing_no_js()}</p></noscript>}
         </Form>
-        {Controls && <Controls {...{ form, bypass, review, setReady, action, signatureRequired, protectUnsaved, unsavedInitialValues, preserveUnsavedOnSamePath, confirmAiDraft, signIntent, fixedSigningContent, draftConflictMessage }} />}
+        {Controls && <Controls {...{ form, bypass, review, setReady, action, protectUnsaved, unsavedInitialValues, preserveUnsavedOnSamePath, confirmAiDraft, fixedContent, draftConflictMessage }} />}
       </FormVillageReviewContext.Provider>
     </FormLanguageChangeContext.Provider>
   </FormSendingContext.Provider>;

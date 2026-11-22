@@ -26,8 +26,8 @@ import { applyPastedFrontmatter, formString, readEntryForm, submitTopicForm } fr
 import { DRAFT_RATE_LIMIT, hitRateLimit, hitMemberLimit, rateLimitHeaders } from "~/lib/rate-limit.server";
 import { postedLocation } from "~/lib/posted-ui";
 import { m } from "~/paraglide/messages.js";
-import { SigningFailureResponse, withSignedWrite } from "~/lib/signing.server";
-import { SignedForm, SendButton } from "~/components/signed-form";
+import { SigningFailureResponse, withMemberWrite } from "~/lib/signing.server";
+import { EntryForm, SendButton } from "~/components/entry-form";
 import { baseOf, orBlank, type LocalDraft } from "~/lib/local-draft";
 import { newPostDraftStore } from "~/lib/new-post-draft";
 import { sharePrefill } from "~/lib/share-prefill";
@@ -78,7 +78,6 @@ async function loaderImplementation({ request }: Route.LoaderArgs) {
     previewFailureLabel: m.draft_autosave_failed(),
     ...(posting ? { posting } : {}),
     defaultLang,
-    signPosts: profile.signPosts,
     prefill,
     formKey: prefill ? `${prefill.title}\n${prefill.body}` : "plain",
     initialValues: { title: prefill?.title, body: prefill?.body },
@@ -151,7 +150,7 @@ export async function action({ request }: Route.ActionArgs) {
     const rate = await hitMemberLimit(db, "topic", user.id);
     if (!rate.allowed) return data({ error: "rate_limited", values }, { status: 429, headers: rateLimitHeaders(rate) });
     // The draft that "Write with AI" made is removed in the same transaction, so that a failure here cannot leave a post made and the form still sendable.
-    const res = await withSignedWrite(db, user.id, request, form, async tx => {
+    const res = await withMemberWrite(db, user.id, request, form, async tx => {
       const error = await checkLinkedClientDraft(tx, user.id, form);
       if (error) return { ok: false as const, error, village: undefined };
       const posted = await submitTopicForm(tx, { user, profile }, form, { responseTo: responsePostId(new URL(request.url).searchParams) });
@@ -230,7 +229,7 @@ function TopicNewForm({ loaderData, actionData }: Route.ComponentProps) {
     <main className="space-y-4">
       <h1 className="text-xl font-bold">{m.topic_new_title()}</h1>
       {draftCount > 0 && <p className="ui-meta"><Link to="/drafts" className="underline">{m.drafts_resume({ count: draftCount })}</Link></p>}
-      <SignedForm protectUnsaved="new" unsavedInitialValues={loaderData.initialValues} signatureRequired={loaderData.signPosts} method="post" key={loaderData.formKey} className="group/compose space-y-3">
+      <EntryForm protectUnsaved="new" unsavedInitialValues={loaderData.initialValues} method="post" key={loaderData.formKey} className="group/compose space-y-3">
         <input type="hidden" {...loaderData.responseField} />
         <input type="hidden" name="ownerId" value={loaderData.ownerId} />
         {store && <NewTopicDraftKeeper owner={loaderData.ownerId} scope={screen} store={store} onRecovery={record => setRecovery(current => ({ record, round: (current?.round ?? 0) + 1 }))} onDiscard={fields => {
@@ -277,7 +276,7 @@ function TopicNewForm({ loaderData, actionData }: Route.ComponentProps) {
             setRestoredPosting({ village: String(fields.get("village") ?? ""), explicit: fields.get("villageExplicit") === "1" });
           }} />}
         </TopicFields>
-      </SignedForm>
+      </EntryForm>
     </main>
   );
 }

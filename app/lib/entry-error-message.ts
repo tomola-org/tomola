@@ -32,7 +32,7 @@ export function entryErrorMessage(error: string, kind: BodyKind = "topic"): stri
   // The Markdown worker was busy: the member did nothing wrong, and what was written is still in the form.
   if (error === "busy") return m.error_busy();
   if (isDraftConfirmationError(error)) return m.draft_confirmation_retry();
-  if (["approval_changed", "published_content_changed", "published_target_changed"].includes(error)) return m.signing_changed();
-  if (["signature_required", "signature_not_required", "invalid_signature", "wrong_passkey", "user_verification_required", "challenge_used_or_unknown", "challenge_expired", "passkey_required", "invalid_view", "invalid_payload"].includes(error)) return m.signing_failed();
+  if (["published_content_changed", "published_target_changed"].includes(error)) return m.signing_changed();
+  if (error === "signing_closed" || error === "invalid_view") return m.draft_review_reload();
   return m.error_generic();
 }

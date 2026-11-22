@@ -1197,7 +1197,7 @@ export async function createReply(...args: Parameters<typeof createReplyImplemen
   });
 }
 
-// The write phase owns a transaction, or a savepoint when db is already transactional (such as in withSignedWrite).
+// The write phase owns a transaction, or a savepoint when db is already transactional (such as in withMemberWrite).
 // MarkdownBudgetError becomes a result: from the write phase only after that boundary rolls back, and from
 // rendering before the write phase while nothing has been written yet. Other exceptions propagate.
 export async function editEntry(...args: Parameters<typeof editEntryImplementation>): Promise<Awaited<ReturnType<typeof editEntryImplementation>>> {

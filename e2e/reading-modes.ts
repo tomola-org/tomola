@@ -66,11 +66,11 @@ export const publicOnly = [
 ] as const;
 export const bothModes = [
   ["draft-preview", ".*"],
-  ["ai-draft", "AI draft confirmation|imported text is reviewed"],
-  ["signing", ".*"],
-  ["settings-order", "signing|rejected signature changes|advanced section fragments"],
-  ["lazy-autosave", "approval survives|signing"],
-  ["edit-version-check", "signing true"],
+  ["ai-draft", "AI draft confirmation|imported text stays private"],
+  ["passkey-enrollment", "legacy publication form"],
+  ["settings-order", "AI-link revocation|advanced section fragments"],
+  ["lazy-autosave", "approval survives|publishing waits"],
+  ["edit-version-check", "two screens"],
   ["passkey-enrollment", "passkey-only sign-in|member without passkeys"],
   ["home-following", ".*"],
   ["load-more", "members"],

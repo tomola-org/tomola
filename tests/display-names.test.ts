@@ -8,8 +8,6 @@ import { listReportCards } from "~/lib/moderation.server";
 import { createAppeal, decideAppeal, getAppealableAction } from "~/lib/appeals.server";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
 import { setTestLocale } from "./stubs/paraglide-runtime";
-import { signingCredential } from "./helpers/signing";
-import { issueSignedWrite, previewSignedWrite } from "~/lib/signing.server";
 import { deleteAccount } from "~/lib/account-delete.server";
 import { llmsTxt, helpAiMd } from "~/lib/api/guides.server";
 
@@ -104,14 +102,12 @@ describe("display name settings and moderation", () => {
     expect(await h.db.select().from(profiles).where(eq(profiles.userId, id))).toMatchObject([{ displayName: "Taylor Updated", displayNameLatin: null }]);
     for (const locale of ["en", "ja", "zh-Hans", "ko"]) expect(selectDisplayName((await h.db.select().from(profiles).where(eq(profiles.userId, id)))[0], locale)).toBe("Taylor Updated");
   });
-  it("rejects spoofing input through settings and signed previews before storing either form", async () => {
+  it("rejects spoofing input through settings before storing either form", async () => {
     const route = await import("~/routes/settings");
     const id = h.ids.dn_invalid;
     for (const bad of ["@admin", "＠admin", "﹫admin", "\u3164", "A\u2800", "A\u034f", "\u200d", "A\u200d", "...", "123"]) {
       for (const key of ["displayName", "displayNameLatin"]) {
         const fields = { intent: "display-name", displayName: "Valid", displayNameLatin: "Valid", [key]: bad };
-        const form = new FormData(); for (const [key, value] of Object.entries(fields)) form.set(key, value);
-        await expect(previewSignedWrite(h.db, id, "/settings", form)).rejects.toMatchObject({ code: "invalid_display_name" });
         const result = await h.outcome(() => route.action(h.args(h.request("/settings", { as: "dn_invalid", form: fields }))));
         expect(result).toMatchObject({ status: 400 });
         expect(result.value).toMatchObject({ data: { error: "invalid_display_name" } });
@@ -129,24 +125,14 @@ describe("display name settings and moderation", () => {
     expect(await h.db.select().from(profiles).where(eq(profiles.userId, id))).toMatchObject([{ displayName: "Fifth" }]);
     expect(await updateDisplayNames(h.db, id, "Tomorrow", "Latin", { now: new Date("2030-01-02T00:00:00Z") })).toEqual({ ok: true });
   });
-  it("retains signing and suspension gates and binds both forms to the approval", async () => {
+  it("keeps the suspension gate after saving both display names", async () => {
     const id = h.ids.dn_guarded, route = await import("~/routes/settings");
     await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, id));
-    const credential = await signingCredential(h.db, id);
-    const fields = { intent: "display-name", displayName: "署名した名前", displayNameLatin: "Signed Name" };
-    const unsigned = await h.outcome(() => route.action(h.args(h.request("/settings", { as: "dn_guarded", form: fields }))));
-    expect(unsigned.status).toBe(403);
-    const form = new FormData(); for (const [key, value] of Object.entries(fields)) form.set(key, value);
-    const preview = await previewSignedWrite(h.db, id, "/settings", form);
-    expect(preview).toMatchObject({ operation: "change-display-name", signatureRequired: true });
-    const proof = await issueSignedWrite(h.db, id, "/settings", form, preview.payloadHash);
-    const signedFields = { ...fields, signatureChallenge: proof.challenge, signatureAssertion: JSON.stringify(credential.assert(proof.options.challenge)) };
-    const altered = await h.outcome(() => route.action(h.args(h.request("/settings", { as: "dn_guarded", form: { ...signedFields, displayNameLatin: "Altered" } }))));
-    expect(altered.status).toBe(409);
-    expect((await h.outcome(() => route.action(h.args(h.request("/settings", { as: "dn_guarded", form: signedFields }))))).status).toBe(302);
-    await h.db.update(profiles).set({ signPosts: false, suspendedUntil: new Date("2090-01-01"), suspendedReason: "spam" }).where(eq(profiles.userId, id));
+    const fields = { intent: "display-name", displayName: "名前", displayNameLatin: "Example Name" };
+    expect(await h.outcome(() => route.action(h.args(h.request("/settings", { as: "dn_guarded", form: fields }))))).toMatchObject({ status: 302 });
+    await h.db.update(profiles).set({ suspendedUntil: new Date("2090-01-01"), suspendedReason: "spam" }).where(eq(profiles.userId, id));
     expect(await h.outcome(() => route.action(h.args(h.request("/settings", { as: "dn_guarded", form: { ...fields, displayNameLatin: "Blocked Change" } }))))).toMatchObject({ status: 302, location: "/suspended" });
-    expect(await h.db.select().from(profiles).where(eq(profiles.userId, id))).toMatchObject([{ displayNameLatin: "Signed Name" }]);
+    expect(await h.db.select().from(profiles).where(eq(profiles.userId, id))).toMatchObject([{ displayNameLatin: "Example Name" }]);
   });
   it("saves through settings and exports both forms; keeps handles unchanged", async () => {
     const settings = await import("~/routes/settings");

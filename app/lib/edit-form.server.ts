@@ -14,6 +14,6 @@ export function editFormValues(form: FormData) {
 
 // Keep these translations on the server so reading pages do not load edit-only messages.
 export function editConflict(error: string, href: string) {
-  return error === "edit_conflict" || error === "approval_changed"
+  return error === "edit_conflict"
     ? { message: m.edit_conflict(), label: m.edit_open_latest(), href } : undefined;
 }

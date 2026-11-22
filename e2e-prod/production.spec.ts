@@ -1,4 +1,4 @@
-import { addSettingsPasskey, enableSigningAuthenticator } from "../e2e/signing-helper";
+import { addSettingsPasskey, enablePasskeyAuthenticator } from "../e2e/passkey-helper";
 import { enMessages, formatMessage, messagePattern, openPostSettings, waitForFormReady, waitForHydration } from "../e2e/helpers";
 import fs from "node:fs";
 import path from "node:path";
@@ -554,7 +554,7 @@ test("the glossary opens for every member under the CSP, and the YAML download i
 });
 
 test("an optional passkey logs in under CSP and removing the last key requires email reauthentication", async () => {
-  const { client: cdp, authenticatorId } = await enableSigningAuthenticator(boss);
+  const { client: cdp, authenticatorId } = await enablePasskeyAuthenticator(boss);
   await boss.goto("/settings");
   const beforeAdding = mailCount();
   await addSettingsPasskey(boss, { inbox: smtpLoginCodeInbox });

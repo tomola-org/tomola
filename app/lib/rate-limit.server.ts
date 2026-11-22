@@ -102,7 +102,7 @@ export const MEMBER_RATE_LIMITS = {
   "mod-appeals": { limit: 600, windowSeconds: 3600 },
   // Handle suggestions while typing an @mention (a request every few keystrokes): 600 per hour.
   "mention-suggest": { limit: 600, windowSeconds: 3600 },
-  // Signing previews/options and passkey enrollment create short-lived challenges. Bound per-member accumulation.
+  // Bound per-member draft confirmation previews and enrollment challenges.
   signing: { limit: 600, windowSeconds: 3600 },
   "passkey-enroll": { limit: 60, windowSeconds: 3600 },
 } as const satisfies Record<string, RateLimitRule>;

@@ -99,7 +99,7 @@ test("long originals and translations stay readable at desktop and phone widths"
     const build = process.env.E2E_SERVER === "build";
     let release!: () => void;
     const pause = new Promise<void>(resolve => { release = resolve; });
-    const asset = /\/assets\/signed-form-controls-[^/]+\.js$/;
+    const asset = /\/assets\/entry-form-controls-[^/]+\.js$/;
     const quotePath = `/t/${f.topicId}?lang=en&tr=${f.topicId}&reply_to=`;
     // The preceding page can still start its idle import as we leave it.
     const isQuoteControls = (request: Request) =>

@@ -4,7 +4,7 @@ import path from "node:path";
 import { expect } from "@playwright/test";
 import { test, richEditorTest } from "./editor-fixture";
 import { clientHeaders, state, useMember, waitForClientRoute, waitForHydration, enMessages as m } from "./helpers";
-import { settingsPasskeyAddButton } from "./signing-helper";
+import { settingsPasskeyAddButton } from "./passkey-helper";
 
 const navigate = (page: import("@playwright/test").Page, path: string) => page.evaluate(path => {
   void (window as unknown as { __reactRouterDataRouter: { navigate(path: string): Promise<void> } }).__reactRouterDataRouter.navigate(path);

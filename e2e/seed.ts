@@ -7,7 +7,7 @@ import { acceptTrialFixture } from "./trial-fixture";
 // The glossary tests use operator gwen's invitation and the glossary entries (three for Japanese/English, four needing review for French). The last stance scenarios use Japanese member rina
 // and operator opal; the follow tests use fiona and the mention tests use mei. gwen and opal are in global-setup.ts's OPERATOR_EMAILS.
 // Remove the topic translation jobs so the worker does not put the topics used by the tests behind the seeded topics.
-// Write invitation URLs on separate stdout lines, in this order: hana, mika, pat, olga, lena, quinn, saki, gwen, rina, opal, fiona, mei, disco_aki, disco_ben, signer, mcp_member, mobile_ui, enrollment, language.
+// Write invitation URLs on separate stdout lines, in this order: hana, mika, pat, olga, lena, quinn, saki, gwen, rina, opal, fiona, mei, disco_aki, disco_ben, mcp_member, mobile_ui, enrollment, language.
 import fs from "node:fs";
 import path from "node:path";
 import { eq, inArray } from "drizzle-orm";
@@ -138,13 +138,12 @@ const { token: fionaToken } = await createInvitation(db, { email: "fiona@example
 const { token: meiToken } = await createInvitation(db, { email: "mei@example.com" });
 const { token: discoveryAkiToken } = await createInvitation(db, { email: "disco_aki@example.com" });
 const { token: discoveryBenToken } = await createInvitation(db, { email: "disco_ben@example.com" });
-const { token: signingToken } = await createInvitation(db, { email: "signer@example.com" });
 const { token: mcpToken } = await createInvitation(db, { email: "mcp@example.com" });
 const { token: mobileToken } = await createInvitation(db, { email: "mobile@example.com" });
 const { token: enrollmentToken } = await createInvitation(db, { email: "enrollment@example.com" });
 const { token: languageToken } = await createInvitation(db, { email: "language@example.com" });
 const { token: navigationToken } = await createInvitation(db, { email: "navigation_operator@example.com" });
-const { token: detectToken } = await createInvitation(db, { email: "language_signer@example.com" });
+const { token: detectToken } = await createInvitation(db, { email: "language_writer@example.com" });
 const { token: fallbackToken } = await createInvitation(db, { email: "language_fallback@example.com" });
 // Dedicated accounts for login-ease.spec.ts; never reuse another suite's invite.
 const { token: loginConfirmToken } = await createInvitation(db, { email: "login_ease_confirm@example.com" });
@@ -201,7 +200,6 @@ console.log(inviteUrl(fionaToken));
 console.log(inviteUrl(meiToken));
 console.log(inviteUrl(discoveryAkiToken));
 console.log(inviteUrl(discoveryBenToken));
-console.log(inviteUrl(signingToken));
 console.log(inviteUrl(mcpToken));
 console.log(inviteUrl(mobileToken));
 console.log(inviteUrl(enrollmentToken));

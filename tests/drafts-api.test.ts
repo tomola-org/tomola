@@ -72,7 +72,7 @@ describe("POST /api/drafts: authentication", () => {
     expect(loggedIn.status).toBe(401);
     expect(loggedIn.json.error).toBe("unauthorized");
     expect(loggedIn.headers.get("www-authenticate")).toBe('Bearer realm="tomola"');
-    expect((await h.outcome(async () => (await (await import("~/routes/drafts")).loader(await h.signedArgs(h.request("/drafts", { as: "hana" })))))).status).toBe(200);
+    expect((await h.outcome(async () => (await (await import("~/routes/drafts")).loader(h.args(h.request("/drafts", { as: "hana" })))))).status).toBe(200);
     // With a real session cookie and a read-token Bearer, Bearer takes precedence and the read token yields 403.
     const mixed = await post(md("type: topic\ntitle: T"), { token: readToken, headers: { cookie: realCookie! } });
     expect(mixed.status).toBe(403);
@@ -236,8 +236,8 @@ describe("POST /api/drafts: creating a draft", () => {
     expect((await publish("somchai")).status).toBe(404);
     expect((await h.db.select().from(entries).where(eq(entries.title, "To approve"))).length).toBe(0);
     // The owner publishes through their browser session.
-    const { previewSignedWrite } = await import("~/lib/signing.server");
-    const { confirmation } = await previewSignedWrite(h.db, h.ids.hana, path, await h.request(path, { form: fields }).formData());
+    const { previewDraftPublication } = await import("~/lib/signing.server");
+    const { confirmation } = await previewDraftPublication(h.db, h.ids.hana, path, await h.request(path, { form: fields }).formData());
     const ok = await publish("hana", {}, confirmation);
     expect(ok.status).toBe(302);
     const [published] = await h.db.select().from(entries).where(eq(entries.title, "To approve"));
@@ -462,9 +462,9 @@ describe("the badge for drafts sent through the API", () => {
     await createDraft(h.db, h.ids.hana, { kind: "topic", lang: "ja", title: "web", body: "b" });
     expect(await countApiDrafts(h.db, h.ids.hana)).toBe(hanaCount);
     const layout = await import("~/routes/member-layout");
-    const data = (await layout.loader(await h.signedArgs(h.request("/", { as: "hana" })))) as unknown as { apiDrafts: number };
+    const data = (await layout.loader(h.args(h.request("/", { as: "hana" })))) as unknown as { apiDrafts: number };
     expect(data.apiDrafts).toBe(hanaCount);
-    const somchai = (await layout.loader(await h.signedArgs(h.request("/", { as: "somchai" })))) as unknown as { apiDrafts: number };
+    const somchai = (await layout.loader(h.args(h.request("/", { as: "somchai" })))) as unknown as { apiDrafts: number };
     expect(somchai.apiDrafts).toBe(await countApiDrafts(h.db, h.ids.somchai));
     expect(data.apiDrafts).not.toBe(somchai.apiDrafts);
   });

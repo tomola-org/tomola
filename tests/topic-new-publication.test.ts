@@ -33,7 +33,7 @@ const editor = () => import("~/routes/topic-new");
 const home = () => import("~/routes/home");
 const post = async (as: string, form: Record<string, string>, headers?: Record<string, string>) => {
   const { action } = await editor();
-  return h.outcome(async () => action(await h.signedArgs(h.request("/t/new", { as, form, headers }))));
+  return h.outcome(async () => action(h.args(h.request("/t/new", { as, form, headers }))));
 };
 const rowOf = async (id: number) => (await h.db.select().from(entries).where(eq(entries.id, id)))[0];
 const idFrom = (location: string | null) => Number(new URL(location ?? "/", "http://localhost").searchParams.get("posted"));
@@ -59,7 +59,7 @@ describe("a post with a body only", () => {
     const out = await post("hana", { body: "いちばん上に出る発言。" });
     const id = idFrom(out.location);
     const { loader } = await home();
-    const data = (await loader(await h.signedArgs(h.request("/", { as: "kim" })))) as unknown as { topics: Array<{ id: number }> };
+    const data = (await loader(h.args(h.request("/", { as: "kim" })))) as unknown as { topics: Array<{ id: number }> };
     expect(data.topics[0].id).toBe(id);
     const queued = await h.db.select().from(jobs).orderBy(desc(jobs.id));
     expect(queued.some((j) => j.kind === "translate_entry" && (j.payload as { entryId?: number }).entryId === id)).toBe(true);
@@ -81,7 +81,7 @@ describe("a post with a body only", () => {
     const pasted = "---\ntitle: 貼り付けた題\nlang: en\nasks_stance: true\nai_assistance: polish\n---\n本文です。";
     const viaEditor = idFrom((await post("hana", { body: pasted })).location);
     const { action } = await import("~/routes/topic-new");
-    const outcome = await h.outcome(async () => action(await h.signedArgs(h.request("/t/new", { as: "hana", form: { body: pasted } }))));
+    const outcome = await h.outcome(async () => action(h.args(h.request("/t/new", { as: "hana", form: { body: pasted } }))));
     expect(outcome.status).toBe(302);
     const viaNew = Number(new URL(outcome.location!, "http://localhost").searchParams.get("posted"));
     const strip = (r: Awaited<ReturnType<typeof rowOf>>) => ({ title: r.title, body: r.body, lang: r.lang, asksStance: r.asksStance, aiAssistance: r.aiAssistance, altOf: r.altOf, via: r.via });
@@ -200,13 +200,13 @@ describe("reading works without JavaScript and writing has no AI field", () => {
     expect(out.status).toBe(403);
     expect(await topicCount()).toBe(before);
     const { action } = await editor();
-    expect(await h.outcome(async () => action(await h.signedArgs(h.request("/t/new", { form: { body: "x" } }))))).toMatchObject({ status: 302, location: "/login" });
+    expect(await h.outcome(async () => action(h.args(h.request("/t/new", { form: { body: "x" } }))))).toMatchObject({ status: 302, location: "/login" });
   });
 
   it("has no composer for a member who is suspended: the screen leaves it out and a POST goes to /suspended", async () => {
     await h.db.update(profiles).set({ suspendedUntil: new Date(Date.now() + 86_400_000), suspendedReason: "spam" }).where(eq(profiles.userId, h.ids.sus));
     const { loader, default: Home } = await home();
-    const data = await loader(await h.signedArgs(h.request("/", { as: "sus" })));
+    const data = await loader(h.args(h.request("/", { as: "sus" })));
     expect(data).not.toHaveProperty("composer");
     const html = await renderInRouter(() => routeElement(Home, { loaderData: { ...data, aiOpen: { mdUrl: "http://x/home.md", mdPath: "/home.md" }, stanceMessage: null } }));
     expect(html).not.toContain('name="body"');
@@ -240,7 +240,7 @@ describe("the limits of posting from the screens", () => {
     const draftRoute = await import("~/routes/draft");
     const topicRoute = await import("~/routes/topic");
     const send = (mod: { action: (a: never) => unknown }, path: string, form: Record<string, string>, params: Record<string, string> = {}) =>
-      h.outcome(async () => mod.action(await h.signedArgs(h.request(path, { as: "slow", form: path.startsWith("/drafts/") ? await draftScreenForm(h.db, h.ids.slow, Number(params.id), form) : form }), params)));
+      h.outcome(async () => mod.action(h.args(h.request(path, { as: "slow", form: path.startsWith("/drafts/") ? await draftScreenForm(h.db, h.ids.slow, Number(params.id), form) : form }), params)));
     // 18 posts from the dedicated editor, then one from /t/new: 19 counted
     for (let i = 0; i < 18; i++) expect((await post("slow", { body: `数え ${i}` })).status).toBe(302);
     expect((await send(newTopic, "/t/new", { title: "新しい話題の画面", body: "本文" })).status).toBe(302);
@@ -283,7 +283,7 @@ describe("the limits of posting from the screens", () => {
       return d.id;
     };
     for (let i = 0; i < 59; i++) await hitMemberLimit(h.db, "reply", h.ids.drafty);
-    const publish = async (id: number) => h.outcome(async () => draftRoute.action(await h.signedArgs(h.request(`/drafts/${id}`, { as: "drafty", form: { intent: "publish", body: "返信の下書き", lang: "ja", version: "1" } }), { id: String(id) })));
+    const publish = async (id: number) => h.outcome(async () => draftRoute.action(h.args(h.request(`/drafts/${id}`, { as: "drafty", form: { intent: "publish", body: "返信の下書き", lang: "ja", version: "1" } }), { id: String(id) })));
     expect((await publish(await make())).status).toBe(302);
     expect((await publish(await make())).status).toBe(429);
     // the topic count of this member is untouched

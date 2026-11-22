@@ -179,7 +179,7 @@ export async function recoverPasskeys(db: Db, operator: { id: string; email: str
     const checkedAt = now ?? new Date();
     const [actualOperator] = await tx.select({ email: user.email }).from(user).where(eq(user.id, operator.id));
     if (!actualOperator || actualOperator.email !== operator.email || !isOperatorEmail(actualOperator.email)) throw new SigningError("operator_required");
-    const [member] = await tx.select({ email: user.email, signPosts: profiles.signPosts, passkeyOnly: profiles.passkeyOnly, passkeyEnrolledAt: profiles.passkeyEnrolledAt }).from(profiles).innerJoin(user, eq(user.id, profiles.userId)).where(eq(profiles.userId, userId));
+    const [member] = await tx.select({ email: user.email, passkeyOnly: profiles.passkeyOnly, passkeyEnrolledAt: profiles.passkeyEnrolledAt }).from(profiles).innerJoin(user, eq(user.id, profiles.userId)).where(eq(profiles.userId, userId));
     if (!member || !protectedLogin(member)) throw new SigningError("recovery_not_available", 409);
     const expiresAt = new Date(checkedAt.getTime() + 30 * 60 * 1000);
     await tx.delete(passkey).where(eq(passkey.userId, userId));

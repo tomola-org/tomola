@@ -1,6 +1,4 @@
 import { acceptTrialFixture } from "./trial-fixture";
-import { eq } from "drizzle-orm";
-import { profiles } from "../app/lib/db/schema";
 import fs from "node:fs";
 import path from "node:path";
 import { createAuth } from "../app/lib/auth/auth.server";
@@ -8,9 +6,8 @@ import { authSecret } from "../app/lib/auth/secret.server";
 import type { Db } from "../app/lib/db/client.server";
 import { createInvitation } from "../app/lib/invitations.server";
 import { createProfile } from "../app/lib/profiles.server";
-import { MEMBER_FIXTURES, SIGNING_MEMBER_FIXTURES, VILLAGE_MEMBER_FIXTURES, type SeedMember } from "./member-fixtures";
+import { MEMBER_FIXTURES, VILLAGE_MEMBER_FIXTURES, type SeedMember } from "./member-fixtures";
 import { villagesEnabled } from "../app/lib/villages-enabled.server";
-import { signingCredential } from "../tests/helpers/signing";
 
 export async function seedMembers(db: Db, dir: string, baseURL: string, members: readonly SeedMember[] = MEMBER_FIXTURES.filter(member => villagesEnabled() || !VILLAGE_MEMBER_FIXTURES.includes(member))) {
   const destination = path.join(dir, "members");
@@ -32,13 +29,6 @@ export async function seedMembers(db: Db, dir: string, baseURL: string, members:
     if (!current) throw new Error(`Seed session missing for ${member.email}`);
     const profile = await createProfile(db, current.user.id, { handle: member.handle, homeArea: member.homeArea, ...(member.readLangs ? { readLangs: member.readLangs } : {}) }, { uiLocale: member.uiLocale });
     if (!profile.ok) throw new Error(`Seed profile failed for ${member.email}: ${profile.error}`);
-    // These scenarios start with members who opted in before signing closed.
-    if (SIGNING_MEMBER_FIXTURES.has(member.handle)) {
-      const key = await signingCredential(db, current.user.id);
-      await db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, current.user.id));
-      const credential = key.virtualCredential(new URL(baseURL).hostname);
-      fs.writeFileSync(path.join(destination, `${member.email}.webauthn.json`), JSON.stringify(credential), { mode: 0o600 });
-    }
     await acceptTrialFixture(db, current.user.id);
     fs.writeFileSync(path.join(destination, `${member.email}.json`), JSON.stringify({ cookies, origins: [] }));
   }

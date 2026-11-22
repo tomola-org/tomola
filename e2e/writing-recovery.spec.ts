@@ -3,7 +3,6 @@ import { test } from "./editor-fixture";
 import { baseOf } from "../app/lib/local-draft";
 import { beforeHydration } from "./support/prehydration";
 import { captureScreenshot, clientHeaders, enMessages as m, state, useMember as restoreWritingMember, waitForClientRoute, waitForFormReady } from "./helpers";
-import { installSeededSigningKey } from "./signing-helper";
 import { pressAcrossHydration } from "./support/early-actions";
 
 const body = (page: Page) => page.locator('textarea[name="body"]').first();
@@ -144,7 +143,7 @@ test("topic editing shows its fixed destination above the title without changing
   expect(await (await page.request.get(`${path}.md`)).text()).toMatch(/^village: ["']?@zwrite_edit["']?$/m);
 });
 
-test("each rejected destination submission returns focus and a new signing review clears stale errors", async ({ page }) => {
+test("each rejected destination submission returns focus", async ({ page }) => {
   await page.setExtraHTTPHeaders(clientHeaders("10.31.4.7"));
   await open(page, "errors");
   await body(page).fill("---\nvillage: missing-destination\n---\nWriting needing a destination.");
@@ -155,18 +154,6 @@ test("each rejected destination submission returns focus and a new signing revie
     await expect(destination.getByRole("alert")).toHaveText(m.village_required);
     await expect(destination.getByRole("button")).toBeFocused();
   }
-  await body(page).fill("");
-  await restoreWritingMember(page, "zwrite_signing_errors@example.com", "/settings");
-  await installSeededSigningKey(page, "zwrite_signing_errors@example.com");
-  await page.goto("/t/new"); await waitForFormReady(form(page));
-  await body(page).fill("---\nvillage: missing-destination\n---\nSigned writing needing a destination.");
-  await submit.click();
-  await expect(destination.getByRole("alert")).toHaveText(m.village_required);
-  await page.route("**/signing", route => route.fulfill({ status: 400, json: { error: "body_too_complex" } }));
-  await body(page).fill("A different review failure.");
-  await submit.click();
-  await expect(destination.getByRole("alert")).toHaveCount(0);
-  await expect(page.getByRole("alert")).toHaveCount(1);
 });
 
 test("an unavailable initial destination leaves the writer's focus alone", async ({ page }) => {

@@ -1,5 +1,5 @@
 import { useOperatorSettings } from "~/lib/operator-context";
-import { data, Link, redirect, useNavigation } from "react-router";
+import { data, Form, Link, redirect, useNavigation } from "react-router";
 import type { Route } from "./+types/settings-delete-account";
 import { requireMember } from "~/lib/auth/session.server";
 import { getDb } from "~/lib/db/client.server";
@@ -8,8 +8,7 @@ import { getAuth } from "~/lib/auth/auth.server";
 import { clearLoginCodeCookies } from "~/lib/auth/login-code-cookie.server";
 import { assertSameOrigin } from "~/lib/http/csrf.server";
 import { accountDeletionKey, completedAccountDeletion, AccountDeletionError, deleteAccount, deletionVillages } from "~/lib/account-delete.server";
-import { SigningFailureResponse, withSignedWrite } from "~/lib/signing.server";
-import { SignedForm } from "~/components/signed-form";
+import { SigningFailureResponse, withMemberWrite } from "~/lib/signing.server";
 import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "~/components/ui/native-select";
@@ -20,7 +19,7 @@ import { m } from "~/paraglide/messages.js";
 export const meta = () => [{ title: m.account_delete_title() }];
 export async function loader({ request }: Route.LoaderArgs) {
   const { db, profile, user } = await requireMember(request);
-  return withCredentialSession(db, user.id, request, "/settings/delete-account", async tx => data({ handle: profile.handle, signPosts: profile.signPosts, completionKey: accountDeletionKey(user.id), villages: await deletionVillages(tx, user.id) }, { headers: { "Cache-Control": "private, no-store" } }));
+  return withCredentialSession(db, user.id, request, "/settings/delete-account", async tx => data({ handle: profile.handle, completionKey: accountDeletionKey(user.id), villages: await deletionVillages(tx, user.id) }, { headers: { "Cache-Control": "private, no-store" } }));
 }
 export async function action({ request }: Route.ActionArgs) {
   assertSameOrigin(request);
@@ -37,12 +36,12 @@ export async function action({ request }: Route.ActionArgs) {
     await deleteAccount(db, user.id, { confirmation, posts: posts as "keep" | "delete", villages }, {
       execute: (mutate, lock) => db.transaction(async tx => {
         await lock(tx);
-        return withCredentialSession(tx, user.id, request, "/settings/delete-account", fresh => withSignedWrite(fresh, user.id, request, form, mutate));
+        return withCredentialSession(tx, user.id, request, "/settings/delete-account", fresh => withMemberWrite(fresh, user.id, request, form, mutate));
       }),
     });
   } catch (error) {
     if (error instanceof AccountDeletionError) return data({ error: error.code, villageErrors: error.villageIds }, { status: error.code === "village_changed" ? 409 : 400 });
-    if (error instanceof SigningFailureResponse) return data({ error: "signature" }, { status: error.status });
+    if (error instanceof SigningFailureResponse) return data({ error: "invalid" }, { status: error.status });
     if (error instanceof Response) throw error;
     // The request journal retains a non-sensitive failure code for operators.
     console.warn("[account-delete] account deletion request failed");
@@ -72,8 +71,8 @@ export default function DeleteAccount({ loaderData, actionData }: Route.Componen
     <p>{m.account_delete_export_help()} <Link to="/settings/export" reloadDocument className="underline">{m.settings_export_link()}</Link></p>
     <p>{m.account_delete_removed_help()}</p>
     <p>{m.account_delete_chat_help()}</p>
-    {error && error !== "village_required" && <p role="alert" className="text-destructive">{error === "confirmation" ? m.account_delete_error_confirmation() : error === "village_changed" ? m.account_delete_error_village() : error === "signature" ? m.signing_failed() : error === "failed" ? m.account_delete_error_failed({ email: operator.privacyEmail }) : m.account_delete_error_invalid()}</p>}
-    <SignedForm signatureRequired={loaderData.signPosts} method="post" className="space-y-5">
+    {error && error !== "village_required" && <p role="alert" className="text-destructive">{error === "confirmation" ? m.account_delete_error_confirmation() : error === "village_changed" ? m.account_delete_error_village() : error === "failed" ? m.account_delete_error_failed({ email: operator.privacyEmail }) : m.account_delete_error_invalid()}</p>}
+    <Form method="post" className="space-y-5">
       <input type="hidden" name="intent" value="delete-account" />
       <input type="hidden" name="completion-key" value={loaderData.completionKey} />
       <fieldset className="space-y-3">
@@ -95,6 +94,6 @@ export default function DeleteAccount({ loaderData, actionData }: Route.Componen
       </fieldset>}
       <Field><FieldLabel htmlFor="account-delete-confirmation">{m.account_delete_confirmation({ handle: loaderData.handle })}</FieldLabel><Input id="account-delete-confirmation" name="confirmation" required autoComplete="off" /></Field>
       <div className="flex gap-3"><Button type="submit" variant="destructive" disabled={pending}>{m.account_delete_confirm()}</Button><Link to="/settings" className="underline">{m.cancel()}</Link></div>
-    </SignedForm>
+    </Form>
   </main>;
 }

@@ -120,7 +120,7 @@ export default async function globalSetup(config: FullConfig) {
     throw new Error(`e2e seed failed:\n${seeded.stdout}\n${seeded.stderr}`);
   }
   console.log(`Browser fixtures seeded in ${((performance.now() - seedStarted) / 1000).toFixed(2)}s`);
-  const [invite, machineInvite, authInvite, moderationInvite, i18nInvite, questionsInvite, stancesInvite, glossaryInvite, scenarioInvite, scenarioOperatorInvite, followsInvite, mentionsInvite, discoveryAkiInvite, discoveryBenInvite, signingInvite, mcpInvite, mobileInvite, enrollmentInvite, languageInvite, navigationInvite, detectInvite, fallbackInvite, loginConfirmInvite, loginPromptInvite, loginUnsupportedInvite, loginCodeInvite, loginMcpInvite, loginFlowInvite, returnReaderInvite, returnWriterInvite, aiDraftInvite, loginPolishInvite, entryHeaderInvite, titleFirstInvite] = seeded.stdout.trim().split("\n").slice(-34);
+  const [invite, machineInvite, authInvite, moderationInvite, i18nInvite, questionsInvite, stancesInvite, glossaryInvite, scenarioInvite, scenarioOperatorInvite, followsInvite, mentionsInvite, discoveryAkiInvite, discoveryBenInvite, mcpInvite, mobileInvite, enrollmentInvite, languageInvite, navigationInvite, detectInvite, fallbackInvite, loginConfirmInvite, loginPromptInvite, loginUnsupportedInvite, loginCodeInvite, loginMcpInvite, loginFlowInvite, returnReaderInvite, returnWriterInvite, aiDraftInvite, loginPolishInvite, entryHeaderInvite, titleFirstInvite] = seeded.stdout.trim().split("\n").slice(-33);
 
   const out = fs.openSync(logFile, "a");
   const serverClock = path.join(dir, "server-clock.txt");
@@ -216,7 +216,7 @@ export default async function globalSetup(config: FullConfig) {
     throw error;
   }
 
-  fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify({ dir, baseURL, logFile, invite, machineInvite, authInvite, moderationInvite, i18nInvite, questionsInvite, stancesInvite, glossaryInvite, scenarioInvite, scenarioOperatorInvite, followsInvite, mentionsInvite, discoveryAkiInvite, discoveryBenInvite, signingInvite, mcpInvite, mobileInvite, enrollmentInvite, languageInvite, navigationInvite, detectInvite, fallbackInvite, loginConfirmInvite, loginPromptInvite, loginUnsupportedInvite, loginCodeInvite, loginMcpInvite, loginFlowInvite, returnReaderInvite, returnWriterInvite, aiDraftInvite, loginPolishInvite, entryHeaderInvite, titleFirstInvite }));
+  fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify({ dir, baseURL, logFile, invite, machineInvite, authInvite, moderationInvite, i18nInvite, questionsInvite, stancesInvite, glossaryInvite, scenarioInvite, scenarioOperatorInvite, followsInvite, mentionsInvite, discoveryAkiInvite, discoveryBenInvite, mcpInvite, mobileInvite, enrollmentInvite, languageInvite, navigationInvite, detectInvite, fallbackInvite, loginConfirmInvite, loginPromptInvite, loginUnsupportedInvite, loginCodeInvite, loginMcpInvite, loginFlowInvite, returnReaderInvite, returnWriterInvite, aiDraftInvite, loginPolishInvite, entryHeaderInvite, titleFirstInvite }));
   process.env.E2E_STATE = path.join(dir, "state.json");
 
   return async () => {

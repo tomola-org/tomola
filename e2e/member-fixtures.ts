@@ -8,14 +8,7 @@ export function aiDraftMember(repeatEachIndex = 0): SeedMember {
   return { email: `${handle}@example.com`, handle, homeArea: "ja", uiLocale: "en" };
 }
 
-export const SIGNING_MEMBER_FIXTURES = new Set([
-  "signer", "language_signer", "language_fallback", "trim_auth", "quit_signed_writer", "ux_signer",
-  "edit_version_topic_signed", "edit_version_reply_signed", "vtarget_signed_review",
-  "draft_autosave_personal_md", "draft_autosave_personal_rich", "lazy_autosave_signing",
-  "zwrite_signing_errors", "ai_import_signed", "ai_confirm_signed",
-  ...[1280, 390].flatMap(width => [`settings_signing_saved_${width}`, `settings_signing_rejected_${width}`]),
-]);
-export const AI_CONFIRMATION_CASES = ["editor", "preview", "native", "expired", "signed"] as const;
+export const AI_CONFIRMATION_CASES = ["editor", "preview", "native", "expired", "language", "network", "expired_login", "maintenance", "reload"] as const;
 
 export const LONG_SIGNUP_VILLAGE_NAME = `Signup ${"l".repeat(110)}`;
 
@@ -59,7 +52,7 @@ export const VILLAGE_MEMBER_FIXTURES: readonly SeedMember[] = [
   { email: "vfollow_owner@example.com", handle: "vfollow_owner", homeArea: "en", uiLocale: "en" },
   ...["quartz_browser_reader", "quartz_browser_author"].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "other" as const, readLangs: ["ja" as const], uiLocale: "ja" as const })),
   ...["vfollow_reader", "vfollow_nojs"].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "other" as const, readLangs: ["en" as const], uiLocale: "en" as const })),
-  ...["vpage_owner", "vtarget_serialized", "vtarget_signed_review"].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "en" as const, uiLocale: "en" as const })),
+  ...["vpage_owner", "vtarget_serialized"].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "en" as const, uiLocale: "en" as const })),
   { email: "vtarget_join@example.com", handle: "vtarget_join", homeArea: "other", uiLocale: "en" },
   ...["list", "edit", "form"].flatMap(scenario => [
     { email: `vtr_${scenario}_author@example.com`, handle: `vtr_${scenario}_author`, homeArea: "ja" as const, readLangs: ["ja" as const], uiLocale: "en" as const },
@@ -71,8 +64,7 @@ export const VILLAGE_MEMBER_FIXTURES: readonly SeedMember[] = [
   { email: "villages_suspended@example.com", handle: "villages_suspended", homeArea: "en", uiLocale: "en" },
 ];
 export const MEMBER_FIXTURES: readonly SeedMember[] = [
-  ...[...AI_CONFIRMATION_CASES.map(scenario => `ai_confirm_${scenario}`), "ai_import_signed", "zwrite_signing_errors",
-    ...[1280, 390].flatMap(width => [`settings_signing_saved_${width}`, `settings_signing_rejected_${width}`]),
+  ...[...AI_CONFIRMATION_CASES.map(scenario => `ai_confirm_${scenario}`), "ai_import_writer", "legacy_form_writer",
   ].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "en" as const, uiLocale: "en" as const })),
   ...["journey", "reminder", "queued", "native", "transport", "intro", "conflict", "review"].map(scenario => ({ email: `preview_${scenario}@example.com`, handle: `preview_${scenario}`, homeArea: "ja" as const, uiLocale: "en" as const })),
   { email: "login_methods_flow@example.com", handle: "login_methods_flow", homeArea: "ja", uiLocale: "ja" },
@@ -96,8 +88,8 @@ export const MEMBER_FIXTURES: readonly SeedMember[] = [
   ...["flow", "logout", "closed", "reconcile", "ready", "errors", "forms"].map(name => ({ email: `push_${name}@example.com`, handle: `push_${name}`, homeArea: "en" as const, uiLocale: "en" as const })),
   ...["ios", "android", "desktop", "installed", "settings", "login", "screens", "expanded", "failure"].map(name => ({ email: `install_guide_${name}@example.com`, handle: `install_guide_${name}`, homeArea: "ja" as const, uiLocale: "ja" as const })),
   ...["unlink_recover", "family_send", "family_discard", "retained_source", "detach_write", "blocked_new_send", "blocked_new_discard", "blocked_topic_send", "blocked_topic_discard", "blocked_draft_send", "blocked_draft_discard", "blocked_unlink", "navigation_failure", "base_open", "base_discard", "cleanup_topic_send", "cleanup_topic_discard", "cleanup_reply_send", "cleanup_reply_discard", "cleanup_draft_send", "cleanup_draft_discard"].map(scenario => ({ email: `older_fix1_${scenario}@example.com`, handle: `odf1_${scenario}`, homeArea: "en" as const, uiLocale: "en" as const })),
-  ...["new", "draft", "reply", "signing", "review_topic", "review_reply"].map(scenario => ({ email: `lazy_autosave_${scenario}@example.com`, handle: `lazy_autosave_${scenario}`, homeArea: "en" as const, uiLocale: "en" as const })),
-  ...["topic_plain", "reply_plain", "topic_signed", "reply_signed", "topic_native", "reply_native"].map(name => ({ email: `edit_version_${name}@example.com`, handle: `edit_version_${name}`, homeArea: "en" as const, uiLocale: "en" as const })),
+  ...["new", "draft", "reply", "publish_pending", "review_topic", "review_reply"].map(scenario => ({ email: `lazy_autosave_${scenario}@example.com`, handle: `lazy_autosave_${scenario}`, homeArea: "en" as const, uiLocale: "en" as const })),
+  ...["topic_plain", "reply_plain", "topic_native", "reply_native"].map(name => ({ email: `edit_version_${name}@example.com`, handle: `edit_version_${name}`, homeArea: "en" as const, uiLocale: "en" as const })),
   ...["base", "target", "forget", "swap", "open_conflict", "open", "drop", "multiple", "quota_open", "quota_recovery", "identity", "identity_other", "autosave_link", "autosave_early", "legacy_tab", "reload", "back_forward"].map(scenario => ({ email: `older_keep_${scenario}@example.com`, handle: `older_keep_${scenario}`, homeArea: "en" as const, uiLocale: "en" as const })),
   ...(["en", "ja"] as const).map(locale => ({ email: `wordmark_${locale}@example.com`, handle: `wordmark_${locale}`, homeArea: locale, uiLocale: locale })),
   { email: "reading_actions@example.com", handle: "reading_actions", homeArea: "en", readLangs: ["en"], uiLocale: "en" },
@@ -115,7 +107,6 @@ export const MEMBER_FIXTURES: readonly SeedMember[] = [
   ...["switch_a", "switch_b", "logout"].map(name => ({ email: `draft_owner_${name}@example.com`, handle: `draft_owner_${name}`, homeArea: "en" as const, uiLocale: "en" as const })),
   ...["create", "structure", "mobile"].map(name => ({ email: `rich_table_${name}@example.com`, handle: `rich_table_${name}`, homeArea: "en" as const, uiLocale: name === "mobile" ? "ja" as const : "en" as const })),
   ...["en", "ja", "fr"].map(locale => ({ email: `trim_labels_${locale}@example.com`, handle: `trim_labels_${locale}`, homeArea: "en" as const, uiLocale: "en" as const })),
-  { email: "trim_auth@example.com", handle: "trim_auth", homeArea: "en", uiLocale: "en" },
   ...["native_question", "native_post", "autosave"].map(name => ({ email: `asks_checkbox_${name}@example.com`, handle: `asks_checkbox_${name}`, homeArea: "en" as const, uiLocale: "en" as const })),
   ...["en", "ja"].flatMap(locale => ["author", "writer"].map(role => ({ email: `zrespond_${role}_${locale}@example.com`, handle: `zrespond_${role}_${locale}`, homeArea: locale as "en" | "ja", uiLocale: locale as "en" | "ja" }))),
   { email: "zrespond_recovery@example.com", handle: "zrespond_recovery", homeArea: "en", uiLocale: "en" },
@@ -148,7 +139,7 @@ export const MEMBER_FIXTURES: readonly SeedMember[] = [
   ...["guest", "member", "source"].map(name => ({ email: `card_${name}@example.com`, handle: `card_${name}`, homeArea: "en" as const, readLangs: name === "source" ? ["en" as const, "ja" as const] : ["en" as const], uiLocale: "en" as const })),
   ...["am_ui_writer", "am_ui_reader", "am_ui_mod", "am_guard_writer", "am_guard_reader", "am_guard_mod"].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "en" as const, readLangs: ["en" as const], uiLocale: "en" as const })),
   ...["navigation", "errors", "import", "settings", "toolbar", "preview", "translation", "passkey"].map(name => ({ email: `a11y_${name}@example.com`, handle: `a11y_${name}`, homeArea: "en" as const, uiLocale: "en" as const })),
-  ...["keep", "delete", "signed", "duplicate", "choose"].flatMap(scenario => ["writer", "reader"].map(role => ({ email: `quit_${scenario}_${role}@example.com`, handle: `quit_${scenario}_${role}`, homeArea: "en" as const, readLangs: ["en" as const], uiLocale: "en" as const }))),
+  ...["keep", "delete", "duplicate", "choose"].flatMap(scenario => ["writer", "reader"].map(role => ({ email: `quit_${scenario}_${role}@example.com`, handle: `quit_${scenario}_${role}`, homeArea: "en" as const, readLangs: ["en" as const], uiLocale: "en" as const }))),
   { email: "front_editor@example.com", handle: "front_editor", homeArea: "en", uiLocale: "en" },
   ...["topic", "native", "edit", "locale", "prefill", "rich"].map(suffix => ({ email: `safety_fix_${suffix}@example.com`, handle: `safety_fix_${suffix}`, homeArea: "en" as const, uiLocale: "en" as const })),
   { email: "lang_corrector@example.com", handle: "lang_corrector", homeArea: "ja", readLangs: ["ja"], uiLocale: "en" },
@@ -204,11 +195,10 @@ export const MEMBER_FIXTURES: readonly SeedMember[] = [
   {"email": "rina@example.com", "handle": "rina", "homeArea": "ja", "uiLocale": "en"},
   {"email": "stance-ben@example.com", "handle": "stance_ben", "homeArea": "en", "uiLocale": "en", "readLangs": ["en", "ja"]},
   {"email": "earlywriter@example.com", "handle": "earlywriter", "homeArea": "en", "uiLocale": "en"},
-  {"email": "signer@example.com", "handle": "signer", "homeArea": "en", "uiLocale": "en"},
   {"email": "mcp@example.com", "handle": "mcp_member", "homeArea": "en", "uiLocale": "en"},
   {"email": "mobile@example.com", "handle": "mobile_ui", "homeArea": "ja", "uiLocale": "en"},
   {"email": "language@example.com", "handle": "language_reader", "homeArea": "ja", "uiLocale": "en"},
-  {"email": "language_signer@example.com", "handle": "language_signer", "homeArea": "ja", "uiLocale": "en"},
+  {"email": "language_writer@example.com", "handle": "language_writer", "homeArea": "ja", "uiLocale": "en"},
   ...Array.from({ length: Number(process.env.E2E_REPEAT_EACH ?? 1) }, (_, index) => aiDraftMember(index)),
   {"email": "ai_open_return@example.com", "handle": "ai_open_return", "homeArea": "en", "uiLocale": "en"},
   {"email": "discussion_reader@example.com", "handle": "discussion_reader", "homeArea": "en", "uiLocale": "en"},
@@ -286,7 +276,6 @@ export const MEMBER_FIXTURES: readonly SeedMember[] = [
   {"email": "twig_nojs@example.com", "handle": "twig_nojs", "homeArea": "en", "uiLocale": "en"},
   {"email": "twig_restore@example.com", "handle": "twig_restore", "homeArea": "en", "uiLocale": "en"},
   {"email": "twig_early@example.com", "handle": "twig_early", "homeArea": "en", "uiLocale": "en"},
-  {"email": "ux_signer@example.com", "handle": "ux_signer", "homeArea": "en", "uiLocale": "en"},
   {"email": "ux_reporter@example.com", "handle": "ux_reporter", "homeArea": "en", "uiLocale": "en"},
   {"email": "ux_author@example.com", "handle": "ux_author", "homeArea": "en", "uiLocale": "en"},
   {"email": "ux_reply@example.com", "handle": "ux_reply", "homeArea": "en", "uiLocale": "en"},

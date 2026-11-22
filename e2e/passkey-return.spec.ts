@@ -3,7 +3,7 @@ import path from "node:path";
 import { expect } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { captureScreenshot, clientHeaders, enMessages as m, openUserMenu, reverifyWithEmailCode, state, useMember, waitForClientRoute } from "./helpers";
-import { addSettingsPasskey, enableSigningAuthenticator } from "./signing-helper";
+import { addSettingsPasskey, enablePasskeyAuthenticator } from "./passkey-helper";
 
 const clock = () => path.join(state().dir, "server-clock.txt");
 
@@ -27,7 +27,7 @@ for (const target of ["home", "settings"] as const) {
     });
     try {
       const page = await context.newPage();
-      const authenticator = await enableSigningAuthenticator(page);
+      const authenticator = await enablePasskeyAuthenticator(page);
       await useMember(page, email);
       fs.writeFileSync(clock(), String(90_000_000));
       const destination = target === "home" ? "/?lang=en" : "/settings?returnTo=%2Ffollowing#settings-passkeys";
@@ -80,7 +80,7 @@ for (const condition of ["stale", "deferred", "existing"] as const) {
     const context = await browser.newContext({ extraHTTPHeaders: clientHeaders(`10.31.2.${["stale", "deferred", "existing"].indexOf(condition) + 1}`) });
     try {
       const page = await context.newPage();
-      await enableSigningAuthenticator(page);
+      await enablePasskeyAuthenticator(page);
       await useMember(page, `pkreturn_${condition}@example.com`);
       await waitForClientRoute(page);
       if (condition === "deferred") {
@@ -117,7 +117,7 @@ test("dismissing the home notice while the return loads prevents registration", 
   const gate = new Promise<void>(resolve => { release = resolve; });
   try {
     const page = await context.newPage();
-    await enableSigningAuthenticator(page);
+    await enablePasskeyAuthenticator(page);
     await useMember(page, "pkreturn_defer_loading@example.com");
     await waitForClientRoute(page);
     let loading!: () => void;

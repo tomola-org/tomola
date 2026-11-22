@@ -2,7 +2,7 @@ import { markdownFixture, SLOW_MARKDOWN } from "./helpers/markdown-fixture";
 import { and, asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createAppeal, decideAppeal, getAppealableAction, listOpenAppeals } from "~/lib/appeals.server";
-import { entries, entryRevisions, jobs, moderationActions, notifications, profiles, rateLimits, segments, stances } from "~/lib/db/schema";
+import { entries, entryRevisions, jobs, memberSignatures, moderationActions, notifications, profiles, rateLimits, segments, signingChallenges, stances } from "~/lib/db/schema";
 import { readDistributions } from "~/lib/distribution.server";
 import { createReply, createTopic, getEditableEntry, getThread, softDeleteEntry } from "~/lib/entries.server";
 import { EMBED_JOB } from "~/lib/embeddings.server";
@@ -233,8 +233,9 @@ describe("the edit form of a fix", () => {
     const rates = () => h.db.select().from(rateLimits).where(eq(rateLimits.key, `member:edit:${jamod}`));
     const before = await row(id);
     const rateBefore = await rates();
-    const form = { title: "訂正した題", body: before.body, note: "誤字を直した", sourceHash: await hashOf(id) };
-    const send = () => h.outcome(async () => action(await h.signedArgs(h.request(path, { as: "jamod", form }), { id: String(id) })));
+    const form = { title: "訂正した題", body: before.body, note: "誤字を直した", sourceHash: await hashOf(id), signatureAssertion: "obsolete" };
+    await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, jamod));
+    const send = () => h.outcome(async () => action(h.args(h.request(path, { as: "jamod", form }), { id: String(id) })));
     await withStaleSession(h, "jamod", async () => {
       expectModerationReauthentication(await send(), path);
       expect(await row(id)).toEqual(before);
@@ -243,11 +244,14 @@ describe("the edit form of a fix", () => {
       expect(await rates()).toEqual(rateBefore);
     });
     expect(await send()).toMatchObject({ status: 302, location: `/t/${id}` });
+    expect(await row(id)).toMatchObject({ title: form.title });
+    expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.userId, jamod))).toEqual([]);
+    expect(await h.db.select().from(signingChallenges).where(eq(signingChallenges.userId, jamod))).toEqual([]);
   });
   const titleTag = (html: string) => html.match(/<input\b[^>]*\bname="title"[^>]*>/)?.[0] ?? "";
   const drawn = async (id: number, as: string) => {
     const mod = await import("~/routes/topic-edit");
-    const loaderData = await mod.loader(await h.signedArgs(h.request(`/t/${id}/edit`, { as }), { id: String(id) }));
+    const loaderData = await mod.loader(h.args(h.request(`/t/${id}/edit`, { as }), { id: String(id) }));
     return { loaderData, html: await renderInRouter(() => routeElement(mod.default, { loaderData }), `/t/${id}/edit`) };
   };
 
@@ -372,10 +376,10 @@ describe("an appeal against a fix", () => {
     expect((await listOpenAppeals(h.db, { id: bob, scope: { operator: false, langs: [] } })).cards).toEqual([]);
     // the pages carry it too
     const appealRoute = await import("~/routes/appeal");
-    const page = (await (appealRoute.loader as (a: never) => unknown)(await h.signedArgs(h.request(`/appeal/${done.actionId}`, { as: "hana" }), { actionId: String(done.actionId) }))) as { before: unknown };
+    const page = (await (appealRoute.loader as (a: never) => unknown)(h.args(h.request(`/appeal/${done.actionId}`, { as: "hana" }), { actionId: String(done.actionId) }))) as { before: unknown };
     expect(page.before).toEqual({ title: "元の題", body: "元の本文です。" });
     const modRoute = await import("~/routes/mod-appeals");
-    const modPage = (await (modRoute.loader as (a: never) => unknown)(await h.signedArgs(h.request("/mod/appeals", { as: "enmod" })))) as { cards: Array<{ id: number; before: unknown }> };
+    const modPage = (await (modRoute.loader as (a: never) => unknown)(h.args(h.request("/mod/appeals", { as: "enmod" })))) as { cards: Array<{ id: number; before: unknown }> };
     expect(modPage.cards.find((c) => c.id === appeal.id)?.before).toEqual({ title: "元の題", body: "元の本文です。" });
     // hide and delete: no before (neither on the author's side nor on the card)
     const hidden = await createReply(h.db, bob, q, { lang: "en", body: "A reply that gets hidden." }, { now: t(82) });
@@ -455,7 +459,7 @@ describe("an appeal against a fix", () => {
     const modRoute = await import("~/routes/mod-appeals");
     const second = await createAppeal(h.db, author, b.actionId, "B is wrong", { now: t(114) });
     if (!second.ok) throw new Error("appeal failed");
-    const decided = await h.outcome(async () => (modRoute.action as (a: never) => unknown)(await h.signedArgs(h.request("/mod/appeals", { as: "enmod", form: { appealId: String(second.id), intent: "overturn", note: "B was wrong" } }))));
+    const decided = await h.outcome(async () => (modRoute.action as (a: never) => unknown)(h.args(h.request("/mod/appeals", { as: "enmod", form: { appealId: String(second.id), intent: "overturn", note: "B was wrong" } }))));
     expect(decided).toMatchObject({ status: 302, location: "/mod/appeals?done=overturned" });
     // B's put-back works (it is the newest), and puts back what B replaced: A's text (A itself stays unreversed)
     expect(await row(q)).toMatchObject({ title: "Aの題" });
@@ -509,7 +513,7 @@ describe("who sees that a question is locked", () => {
     // UI: eligible correctors receive canFix, the locked-question entry point; the author receives locked. Others receive neither. No data includes the timestamp.
     const topicRoute = await import("~/routes/topic");
     type Page = { question: { locked: boolean; canFix: boolean } };
-    const load = async (as: string) => (await (topicRoute.loader as (a: never) => unknown)(await h.signedArgs(h.request(`/t/${q}`, { as }), { id: String(q) }))) as Page;
+    const load = async (as: string) => (await (topicRoute.loader as (a: never) => unknown)(h.args(h.request(`/t/${q}`, { as }), { id: String(q) }))) as Page;
     const pages = { hana: await load("hana"), jamod: await load("jamod"), enmod: await load("enmod"), bob: await load("bob") };
     expect(pages.hana.question).toMatchObject({ locked: true, canFix: false });
     expect(pages.jamod.question).toMatchObject({ locked: false, canFix: true });
@@ -518,9 +522,9 @@ describe("who sees that a question is locked", () => {
     for (const page of Object.values(pages)) expect(JSON.stringify(page)).not.toContain(stanceTimeIso.slice(0, 19));
     // Form: the assigned moderator can submit with an explanation and return to the question page; a missing explanation returns 400.
     const editRoute = await import("~/routes/topic-edit");
-    const send = (form: Record<string, string>) => h.outcome(async () => (editRoute.action as (a: never) => unknown)(await h.signedArgs(h.request(`/t/${q}/edit`, { as: "jamod", form }), { id: String(q) })));
+    const send = (form: Record<string, string>) => h.outcome(async () => (editRoute.action as (a: never) => unknown)(h.args(h.request(`/t/${q}/edit`, { as: "jamod", form }), { id: String(q) })));
     // the form carries the base: the loader hands the moderator the hash of the text the form was opened on (and the author's locked page none)
-    const editLoad = async (as: string) => (await (editRoute.loader as (a: never) => unknown)(await h.signedArgs(h.request(`/t/${q}/edit`, { as }), { id: String(q) }))) as { sourceHash: string | null; fix: boolean; locked: boolean };
+    const editLoad = async (as: string) => (await (editRoute.loader as (a: never) => unknown)(h.args(h.request(`/t/${q}/edit`, { as }), { id: String(q) }))) as { sourceHash: string | null; fix: boolean; locked: boolean };
     const opened = await editLoad("jamod");
     expect(opened).toMatchObject({ fix: true, sourceHash: (await row(q)).sourceHash });
     expect(await editLoad("hana")).toMatchObject({ locked: true, sourceHash: null });
@@ -534,7 +538,7 @@ describe("who sees that a question is locked", () => {
     expect((stale.value as { data: Record<string, unknown> }).data).toEqual({ error: "invalid_state", fix: true, values: undefined });
     expect(await row(q)).toMatchObject({ title: "画面から直した題", body: "画面から直した本文。" });
     // An ordinary member receives 403.
-    const asBob = await h.outcome(async () => (editRoute.action as (a: never) => unknown)(await h.signedArgs(h.request(`/t/${q}/edit`, { as: "bob", form: { title: "x", body: "y", note: "n", sourceHash: opened.sourceHash! } }), { id: String(q) })));
+    const asBob = await h.outcome(async () => (editRoute.action as (a: never) => unknown)(h.args(h.request(`/t/${q}/edit`, { as: "bob", form: { title: "x", body: "y", note: "n", sourceHash: opened.sourceHash! } }), { id: String(q) })));
     expect(asBob.status).toBe(403);
     expect((await h.db.select().from(entries).where(and(eq(entries.id, q))))[0].title).toBe("画面から直した題");
   });

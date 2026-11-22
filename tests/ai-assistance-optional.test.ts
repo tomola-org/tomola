@@ -91,9 +91,9 @@ describe("the services: ai_assistance is optional", () => {
 });
 
 describe("writing on screen states no ai_assistance", () => {
-  const newTopic = async (fields: Record<string, string>) => h.outcome(async () => (await import("~/routes/topic-new")).action(await h.signedArgs(h.request("/t/new", { as: "hana", form: fields }))));
+  const newTopic = async (fields: Record<string, string>) => h.outcome(async () => (await import("~/routes/topic-new")).action(h.args(h.request("/t/new", { as: "hana", form: fields }))));
   const replyTo = async (topicId: number, fields: Record<string, string>) =>
-    h.outcome(async () => (await import("~/routes/topic")).action(await h.signedArgs(h.request(`/t/${topicId}`, { as: "hana", form: fields }), { id: String(topicId) })));
+    h.outcome(async () => (await import("~/routes/topic")).action(h.args(h.request(`/t/${topicId}`, { as: "hana", form: fields }), { id: String(topicId) })));
 
   it("a new topic and a reply from the forms store NULL, and a posted aiAssistance field is not read", async () => {
     expect((await newTopic({ title: "screen topic", body: "Hello.", lang: "ja" })).status).toBe(302);
@@ -125,14 +125,14 @@ describe("writing on screen states no ai_assistance", () => {
     const created = await apiDraft(md("type: topic\ntitle: api draft\nlang: en\nai_assistance: coauthor"));
     expect(created.status).toBe(201);
     const page = await import("~/routes/draft");
-    const act = (id: number, form: Record<string, string>) => h.outcome(async () => page.action(await h.signedArgs(h.request(`/drafts/${id}`, { as: "hana", form }), { id: String(id) })));
+    const act = (id: number, form: Record<string, string>) => h.outcome(async () => page.action(h.args(h.request(`/drafts/${id}`, { as: "hana", form }), { id: String(id) })));
     // Saving from the draft page (which has no such field) leaves the value alone; a posted aiAssistance is not read.
     expect((await act(created.id, { intent: "save", version: "1", title: "api draft", body: "Edited.", lang: "en", aiAssistance: "none" })).status).toBe(200);
     expect((await getDraft(h.db, h.ids.hana, created.id))?.aiAssistance).toBe("coauthor");
     const path = `/drafts/${created.id}`;
     const fields = { intent: "publish", version: "2", title: "api draft", body: "Edited.", lang: "en" };
-    const { previewSignedWrite } = await import("~/lib/signing.server");
-    const { confirmation } = await previewSignedWrite(h.db, h.ids.hana, path, await h.request(path, { form: fields }).formData());
+    const { previewDraftPublication } = await import("~/lib/signing.server");
+    const { confirmation } = await previewDraftPublication(h.db, h.ids.hana, path, await h.request(path, { form: fields }).formData());
     expect((await act(created.id, { ...fields, confirmation: confirmation! })).status).toBe(302);
     expect(await stored("api draft")).toMatchObject({ aiAssistance: "coauthor", via: "api", body: "Edited." });
     expect((await act(screenDraft.id, { intent: "publish", version: String(screenDraft.version), title: "screen draft", body: "Draft.", lang: "ja" })).status).toBe(302);

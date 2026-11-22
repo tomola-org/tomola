@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
-import { entries, nushiRequests, profiles, reports, villageMembers, villages } from "~/lib/db/schema";
+import { entries, nushiRequests, reports, villageMembers, villages } from "~/lib/db/schema";
 import { createTopic } from "~/lib/entries.server";
 import { action } from "~/routes/topic";
 import { action as newTopic } from "~/routes/topic-new";
@@ -12,7 +12,6 @@ beforeAll(async () => {
   h = await setupRouteHarness();
   await h.signIn("dispatch_writer");
   await h.signIn("dispatch_reader");
-  await h.db.update(profiles).set({ signPosts: false }).where(eq(profiles.userId, h.ids.dispatch_writer));
   const topic = await createTopic(h.db, h.ids.dispatch_writer, { title: "Dispatch", body: "Body", lang: "ja" });
   if (!topic.ok) throw new Error(topic.error);
   id = topic.id;

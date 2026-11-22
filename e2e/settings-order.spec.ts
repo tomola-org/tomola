@@ -2,9 +2,7 @@ import { openTranslationSettings } from "./helpers";
 import { LANG_LABELS } from "../app/lib/languages";
 import { expect, type BrowserContext, type Page, type Route } from "@playwright/test";
 import { test } from "./editor-fixture";
-import { SIGNATURE_ASSERTION_FIELD, SIGNATURE_CHALLENGE_FIELD } from "../app/lib/signing";
 import { captureScreenshot, useMember, waitForClientRoute, clientHeaders, enMessages as en, formatMessage } from "./helpers";
-import { acceptSignedWrite, installSeededSigningKey } from "./signing-helper";
 
 test.describe.configure({ mode: "serial" });
 let context: BrowserContext;
@@ -115,7 +113,7 @@ test("advanced section fragments open on arrival and after hash changes", async 
   await expect(page.locator("#settings-share")).toBeInViewport();
 });
 
-test("AI-link revocation and rejected signature changes preserve their own disclosures", async ({ browser }) => {
+test("AI-link revocation opens its own disclosure", async ({ browser }) => {
   const native = await browser.newContext({
     locale: "en-US", javaScriptEnabled: true,
     storageState: await context.storageState(), extraHTTPHeaders: clientHeaders("10.26.63.3"),
@@ -129,20 +127,6 @@ test("AI-link revocation and rejected signature changes preserve their own discl
     await expect(nativePage).toHaveURL(url => url.pathname === "/settings" && url.searchParams.get("saved") === "ai-links" && url.hash === "#settings-links");
     await expect(nativePage.locator("#settings-links")).toHaveAttribute("open");
     await expect(nativePage.locator("#settings-links").getByRole("status")).toBeInViewport();
-    for (const saved of ["sign-posts"]) {
-      const response = await nativePage.request.get(`/settings?saved=${saved}`);
-      const tag = (await response.text()).match(/<details\b[^>]*\bid="settings-advanced"[^>]*>/)?.[0];
-      expect(tag).toMatch(/\bopen(?:=|[\s>])/);
-    }
-    const error = await nativePage.request.post("/settings", {
-      form: { intent: "sign-posts", signPosts: "1" },
-      headers: { origin: new URL(nativePage.url()).origin },
-    });
-    expect(error.status()).toBe(409);
-    expect(error.headers()["content-type"]).toContain("text/html");
-    const errorHtml = await error.text();
-    expect(errorHtml.match(/<details\b[^>]*\bid="settings-advanced"[^>]*>/)?.[0]).toMatch(/\bopen(?:=|[\s>])/);
-    expect(errorHtml).toContain('role="alert"');
     await nativePage.goto("/settings#settings-share");
     await waitForClientRoute(nativePage);
     await expect(nativePage.locator("#settings-advanced > summary")).toBeVisible();
@@ -150,71 +134,3 @@ test("AI-link revocation and rejected signature changes preserve their own discl
     await native.close();
   }
 });
-
-for (const width of [1280, 390]) {
-  test(`signing saves return to their section with feedback in view at width ${width}`, async ({ page }, testInfo) => {
-    await page.setViewportSize({ width, height: 844 });
-    await page.setExtraHTTPHeaders(clientHeaders(width === 1280 ? "10.26.63.4" : "10.26.63.5"));
-    const email = `settings_signing_saved_${width}@example.com`;
-    await useMember(page, email, "/settings#settings-signing");
-    await installSeededSigningKey(page, email);
-    await expect(page.locator("#settings-advanced")).toHaveAttribute("open");
-    const signing = page.locator("#settings-signing");
-    const signingAction = new URL((await signing.locator("form").getAttribute("action"))!, page.url());
-    expect(signingAction.pathname).toBe("/settings"); expect(signingAction.hash).toBe("#settings-signing");
-    await signing.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true }).uncheck();
-    await signing.getByRole("button", { name: en.save_changes, exact: true }).click();
-    await acceptSignedWrite(page);
-    await expect(page).toHaveURL(url => url.pathname === "/settings" && url.searchParams.get("saved") === "sign-posts" && url.hash === "#settings-signing");
-    await expect(page.locator("#settings-advanced")).toHaveAttribute("open");
-    await expect(signing.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true })).toHaveCount(0);
-    await expect(signing.getByRole("status")).toContainText(en.settings_saved);
-    await expect(signing.getByRole("status")).toBeInViewport({ ratio: 1 });
-    await captureScreenshot(page, { path: testInfo.outputPath(`signing-saved-${width}.png`) }, "e2e-settings-order");
-  });
-
-  test(`a rejected signing save opens its section with feedback in view at width ${width}`, async ({ page }, testInfo) => {
-    await page.setViewportSize({ width, height: 844 });
-    await page.setExtraHTTPHeaders(clientHeaders(width === 1280 ? "10.26.63.6" : "10.26.63.7"));
-    const email = `settings_signing_rejected_${width}@example.com`;
-    await useMember(page, email, "/settings");
-    await installSeededSigningKey(page, email);
-    await page.locator("#settings-advanced > summary").click();
-    const signing = page.locator("#settings-signing");
-    await signing.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true }).uncheck();
-    let release!: () => void;
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    const rejectUnsigned = async (route: Route) => {
-      const form = new URLSearchParams(route.request().postData() ?? "");
-      if (route.request().method() !== "POST" || form.get("intent") !== "sign-posts") return route.continue();
-      // Exercise the real server's rejection after the user has moved away from the section.
-      form.delete(SIGNATURE_ASSERTION_FIELD);
-      form.delete(SIGNATURE_CHALLENGE_FIELD);
-      await gate;
-      await route.continue({ postData: form.toString() });
-    };
-    await page.route("**/settings.data*", rejectUnsigned);
-    try {
-      const response = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/settings.data");
-      await signing.getByRole("button", { name: en.save_changes, exact: true }).click();
-      await acceptSignedWrite(page);
-      await page.evaluate(() => {
-        (document.getElementById("settings-advanced") as HTMLDetailsElement).open = false;
-        window.scrollTo(0, 0);
-      });
-      release();
-      expect((await response).status()).toBe(403);
-      await expect(page).toHaveURL(url => url.pathname === "/settings" && url.hash === "");
-      await expect(page.locator("#settings-advanced")).toHaveAttribute("open");
-      await expect(signing.getByRole("alert")).toHaveText(en.signing_failed);
-      await expect(signing.getByRole("alert")).toBeInViewport({ ratio: 1 });
-      await captureScreenshot(page, { path: testInfo.outputPath(`signing-rejected-${width}.png`) }, "e2e-settings-order");
-      await page.reload();
-      await page.locator("#settings-advanced > summary").click();
-      await expect(signing.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true })).toBeChecked();
-    } finally {
-      release();
-      await page.unroute("**/settings.data*", rejectUnsigned);
-    }
-  });
-}

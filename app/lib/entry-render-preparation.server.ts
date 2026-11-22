@@ -41,7 +41,7 @@ export async function renderEntryForWrite(prepared: PreparedEntryRender, input: 
   return renderEntryHtml(input.kind, input.id, input.body, input.lang, mentions);
 }
 
-// An outer signing/draft transaction may observe a newer draft than preparation.
+// An outer write transaction may observe a newer draft than preparation.
 // Reuse its reserved id once for the same kind, but discard stale render caches.
 // Timers and other callbacks retain the scope after the original write completes.
 export function activeEntryRender(input: Pick<Input, "kind" | "id">): PreparedEntryRender | undefined {

@@ -10,7 +10,7 @@ type RequiredMethod = "remaining" | "passkey";
 
 export async function loginReauthentication(db: Db, userId: string, sessionId: string | undefined, required?: RequiredMethod, now = new Date()) {
   if (!sessionId) return null;
-  const [row] = await db.select({ reauthenticatedAt: session.reauthenticatedAt, reauthenticationMethod: session.reauthenticationMethod, email: user.email, signPosts: profiles.signPosts, passkeyOnly: profiles.passkeyOnly }).from(session)
+  const [row] = await db.select({ reauthenticatedAt: session.reauthenticatedAt, reauthenticationMethod: session.reauthenticationMethod, email: user.email, passkeyOnly: profiles.passkeyOnly }).from(session)
     .innerJoin(user, eq(user.id, session.userId)).innerJoin(profiles, eq(profiles.userId, user.id))
     .where(and(eq(session.id, sessionId), eq(session.userId, userId), gt(session.expiresAt, now), gt(session.createdAt, new Date(now.getTime() - RETENTION.sessionAbsoluteDays * DAY_MS))));
   if (!row) return null;

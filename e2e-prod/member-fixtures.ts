@@ -2,6 +2,8 @@ import { ARTICLE_AUTHOR, ARTICLE_OPERATOR, ARTICLE_RESTRICTED, ARTICLE_SUSPENDED
 import type { SeedMember } from "../e2e/member-fixtures";
 import { EARLY_MEMBERS } from "../e2e/early-members";
 
+export const FRENCH_DRAFT = "Nous avons une place pour les personnes qui veulent partager leurs idées avec les autres.";
+
 export const PROD_MEMBERS: readonly SeedMember[] = [
   { email: "motion_prod@example.com", handle: "motion_prod", homeArea: "en", uiLocale: "en" },
   { email: "motion_reduced_prod@example.com", handle: "motion_reduced_prod", homeArea: "en", uiLocale: "en" },

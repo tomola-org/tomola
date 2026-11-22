@@ -56,7 +56,7 @@ async function handle(request: Request) {
       if (key) return db.transaction(async tx => {
         await lockSigningMember(tx, key.userId);
         await tx.select({ id: passkey.id }).from(passkey).where(eq(passkey.credentialID, credentialId as string)).for("update");
-        // Use this transaction's adapter: the login counter cannot race with signing or registration on another connection.
+        // Use this transaction's adapter: the login counter cannot race with another assertion or registration on another connection.
         const options = auth.options;
         if (typeof options.baseURL !== "string" || typeof options.secret !== "string") throw new Error("Passkey login requires an explicit origin and secret");
         return createAppAuth(tx, { baseURL: options.baseURL, secret: options.secret, mailer: getMailer }).handler(request);

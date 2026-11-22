@@ -5,18 +5,17 @@ import { Button } from "~/components/ui/button";
 import { SigningChanges, SigningLastEditor } from "~/components/signing-changes";
 import { languageLabel } from "~/lib/language-label";
 import { isLang, LANG_LABELS } from "~/lib/languages";
-import type { SigningContent, SigningOperation, SigningPreview } from "~/lib/signing";
+import type { SigningContent, SigningPreview } from "~/lib/signing";
 import { useEnabledLangs } from "~/lib/use-enabled-langs";
 import { postingVillageName } from "~/lib/village-name";
 import { m } from "~/paraglide/messages.js";
 
 const SourceLanguageNotice = lazy(() => import("./source-language-notice"));
 
-export default function SigningReview({ preview, fixedSigningContent, busy, canSign, feedback, changeLanguage, accept }: {
+export default function DraftConfirmationReview({ preview, fixedContent, busy, feedback, changeLanguage, accept }: {
   preview: SigningPreview;
-  fixedSigningContent?: boolean;
+  fixedContent?: boolean;
   busy: boolean;
-  canSign: boolean;
   feedback: ReactNode;
   changeLanguage: (lang: string) => Promise<void>;
   accept: () => void;
@@ -25,18 +24,18 @@ export default function SigningReview({ preview, fixedSigningContent, busy, canS
   return <DialogContent showCloseButton={false} aria-label={m.signing_heading()} className="top-4 bottom-4 start-4 end-4 ms-auto me-auto flex h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-3xl translate-x-0 rtl:translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded border p-0 sm:max-w-3xl">
     <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
       <DialogTitle className="text-xl font-semibold">{m.signing_heading()}</DialogTitle>
-      <p>{preview.signatureRequired ? m.signing_intro() : m.confirm_ai_draft_intro()}</p>
+      <p>{m.confirm_ai_draft_intro()}</p>
       {preview.village && <div className="space-y-1" data-signing-village><p>{postingVillageName(preview.village, preview.village.slug?.slice(1) ?? null)}</p><p>{m.village_public_reach()}</p></div>}
       <SigningLastEditor editor={preview.lastEditor} />
       {preview.content.lang && <div className="flex min-w-0 flex-wrap items-center gap-2">
         <p>{(preview.language?.source === "detected" ? m.original_lang_detected : preview.language?.source === "default" ? m.original_lang_default : m.original_lang)({ lang: preview.content.lang === "other" ? languageLabel("other", preview.language?.langCode) : isLang(preview.content.lang) ? LANG_LABELS[preview.content.lang] : preview.content.lang })}</p>
-        {!fixedSigningContent && ["create-topic", "create-reply", "publish-draft"].includes(preview.operation) && <Select value={enabled.some(lang => lang === preview.content.lang) ? preview.content.lang : "other"} items={[...enabled.map(lang => ({ value: lang, label: <span lang={lang}>{LANG_LABELS[lang]}</span> })), { value: "other", label: m.source_language_other() }]} disabled={busy} onValueChange={lang => { if (lang !== null) void changeLanguage(lang); }}>
+        {!fixedContent && <Select value={enabled.some(lang => lang === preview.content.lang) ? preview.content.lang : "other"} items={[...enabled.map(lang => ({ value: lang, label: <span lang={lang}>{LANG_LABELS[lang]}</span> })), { value: "other", label: m.source_language_other() }]} disabled={busy} onValueChange={lang => { if (lang !== null) void changeLanguage(lang); }}>
           <SelectTrigger aria-label={m.field_lang()} className="max-w-full"><SelectValue /></SelectTrigger>
           <SelectContent>{enabled.map(lang => <SelectItem key={lang} value={lang}><span lang={lang}>{LANG_LABELS[lang]}</span></SelectItem>)}<SelectItem value="other">{m.source_language_other()}</SelectItem></SelectContent>
         </Select>}
       </div>}
       {preview.content.lang && !enabled.some(lang => lang === preview.content.lang) && <Suspense fallback={null}><SourceLanguageNotice lang={preview.content.lang} langCode={preview.language?.langCode} /></Suspense>}
-      {!fixedSigningContent && preview.language?.source === "explicit" && preview.language.detected && preview.language.detected !== preview.content.lang && ["create-topic", "create-reply", "publish-draft"].includes(preview.operation) && <div>
+      {!fixedContent && preview.language?.source === "explicit" && preview.language.detected && preview.language.detected !== preview.content.lang && <div>
         <p>{m.original_lang_mismatch({ detected: languageLabel(preview.language.detected, preview.language.langCode) })}</p>
         <Button variant="outline" type="button" disabled={busy} onClick={() => void changeLanguage(preview.language!.detected!)}>{m.original_lang_change({ detected: languageLabel(preview.language.detected, preview.language.langCode) })}</Button>
       </div>}
@@ -49,19 +48,11 @@ export default function SigningReview({ preview, fixedSigningContent, busy, canS
     <div className="sticky bottom-0 shrink-0 space-y-2 border-t bg-popover p-4">
       {feedback}
       <div className="flex flex-wrap gap-3">
-        <Button type="button" variant={["remove-passkey", "delete-account"].includes(preview.operation) ? "destructive" : "default"} onClick={accept} disabled={busy || preview.signatureRequired && !canSign}>{preview.signatureRequired ? signingAcceptLabel(preview.operation) : m.confirm_publish()}</Button>
+        <Button type="button" onClick={accept} disabled={busy}>{m.confirm_publish()}</Button>
         <DialogClose render={<Button variant="outline" type="button" disabled={busy} />}>{m.cancel()}</DialogClose>
       </div>
     </div>
   </DialogContent>;
-}
-
-function signingAcceptLabel(operation: SigningOperation): string {
-  if (operation === "create-topic") return m.signing_accept_post();
-  if (operation === "create-reply") return m.signing_accept_reply();
-  if (operation === "publish-draft") return m.signing_accept_publish();
-  if (operation === "remove-passkey" || operation === "delete-account") return m.signing_accept_remove();
-  return m.signing_accept_save();
 }
 
 function SigningTarget({ content, label, href }: { content: SigningContent; label: string; href: string }) {

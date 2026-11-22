@@ -19,8 +19,8 @@ let introId: number;
 let plainId: number;
 let questionId: number;
 let replyId: number;
-let signedId: number;
-let signedQuestionId: number;
+let introOwnerTopicId: number;
+let introOwnerQuestionId: number;
 let foreignId: number;
 const now = new Date("2026-10-05T00:00:00Z");
 const must = <T extends { ok: boolean }>(result: T): Extract<T, { ok: true }> => {
@@ -39,26 +39,25 @@ const pageData = async (as = "reader_member", handle = "author_member", suffix =
   return value;
 };
 const renderPage = (loaderData: PageData, path = pagePath()) => renderInRouter(() => routeElement(MemberPage, { loaderData }), path);
-const selected = async (handle = "signed_member") => (await h.db.select({ id: profiles.introEntryId }).from(profiles).where(eq(profiles.userId, h.ids[handle])))[0].id;
-const selectIntro = (id: number, intent: "intro-set" | "intro-unset", as = "signed_member", headers?: Record<string, string>) =>
+const selected = async (handle = "intro_member") => (await h.db.select({ id: profiles.introEntryId }).from(profiles).where(eq(profiles.userId, h.ids[handle])))[0].id;
+const selectIntro = (id: number, intent: "intro-set" | "intro-unset", as = "intro_member", headers?: Record<string, string>) =>
   h.outcome(() => topicAction(h.args(h.request(`/t/${id}`, { as, form: { intent }, headers }), { id: String(id) })));
 
 beforeAll(async () => {
   h = await setupRouteHarness();
   await h.signIn("author_member", { homeArea: "ja", readLangs: ["ja", "de"] });
   await h.signIn("reader_member", { homeArea: "en", readLangs: ["en"] });
-  await h.signIn("signed_member");
+  await h.signIn("intro_member");
   await h.signIn("renamed_member");
   await h.signIn("expired_member");
   await h.signIn("onboarding_member", { profile: false });
   introId = must(await createTopic(h.db, h.ids.author_member, { lang: "ja", body: "Introduction secret-free body." }, { asIntroduction: true })).id;
   plainId = must(await createTopic(h.db, h.ids.author_member, { lang: "ja", title: "Plain topic", body: "Plain body." })).id;
   questionId = must(await createTopic(h.db, h.ids.author_member, { lang: "ja", title: "A question", body: "Question body.", asksStance: true })).id;
-  replyId = must(await createReply(h.db, h.ids.signed_member, plainId, { lang: "ja", body: "Reply body." })).id;
-  signedId = must(await createTopic(h.db, h.ids.signed_member, { lang: "ja", title: "Signed member's topic", body: "Signed body." })).id;
-  signedQuestionId = must(await createTopic(h.db, h.ids.signed_member, { lang: "ja", title: "Signed member's question", body: "Choose.", asksStance: true })).id;
+  replyId = must(await createReply(h.db, h.ids.intro_member, plainId, { lang: "ja", body: "Reply body." })).id;
+  introOwnerTopicId = must(await createTopic(h.db, h.ids.intro_member, { lang: "ja", title: "Introduction author's topic", body: "Introduction author body." })).id;
+  introOwnerQuestionId = must(await createTopic(h.db, h.ids.intro_member, { lang: "ja", title: "Introduction author's question", body: "Choose.", asksStance: true })).id;
   foreignId = must(await createTopic(h.db, h.ids.reader_member, { lang: "en", title: "Another writer", body: "Foreign body." })).id;
-  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, h.ids.signed_member));
   expect(await changeHandle(h.db, h.ids.renamed_member, "renamed_current", { now })).toMatchObject({ ok: true });
   expect(await changeHandle(h.db, h.ids.expired_member, "expired_current", { now })).toMatchObject({ ok: true });
   await h.db.update(handleHolds).set({ heldUntil: new Date(Date.now() - 1) }).where(eq(handleHolds.handleKey, "expired_member"));
@@ -114,7 +113,7 @@ describe("member-page read boundaries", () => {
 
   it("keeps the owner's complete member-page HTML identical before and after the owner chooses a stance", async () => {
     const before = await renderPage(await pageData("author_member"));
-    expect(await setStance(h.db, h.ids.author_member, { questionId: signedQuestionId, position: "agree", expectedVersion: 0 })).toMatchObject({ ok: true });
+    expect(await setStance(h.db, h.ids.author_member, { questionId: introOwnerQuestionId, position: "agree", expectedVersion: 0 })).toMatchObject({ ok: true });
     expect(await renderPage(await pageData("author_member"))).toBe(before);
   });
 
@@ -176,30 +175,30 @@ describe("introduction selection and posting routes", () => {
   });
 
   it("sets and unsets an introduction without signing even when the member signs posts", async () => {
-    expect([200, 302]).toContain((await selectIntro(signedId, "intro-set")).status);
-    expect(await selected()).toBe(signedId);
-    const own = await topicLoader(h.args(h.request(`/t/${signedId}`, { as: "signed_member" }), { id: String(signedId) }));
-    const other = await topicLoader(h.args(h.request(`/t/${signedId}`, { as: "reader_member" }), { id: String(signedId) }));
+    expect([200, 302]).toContain((await selectIntro(introOwnerTopicId, "intro-set")).status);
+    expect(await selected()).toBe(introOwnerTopicId);
+    const own = await topicLoader(h.args(h.request(`/t/${introOwnerTopicId}`, { as: "intro_member" }), { id: String(introOwnerTopicId) }));
+    const other = await topicLoader(h.args(h.request(`/t/${introOwnerTopicId}`, { as: "reader_member" }), { id: String(introOwnerTopicId) }));
     expect(own).toHaveProperty("introSelected", true);
     expect(other).toHaveProperty("introSelected", false);
-    expect([200, 302]).toContain((await selectIntro(signedId, "intro-unset")).status);
+    expect([200, 302]).toContain((await selectIntro(introOwnerTopicId, "intro-unset")).status);
     expect(await selected()).toBeNull();
   });
 
   it("rejects another member's topic, a reply and a question as introduction targets", async () => {
-    for (const id of [foreignId, replyId, signedQuestionId]) {
+    for (const id of [foreignId, replyId, introOwnerQuestionId]) {
       expect([400, 403, 404]).toContain((await selectIntro(id, "intro-set")).status);
       expect(await selected()).toBeNull();
     }
-    expect([400, 403, 404]).toContain((await selectIntro(signedId, "intro-set", "reader_member")).status);
+    expect([400, 403, 404]).toContain((await selectIntro(introOwnerTopicId, "intro-set", "reader_member")).status);
     expect(await selected()).toBeNull();
   });
 
   it("requires same-origin and writing permission for introduction selection", async () => {
-    expect((await selectIntro(signedId, "intro-set", "signed_member", { origin: "https://elsewhere.example" })).status).toBe(403);
+    expect((await selectIntro(introOwnerTopicId, "intro-set", "intro_member", { origin: "https://elsewhere.example" })).status).toBe(403);
     expect(await selected()).toBeNull();
-    await h.db.update(profiles).set({ suspendedUntil: new Date("2031-01-01T00:00:00Z") }).where(eq(profiles.userId, h.ids.signed_member));
-    expect(await selectIntro(signedId, "intro-set")).toMatchObject({ status: 302, location: "/suspended" });
+    await h.db.update(profiles).set({ suspendedUntil: new Date("2031-01-01T00:00:00Z") }).where(eq(profiles.userId, h.ids.intro_member));
+    expect(await selectIntro(introOwnerTopicId, "intro-set")).toMatchObject({ status: 302, location: "/suspended" });
     expect(await selected()).toBeNull();
   });
 });

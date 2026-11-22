@@ -4,13 +4,11 @@ import { createAuth } from "~/lib/auth/auth.server";
 import { magicLinkBrowser } from "~/lib/auth/magic-link-browser.server";
 import { magicLinkOutcome } from "~/lib/auth/magic-link.server";
 import type { Db } from "~/lib/db/client.server";
-import { profiles, user } from "~/lib/db/schema";
+import { user } from "~/lib/db/schema";
 import { createInvitation } from "~/lib/invitations.server";
 import type { Area, Lang } from "~/lib/languages";
 import { createProfile } from "~/lib/profiles.server";
 import { createTestDb } from "./db";
-import { attachSigningProof, signingCredential, type TestSigningCredential } from "./signing";
-import { SigningError, signingErrorResponse } from "~/lib/signing.server";
 
 // Call route loaders and actions with real login: invitation, magic link, then session cookie.
 // Call setupRouteHarness() in beforeAll and restore() in afterAll to restore replaced globals.
@@ -31,7 +29,6 @@ export type RouteHarness = {
   linkCookie(token: string): string;
   request(path: string, opts?: { as?: string; form?: Record<string, string | string[]>; headers?: Record<string, string> }): Request;
   args(req: Request, params?: Record<string, string>): never;
-  signedArgs(req: Request, params?: Record<string, string>): Promise<never>;
   outcome(run: () => unknown): Promise<Outcome>;
   restore(): void;
 };
@@ -42,7 +39,6 @@ export async function setupRouteHarness(dbOptions?: Parameters<typeof createTest
   g.__tomolaDb = Promise.resolve(db);
   const cookies: Record<string, string> = {};
   const ids: Record<string, string> = {};
-  const signingKeys = new Map<string, TestSigningCredential>();
   const linkCookies = new Map<string, string>();
 
   async function issueLink(email: string, next?: string): Promise<string> {
@@ -103,27 +99,6 @@ export async function setupRouteHarness(dbOptions?: Parameters<typeof createTest
         init.body = body;
       }
       return new Request(`${BASE}${path}`, init);
-    },
-    async signedArgs(req, params = {}) {
-      if (req.method === "POST") {
-        const form = await req.clone().formData();
-        const path = new URL(req.url).pathname;
-        const intent = String(form.get("intent") ?? "");
-        const named = ((path === "/" || path === "/t/new" || /^\/t\/\d+$/.test(path)) && !["draft", "delete", "report", "flag"].includes(intent))
-          || /^\/(t|c)\/\d+\/edit$/.test(path) || (/^\/drafts\/\d+(?:\/preview)?$/.test(path) && intent === "publish")
-          || (path === "/settings" && ["handle", "delete-passkey", "sign-posts"].includes(intent));
-        const handle = Object.keys(cookies).find(h => cookies[h] === req.headers.get("cookie"));
-        if (named && handle && req.headers.get("origin") === BASE) {
-          const userId = ids[handle];
-          const [profile] = await db.select({ signPosts: profiles.signPosts, passkeyOnly: profiles.passkeyOnly }).from(profiles).where(eq(profiles.userId, userId));
-          if (!profile?.signPosts && intent !== "sign-posts" && !(intent === "delete-passkey" && profile?.passkeyOnly)) return { request: req, params, context: {} } as never;
-          let key = signingKeys.get(userId);
-          if (!key) { key = await signingCredential(db, userId); signingKeys.set(userId, key); }
-          try { req = await attachSigningProof(db, userId, req, key); }
-          catch (error) { if (error instanceof SigningError) throw signingErrorResponse(error); throw error; }
-        }
-      }
-      return { request: req, params, context: {} } as never;
     },
     args: (req, params = {}) => ({ request: req, params, context: {} }) as never,
     // Convert route throws, including redirect Responses and data() errors, into status and destination.

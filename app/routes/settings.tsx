@@ -21,7 +21,6 @@ import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "~/co
 import { HandleInput } from "~/components/handle-input";
 import { Button } from "~/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "~/components/ui/native-select";
-import { Checkbox } from "~/components/ui/checkbox";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { data, Form, Link, redirect, useLocation } from "react-router";
@@ -48,7 +47,7 @@ import { EMAIL_PREFS } from "~/lib/notifications";
 import { changeHandle, changeHomeArea, nextHandleChangeAt, nextHomeAreaChangeAt, setEmailPref, updatePreferences } from "~/lib/profiles.server";
 import { HOME_AREA_CHANGE_DAYS } from "~/lib/profile-settings";
 import { enqueuePasskeyNotice, removeOwnPasskey, setPasskeyOnly } from "~/lib/auth/passkeys.server";
-import { lockSigningMember, SigningError, SigningFailureResponse, signingPreferenceValue, withSignedWrite } from "~/lib/signing.server";
+import { lockSigningMember, SigningError, SigningFailureResponse, withMemberWrite } from "~/lib/signing.server";
 import { hasBackupPasskeys, protectedLogin } from "~/lib/auth/login-method.server";
 import { loginReauthentication, requireLoginReauthentication } from "~/lib/auth/login-reauthentication.server";
 import { revokeAllCredentials } from "~/lib/auth/revoke-credentials.server";
@@ -56,7 +55,6 @@ import { LoginMethodSettings } from "~/components/login-method-settings";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { account, apiTokens, entries, oauthConsent, profiles } from "~/lib/db/schema";
 import { visibleIntroduction } from "~/lib/member-pages.server";
-import { SignedForm } from "~/components/signed-form";
 import { villagesEnabled } from "~/lib/villages-enabled.server";
 import { villageChatEnabled } from "~/lib/village-chat-enabled.server";
 import { villageReaderFor } from "~/lib/display-lang.server";
@@ -120,13 +118,12 @@ async function loaderImplementation({ request }: Route.LoaderArgs) {
     displayName: profile.displayName ?? null,
     displayNameLatin: profile.displayNameLatin ?? null,
     nextHandleChange: nextHandle !== null && nextHandle > new Date() ? dateOf(nextHandle) : null,
-    signPosts: profile.signPosts,
     displayLang: profile.displayLang,
     colorScheme: profile.colorScheme,
     readLangs: profile.readLangs,
     // While a language-area change is unavailable, provide the next allowed date (UTC); otherwise null, including for the first change.
     nextAreaChange: next !== null && next > new Date() ? dateOf(next) : null,
-    saved: saved === "display-name" || saved === "preferences" || saved === "ai-links" || saved === "passkey-removed" || saved === "email" || saved === "handle" || saved === "sign-posts" || saved === "sessions" ? saved : null,
+    saved: saved === "display-name" || saved === "preferences" || saved === "ai-links" || saved === "passkey-removed" || saved === "email" || saved === "handle" || saved === "sessions" ? saved : null,
     ...(webPushEnabled() ? { push: { publicKey: pushConfig()!.publicKey } } : {}),
     emailPref: profile.emailPref,
     passkeys, login,
@@ -220,19 +217,6 @@ async function settingsAction({ request }: { request: Request }) {
     });
     throw redirect("/login", 303);
   }
-  if (formString(form, "intent") === "sign-posts") {
-    try {
-      await withSignedWrite(db, user.id, request, form, async tx => {
-        await tx.update(profiles).set({ signPosts: signingPreferenceValue(form) }).where(eq(profiles.userId, user.id));
-        return { ok: true };
-      });
-    } catch (error) {
-      if (!(error instanceof Response) || error.status < 400 || error.status >= 500) throw error;
-      const result = await error.clone().json();
-      return data({ intent: "sign-posts" as const, error: String(result.error), date: null }, { status: error.status });
-    }
-    throw redirect(withSettingsReturn("/settings?saved=sign-posts#settings-signing", returnTo));
-  }
   if (formString(form, "intent") === "revoke-other-sessions") {
     if (webPushEnabled()) {
       const id = await currentPushId(db, user.id, { id: form.get("push-id"), secret: form.get("push-secret") });
@@ -241,22 +225,21 @@ async function settingsAction({ request }: { request: Request }) {
     await (await getAuth()).api.revokeOtherSessions({ request, headers: request.headers });
     throw redirect(withSettingsReturn("/settings?saved=sessions#settings-sessions", returnTo));
   }
-  // Use the signing flow for members whose login changes require a key assertion.
   if (formString(form, "intent") === "delete-passkey") {
     const sessionId = await loginManagementSession(request);
-    const res = await withSignedWrite(db, user.id, request, form, tx => removeOwnPasskey(tx, user.id, formString(form, "passkeyId"), sessionId));
+    const res = await withMemberWrite(db, user.id, request, form, tx => removeOwnPasskey(tx, user.id, formString(form, "passkeyId"), sessionId));
     if (!res.ok) throw data("Not found", { status: 404 });
     throw redirect(withSettingsReturn("/settings?saved=passkey-removed#settings-passkeys", returnTo));
   }
   if (formString(form, "intent") === "display-name") {
     await requireWriter(request);
-    const res = await withSignedWrite(db, user.id, request, form, tx => updateDisplayNames(tx, user.id, formString(form, "displayName"), formString(form, "displayNameLatin")));
+    const res = await withMemberWrite(db, user.id, request, form, tx => updateDisplayNames(tx, user.id, formString(form, "displayName"), formString(form, "displayNameLatin")));
     if (res.ok) throw redirect(withSettingsReturn("/settings?saved=display-name#settings-display-name", returnTo));
     return data({ intent: "display-name" as const, error: res.error, displayName: formString(form, "displayName"), displayNameLatin: formString(form, "displayNameLatin") }, { status: res.error === "rate_limited" ? 429 : 400 });
   }
   if (formString(form, "intent") === "handle") {
     await requireWriter(request);
-    const res = await withSignedWrite(db, user.id, request, form, tx => changeHandle(tx, user.id, formString(form, "handle")));
+    const res = await withMemberWrite(db, user.id, request, form, tx => changeHandle(tx, user.id, formString(form, "handle")));
     if (res.ok) throw redirect(withSettingsReturn("/settings?saved=handle#settings-handle", returnTo));
     return data({ intent: "handle" as const, error: res.error, date: res.error === "too_soon" ? dateOf(res.nextChangeAt) : null }, { status: 400 });
   }
@@ -320,7 +303,7 @@ async function settingsAction({ request }: { request: Request }) {
 }
 
 export default function Settings({ loaderData, actionData }: Route.ComponentProps) {
-  const { homeArea, displayLang, readLangs, nextAreaChange, saved, passkeys, emailPref, handle, signPosts, nextHandleChange, returnTo } = loaderData;
+  const { homeArea, displayLang, readLangs, nextAreaChange, saved, passkeys, emailPref, handle, nextHandleChange, returnTo } = loaderData;
   const values = actionData?.intent === "preferences" ? actionData.values : undefined;
   const displayNames = actionData?.intent === "display-name" ? actionData : loaderData;
   const defaultVillageAvailable = loaderData.posting?.choices.some(village => village.slug === loaderData.posting?.selected);
@@ -359,19 +342,11 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
     // A saved section is already open in SSR. Respect a native close made
     // before hydration; subsequent saves and explicit hash changes still reveal it.
     const initial = firstResponse.current;
-    const serverOpened = saved === "ai-links" ? aiLinks.current : saved === "sign-posts" || actionData?.intent === "sign-posts" ? advanced.current : null;
+    const serverOpened = saved === "ai-links" ? aiLinks.current : null;
     if (!(serverOpened && initial.saved === saved && initial.actionData === actionData && initial.hash === hash && initial.locationKey === locationKey && !serverOpened.open)) schedule();
     window.addEventListener("hashchange", schedule);
     return () => { cancelAnimationFrame(frame); window.removeEventListener("hashchange", schedule); };
   }, [hash, saved, actionData, locationKey]);
-  useEffect(() => {
-    if (actionData?.intent !== "sign-posts" || (actionData === firstResponse.current.actionData && advanced.current && !advanced.current.open)) return;
-    const frame = requestAnimationFrame(() => {
-      if (advanced.current) advanced.current.open = true;
-      document.getElementById("settings-signing")?.scrollIntoView();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [actionData]);
   const areaName = (a: Area) => (a === "other" ? m.area_other() : LANG_LABELS[a]);
   const langs = useEnabledLangs();
   // The main language choices: the enabled languages and "other". A current value that is not enabled (after a language was closed) stays at the end of the choices, marked "not open
@@ -538,28 +513,28 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
         <AvatarSettings url={loaderData.avatarUrl} uploaded={loaderData.avatarUploaded} />
         <section id="settings-display-name" className="scroll-mt-4 space-y-3">
           {saved === "display-name" && <p role="status">{m.settings_saved()}</p>}
-          {actionData?.intent === "display-name" && <p role="alert">{actionData.error === "invalid_display_name" ? m.display_name_invalid() : actionData.error === "rate_limited" ? m.error_rate_limited() : m.signing_failed()}</p>}
-          <SignedForm signatureRequired={signPosts} method="post" className="space-y-3">
+          {actionData?.intent === "display-name" && <p role="alert">{actionData.error === "invalid_display_name" ? m.display_name_invalid() : actionData.error === "rate_limited" ? m.error_rate_limited() : m.error_generic()}</p>}
+          <Form method="post" className="space-y-3">
             <input type="hidden" name="intent" value="display-name" />
             <DisplayNameFields key={JSON.stringify([homeArea, displayNames.displayName, displayNames.displayNameLatin])} homeArea={homeArea} initial={displayNames} />
             <Button type="submit" variant="outline">{m.save_changes()}</Button>
-          </SignedForm>
+          </Form>
         </section>
         <section id="settings-handle" aria-labelledby="settings-handle-heading" className="scroll-mt-4 space-y-3">
           <h3 id="settings-handle-heading" className="text-lg font-semibold">{m.settings_handle_heading()}</h3>
           {saved === "handle" && <p role="status">{m.settings_saved()}</p>}
-          {actionData?.intent === "handle" && <p role="alert">{actionData.error === "handle_taken" ? m.onboarding_error_taken() : actionData.error === "handle_reserved" ? m.onboarding_error_reserved() : actionData.error === "too_soon" ? m.settings_handle_too_soon({ date: actionData.date! }) : actionData.error === "invalid_handle" ? m.onboarding_error_handle() : m.signing_failed()}</p>}
+          {actionData?.intent === "handle" && <p role="alert">{actionData.error === "handle_taken" ? m.onboarding_error_taken() : actionData.error === "handle_reserved" ? m.onboarding_error_reserved() : actionData.error === "too_soon" ? m.settings_handle_too_soon({ date: actionData.date! }) : actionData.error === "invalid_handle" ? m.onboarding_error_handle() : m.error_generic()}</p>}
           {nextHandleChange && <p>{m.settings_handle_too_soon({ date: nextHandleChange })}</p>}
           <details open={handleOpen} className="space-y-2">
             {/* The name itself is the control that opens the form; the heading says what the form does. */}
             <summary className="cursor-pointer">@{handle}</summary>
             <p className="ui-help text-muted-foreground">{m.settings_handle_help()}</p>
-            <SignedForm signatureRequired={signPosts} method="post" action={withSettingsReturn("/settings#settings-handle", returnTo)} className="space-y-2">
+            <Form method="post" action={withSettingsReturn("/settings#settings-handle", returnTo)} className="space-y-2">
               <input type="hidden" name="intent" value="handle" />
               <Field className="min-w-0 w-auto"><FieldLabel className="block">{m.onboarding_handle()}<HandleInput key={handle} name="handle" required inputMode="text" minLength={2} maxLength={30} defaultValue={actionData && "handleValue" in actionData ? actionData.handleValue : handle} className="block" /></FieldLabel></Field>
               <FieldDescription className="ui-help text-muted-foreground">{m.onboarding_handle_help()}</FieldDescription>
               <Button type="submit" variant="outline">{m.settings_handle_heading()}</Button>
-            </SignedForm>
+            </Form>
           </details>
         </section>
         <p>{loaderData.introEntryId !== null
@@ -608,25 +583,8 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
         </details>
       </section>
 
-      <PersistentDetails id="settings-advanced" ref={advanced} open={saved === "sign-posts" || actionData?.intent === "sign-posts"} className="scroll-mt-4 space-y-6">
+      <PersistentDetails id="settings-advanced" ref={advanced} className="scroll-mt-4 space-y-6">
         <summary className="cursor-pointer text-xl font-semibold"><h2 className="inline">{m.settings_advanced_heading()}</h2></summary>
-        {(signPosts || saved === "sign-posts" || actionData?.intent === "sign-posts") && <section id="settings-signing" aria-labelledby="settings-signing-heading" className="scroll-mt-4 space-y-3">
-          <h3 id="settings-signing-heading" className="text-lg font-semibold">{m.settings_sign_posts_label()}</h3>
-          {signPosts && <p className="ui-help text-muted-foreground">{m.settings_signing_retirement()}</p>}
-          {saved === "sign-posts" && <p role="status">{m.settings_saved()}</p>}
-          {actionData?.intent === "sign-posts" && <p role="alert" className="text-destructive">{actionData.error === "signing_closed" ? m.settings_signing_closed() : m.signing_failed()}</p>}
-          {signPosts && <SignedForm signatureRequired method="post" action={withSettingsReturn("/settings#settings-signing", returnTo)} className="space-y-2">
-            <input type="hidden" name="intent" value="sign-posts" />
-            <Field orientation="horizontal" className="min-w-0 w-auto"><FieldLabel className="flex items-center gap-2">
-              <Checkbox name="signPosts" value="1" defaultChecked={signPosts} disabled={passkeys.length === 0} /> {m.settings_sign_posts_label()}
-            </FieldLabel></Field>
-            <FieldDescription className="ui-help text-muted-foreground">{m.settings_sign_posts_help()}</FieldDescription>
-            <FieldDescription className="ui-help text-muted-foreground">{m.settings_sign_posts_limits()}</FieldDescription>
-            {passkeys.length === 0 && <p>{m.settings_sign_posts_need_passkey()}</p>}
-            <Button type="submit" disabled={passkeys.length === 0} variant="outline">{m.save_changes()}</Button>
-          </SignedForm>}
-        </section>}
-
         <section id="settings-tokens" aria-labelledby="settings-tokens-heading" className="scroll-mt-4 space-y-3">
           <h3 id="settings-tokens-heading" className="text-lg font-semibold">{m.settings_automation_heading()}</h3>
           <p className="ui-help text-muted-foreground">{m.settings_automation_help()}</p>

@@ -500,7 +500,7 @@ export const profiles = pgTable(
     uiLocale: text("ui_locale"),
     // Null follows the device; explicit choices apply across the member's devices.
     colorScheme: text("color_scheme"),
-    // Optional passkey confirmation for named writes; preference changes always require a signature.
+    // Retired posting preference kept for rollback and personal export.
     signPosts: boolean("sign_posts").notNull().default(false),
     passkeyOnly: boolean("passkey_only").notNull().default(false),
     residenceCountry: text("residence_country"),
@@ -969,7 +969,7 @@ export const signingChallenges = pgTable(
   (t) => [index("signing_challenges_user_idx").on(t.userId, t.expiresAt), check("signing_challenges_expiry_check", sql`${t.expiresAt} > ${t.createdAt}`)],
 );
 
-// Append-only acceptance evidence for each signed version, including handle changes. Keep the public-key snapshot after a credential is removed.
+// Historical evidence for signed writes. Preserve the public-key snapshot after a credential is removed.
 // The exact canonical JSON and its challenge binding permit verification without relying on a live challenge or credential table.
 export const memberSignatures = pgTable(
   "member_signatures",

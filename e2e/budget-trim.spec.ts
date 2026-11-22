@@ -3,7 +3,6 @@ import { routeModule } from "./support/module-route";
 import { test } from "./editor-fixture";
 import { LANG_LABELS } from "../app/lib/languages";
 import { clientHeaders, enMessages, messageTitleField, openUserMenu, uiMessages, useMember, waitForClientRoute, waitForFormReady } from "./helpers";
-import { acceptSignedWrite, installSeededSigningKey } from "./signing-helper";
 
 for (const locale of ["ja", "en", "fr"] as const) test(`public and member shells retain their labels after hydration and language selection in ${locale}`, async ({ browser }) => {
   const context = await browser.newContext({ locale: "en-US" });
@@ -59,52 +58,4 @@ for (const locale of ["ja", "en", "fr"] as const) test(`public and member shells
     await expect(page.getByRole("contentinfo").getByRole("link", { name: messages.footer_connect, exact: true })).toBeVisible();
     expect(hydrationErrors).toEqual([]);
   } finally { await context.close(); }
-});
-
-test("signature approval preloads authentication, preserves writing after a failed load and retries before the confirming click", async ({ page }) => {
-  await page.setExtraHTTPHeaders(clientHeaders("10.31.4.3"));
-  await useMember(page, "trim_auth@example.com", "/settings");
-  await installSeededSigningKey(page, "trim_auth@example.com");
-
-  let imports = 0;
-  let failImport = true;
-  let release!: () => void;
-  const gate = new Promise<void>(resolve => { release = resolve; });
-  const authenticationModule = await routeModule(page, "@simplewebauthn/browser", async route => {
-    imports++;
-    if (failImport) { await gate; await route.abort("failed"); }
-    else await route.continue();
-  });
-  try {
-  let challenges = 0;
-  page.on("request", request => {
-    if (new URL(request.url()).pathname === "/signing" && request.postDataJSON()?.intent === "challenge") challenges++;
-  });
-  await page.goto("/t/new");
-  await waitForFormReady(page.locator("form", { has: messageTitleField(page) }));
-  await messageTitleField(page).fill("Preloaded signature fixture");
-  const body = "Writing survives a failed authentication module download.";
-  await page.getByLabel(enMessages.field_body, { exact: true }).fill(body);
-  expect(imports).toBe(0);
-  await page.getByRole("button", { name: enMessages.submit_post, exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: enMessages.signing_heading, exact: true });
-  await expect(dialog).toBeVisible();
-  await authenticationModule.assertHit();
-  await expect.poll(() => imports).toBe(1);
-  await expect(dialog.getByRole("button", { name: enMessages.signing_accept_post, exact: true })).toBeDisabled();
-  expect(challenges).toBe(0);
-  release();
-  await expect(dialog).toBeHidden();
-  await expect(page.getByRole("alert")).toHaveText(enMessages.signing_network_failed);
-  await expect(page.getByLabel(enMessages.field_body, { exact: true })).toHaveValue(body);
-
-  failImport = false;
-  await page.getByRole("button", { name: enMessages.submit_post, exact: true }).click();
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole("button", { name: enMessages.signing_accept_post, exact: true })).toBeEnabled();
-  expect(imports).toBe(2);
-  expect(challenges).toBe(0);
-  await acceptSignedWrite(page);
-  await expect(page).toHaveURL(/\/t\/\d+/);
-  } finally { release(); await authenticationModule.dispose(); }
 });

@@ -82,13 +82,17 @@ it.each(["create", "update"])("returns HTTP 503 from a busy AI draft %s without 
   } finally { await holds.release(); }
 }, 20_000);
 
-it.each(["preview", "challenge"])("returns HTTP 503 from a busy signing %s without issuing a challenge", async intent => {
-  const { h, f, p } = await setup(); const holds = await fill(f, p);
+it("returns HTTP 503 from a busy draft confirmation preview without issuing a challenge", async () => {
+  const { h, f, p } = await setup();
+  const body = "A draft waiting for Markdown workers.";
+  const draft = await createDraft(h.db, h.ids.writer, { kind: "topic", lang: "en", body }, { via: "api" });
+  if (!draft.ok) throw new Error(draft.error);
+  const holds = await fill(f, p);
   try {
     const { action } = await import("~/routes/signing");
     const before = await h.db.select().from(signingChallenges);
     const handler = createStaticHandler([{ id: "signing", path: "/signing", action: args => action(args as Parameters<typeof action>[0]) }]);
-    const request = new Request(h.request("/signing", { as: "writer" }), { method: "POST", body: JSON.stringify({ intent, pathname: "/t/new", fields: [["body", `Busy signing ${intent}`], ["lang", "en"]], previewHash: "a".repeat(64) }) });
+    const request = new Request(h.request("/signing", { as: "writer" }), { method: "POST", body: JSON.stringify({ intent: "preview", pathname: `/drafts/${draft.id}`, fields: [["intent", "publish"], ["version", "1"], ["body", body], ["lang", "en"]] }) });
     request.headers.set("Content-Type", "application/json");
     const result = await handler.query(request);
     expect(result instanceof Response ? result.status : result.statusCode).toBe(503);

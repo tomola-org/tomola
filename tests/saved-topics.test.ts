@@ -131,7 +131,7 @@ describe("saved-list routes", () => {
   it("takes identity only from the session, returns private no-store, and allows suspended members to control their list", async () => {
     // Saved reading is private and never publishes, so suspension and optional
     // post signatures do not remove this member's right to save or erase rows.
-    await h.db.update(profiles).set({ suspendedUntil: new Date(Date.now() + 86400000), signPosts: true }).where(eq(profiles.userId, h.ids.save_a));
+    await h.db.update(profiles).set({ suspendedUntil: new Date(Date.now() + 86400000) }).where(eq(profiles.userId, h.ids.save_a));
     const res = await post("save_a", { topicId: String(topicId), saved: "1", userId: h.ids.save_b });
     expect(res.status).toBe(200);
     expect((res.value as { init: { headers: unknown } }).init.headers).toEqual({ "Cache-Control": "private, no-store" });
@@ -140,7 +140,7 @@ describe("saved-list routes", () => {
     await post("save_b", { topicId: String(topicId), saved: "0", userId: h.ids.save_a });
     expect(await isTopicSaved(h.db, h.ids.save_a, topicId)).toBe(true);
     expect((await post("save_a", { topicId: String(topicId), saved: "0" })).status).toBe(200);
-    await h.db.update(profiles).set({ suspendedUntil: null, signPosts: false }).where(eq(profiles.userId, h.ids.save_a));
+    await h.db.update(profiles).set({ suspendedUntil: null }).where(eq(profiles.userId, h.ids.save_a));
   });
 
   it("loads current translations and edits, isolates loaders, and redirects an emptied later page with its reading language", async () => {

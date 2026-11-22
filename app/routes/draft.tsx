@@ -22,7 +22,7 @@ import { m } from "~/paraglide/messages.js";
 import { signingViewToken } from "~/lib/signing.server";
 import { isDraftConfirmationError } from "~/lib/signing";
 import { isStanceTag } from "~/lib/stances";
-import { SignedForm, SendButton } from "~/components/signed-form";
+import { EntryForm, SendButton } from "~/components/entry-form";
 import { AiEditorTools } from "~/components/ai-editor-tools";
 import { titleOrNull } from "~/lib/text";
 import { orBlank } from "~/lib/local-draft";
@@ -42,7 +42,7 @@ async function loaderImplementation({ request, params }: Route.LoaderArgs) {
   const { user, db, profile } = await requireMember(request);
   const draft = await getDraft(db, user.id, parseId(params.id));
   if (!draft) throw data("Not found", { status: 404 });
-  return { ownerId: user.id, connectDraftLabel: m.connect_draft_link(), draft, recoveryToken: await draftRecoveryToken(db, user.id, draft), signPosts: profile.signPosts, signingView: signingViewToken({ userId: user.id, kind: "draft", id: draft.id, version: String(draft.version), title: draft.title, body: draft.body, lang: draft.lang }), ...(villagesEnabled() && draft.kind === "topic" ? { posting: await postingVillages(db, user.id, draft.village, { reader: villageReaderFor(request, profile) }) } : {}) };
+  return { ownerId: user.id, connectDraftLabel: m.connect_draft_link(), draft, recoveryToken: await draftRecoveryToken(db, user.id, draft), signingView: signingViewToken({ userId: user.id, kind: "draft", id: draft.id, version: String(draft.version), title: draft.title, body: draft.body, lang: draft.lang }), ...(villagesEnabled() && draft.kind === "topic" ? { posting: await postingVillages(db, user.id, draft.village, { reader: villageReaderFor(request, profile) }) } : {}) };
 }
 
 export async function action(args: Route.ActionArgs) {
@@ -149,7 +149,7 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
     </div>}
   </>;
   const buttons = <>
-    {/* AI drafts require content review; optional signatures also review browser-authored drafts. */}
+    {/* AI drafts require content review. */}
     <SendButton intent="publish">{m.draft_publish()}</SendButton>
     {draft.kind === "topic" && <DraftPreviewButton />}
     <noscript><SendButton variant="outline" intent="save" formNoValidate>{m.save_draft()}</SendButton></noscript>
@@ -187,7 +187,7 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
           )}
         </p>
       )}
-      <SignedForm action={`/drafts/${draft.id}`} protectUnsaved="edit" unsavedInitialValues={{ title: guardDraft.title, body: guardDraft.body, lang: guardDraft.lang, asksStance: guardDraft.asksStance, stanceTag: guardDraft.stanceTag ?? "", village: guardDraft.village ?? loaderData.posting?.selected ?? "" }} key={editorRound} signatureRequired={loaderData.signPosts} confirmAiDraft={requiresReview} method="post" signIntent="publish" className="space-y-3">
+      <EntryForm action={`/drafts/${draft.id}`} protectUnsaved="edit" unsavedInitialValues={{ title: guardDraft.title, body: guardDraft.body, lang: guardDraft.lang, asksStance: guardDraft.asksStance, stanceTag: guardDraft.stanceTag ?? "", village: guardDraft.village ?? loaderData.posting?.selected ?? "" }} key={editorRound} confirmAiDraft={requiresReview} method="post" className="space-y-3">
         {draft.kind === "topic" && <input type="hidden" name="ownerId" value={loaderData.ownerId} />}
         <input type="hidden" name="signingView" value={signingView} />
         {/* Approval fields must stay stable when lazy autosave connects during review. */}
@@ -236,7 +236,7 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
           window.history.replaceState(window.history.state, "", `/drafts/${saved.id}`);
         }
       }} />
-      </SignedForm>
+      </EntryForm>
       {retained !== null && <PersistentDetails open>
         <summary>{m.ai_write_retained()}</summary>
         <textarea aria-label={m.ai_write_retained()} readOnly value={retained} className="w-full rounded border p-2" rows={6} onFocus={e => e.currentTarget.select()} />

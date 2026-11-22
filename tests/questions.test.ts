@@ -71,11 +71,11 @@ type Module = { action?: (a: never) => unknown; loader?: (a: never) => unknown }
 async function submit(route: RouteName, as: string, path: string, form: Record<string, string>, params: Record<string, string> = {}) {
   const mod = (await routes[route]()) as Module;
   if (route === "draft") form = await draftScreenForm(h.db, h.ids[as], Number(params.id), form);
-  return h.outcome(async () => mod.action!(await h.signedArgs(h.request(path, { as, form }), params)));
+  return h.outcome(async () => mod.action!(h.args(h.request(path, { as, form }), params)));
 }
 async function load<T = Record<string, unknown>>(route: RouteName, as: string, path: string, params: Record<string, string> = {}) {
   const mod = (await routes[route]()) as Module;
-  return (await mod.loader!(await h.signedArgs(h.request(path, { as }), params))) as T;
+  return (await mod.loader!(h.args(h.request(path, { as }), params))) as T;
 }
 const idFrom = (location: string | null) => Number(/\/t\/(\d+)/.exec(location ?? "")![1]);
 
@@ -131,8 +131,8 @@ describe("asks_stance is set when the topic is created, on every way of creating
     expect(await getDraft(h.db, hana, id)).toMatchObject({ asksStance: true, via: "api", altOf: null });
     const path = `/drafts/${id}`;
     const fields = { intent: "publish", version: "1", title: "AI の問い", body: "本文。", lang: "ja", aiAssistance: "none", asksStance: "1" };
-    const { previewSignedWrite } = await import("~/lib/signing.server");
-    const { confirmation } = await previewSignedWrite(h.db, hana, path, await h.request(path, { form: fields }).formData());
+    const { previewDraftPublication } = await import("~/lib/signing.server");
+    const { confirmation } = await previewDraftPublication(h.db, hana, path, await h.request(path, { form: fields }).formData());
     const published = await submit("draft", "hana", path, { ...fields, confirmation: confirmation! }, { id: String(id) });
     expect(await row(idFrom(published.location))).toMatchObject({ asksStance: true, via: "api" });
   });
@@ -782,7 +782,7 @@ describe("another way of asking, and the objection panel", () => {
     expect((await h.outcome(async () => load("topic-objections", "hana", `/t/${gone}/objections`, { id: String(gone) }))).status).toBe(404);
     // Nonmembers are redirected to login.
     const mod = (await routes["topic-objections"]()) as Module;
-    expect(await h.outcome(async () => mod.loader!(await h.signedArgs(h.request(`/t/${q}/objections`), params)))).toMatchObject({ status: 302, location: `/login?next=${encodeURIComponent(`/t/${q}/objections`)}` });
+    expect(await h.outcome(async () => mod.loader!(h.args(h.request(`/t/${q}/objections`), params)))).toMatchObject({ status: 302, location: `/login?next=${encodeURIComponent(`/t/${q}/objections`)}` });
   });
 
   // An alternative draft whose original question becomes hidden or deleted cannot publish and previously had no way to change its target. The UI explains why and offers "元の問いへのリンクを外す" to make it independent.
@@ -793,7 +793,7 @@ describe("another way of asking, and the objection panel", () => {
       return res.id;
     };
     const send = (as: string, id: number, form: Record<string, string>, headers?: Record<string, string>) =>
-      h.outcome(async () => ((await routes.draft()) as unknown as { action: (a: never) => unknown }).action(await h.signedArgs(h.request(`/drafts/${id}`, { as, form: await draftScreenForm(h.db, h.ids[as], id, form), headers }), { id: String(id) })));
+      h.outcome(async () => ((await routes.draft()) as unknown as { action: (a: never) => unknown }).action(h.args(h.request(`/drafts/${id}`, { as, form: await draftScreenForm(h.db, h.ids[as], id, form), headers }), { id: String(id) })));
     const form = { title: "書き直した別の立て方", body: "書き直した本文。", lang: "ja", aiAssistance: "none", asksStance: "1" };
 
     it.each([

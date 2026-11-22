@@ -11,7 +11,7 @@ import { setIntroduction, unsetIntroduction } from "~/lib/member-pages.server";
 import { DRAFT_RATE_LIMIT, hitRateLimit, hitMemberLimit, rateLimitHeaders } from "~/lib/rate-limit.server";
 import { langCarry } from "~/lib/display-lang.server";
 import { failure, parseIdOrNull } from "~/lib/params.server";
-import { withSignedWrite } from "~/lib/signing.server";
+import { withMemberWrite } from "~/lib/signing.server";
 import { postedLocation } from "~/lib/posted-ui";
 
 type TopicAction = Awaited<ReturnType<typeof requireWriter>> & { request: Request; form: FormData; threadId: number; intent: string };
@@ -118,7 +118,7 @@ export async function postTopicReply(context: TopicAction) {
   if (!rate.allowed) return replyError(form, "rate_limited", 429, rateLimitHeaders(rate));
   const { body, lang, langCode, langSource, aiAssistance, stanceTag } = pasted.input;
   // The draft that "Write with AI" made is removed in the same transaction, so that a failure here cannot leave a reply made and the form still sendable.
-  const res = await withSignedWrite(db, user.id, request, form, async tx => {
+  const res = await withMemberWrite(db, user.id, request, form, async tx => {
     const error = await checkLinkedClientDraft(tx, user.id, form);
     if (error) return { ok: false as const, error };
     const created = await createReply(tx, user.id, threadId, { body, lang, langCode, langSource, aiAssistance, parentId: pasted.parentId, stanceTag, ...(form.has("nushiParentId") ? { nushiParentId: Number(form.get("nushiParentId")) } : {}) });

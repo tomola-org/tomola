@@ -132,7 +132,7 @@ it("counts the header after acknowledging this topic even when both loaders star
   expect(navigation).toMatchObject({ unreadNotifications: 1 });
 });
 
-it("renders the edited draft form once before its signed publication transaction", async () => {
+it("renders the edited draft form once before its publication transaction", async () => {
   const draft = await createDraft(h.db, h.ids.load_reader, { kind: "topic", body: "Saved body", lang: "ja" });
   if (!draft.ok) throw new Error(draft.error);
   const { action } = await import("~/routes/draft");

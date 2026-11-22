@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { SendButton } from "~/components/signed-form-frame";
+import { SendButton } from "~/components/entry-form-frame";
 import { m } from "~/paraglide/messages.js";
 
 export function DraftPreviewButton() {

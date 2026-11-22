@@ -922,7 +922,7 @@ describe("complete credential revocation", () => {
         const { action } = await import("~/routes/admin-roles");
         await expect(action({ request: new Request(`${base}/admin/roles`, { method: "POST", headers: { cookie: operatorCookie, origin: base }, body: new URLSearchParams({ intent: "revoke-tokens", userId: "member", confirm: "1" }) }) } as never)).rejects.toMatchObject({ status: 302 });
       } else {
-        await db.update(profiles).set({ passkeyEnrolledAt: new Date(), signPosts: true }).where(eq(profiles.userId, "member"));
+        await db.update(profiles).set({ passkeyEnrolledAt: new Date(), passkeyOnly: true }).where(eq(profiles.userId, "member"));
         await recoverPasskeys(db, { id: "other", email: "other@example.com" }, "member", "Member lost their keys", "Identity verified by known phone number");
       }
       expect(await auth.api.getSession({ headers: new Headers({ cookie }) })).toBeNull();
@@ -932,7 +932,8 @@ describe("complete credential revocation", () => {
       expect(await verifyOpenInAiToken(db, link, { resource: "/latest.md" })).toEqual({ ok: false, error: "revoked" });
       expect((await modern("server/discover", control.token)).status).toBe(200);
       expect(await auth.api.getSession({ headers: new Headers({ cookie: operatorCookie }) })).not.toBeNull();
-      // Reconnection cannot revive an old JWT.
+      // Reconnection after returning to ordinary sign-in cannot revive an old JWT.
+      if (path === "passkey recovery") await db.update(profiles).set({ passkeyOnly: false }).where(eq(profiles.userId, "member"));
       cookie = await login("member@example.com");
       expect((await modern("server/discover", (await authorize(clientId)).access_token)).status).toBe(200);
       expect((await modern("server/discover", oauth.access_token)).status).toBe(401);

@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
 import { signingCredential } from "./helpers/signing";
 import { finishPasskeyRecovery, passkeyRegistrationOptions, recoveryRegistrationOptions, recoverPasskeys, removeOwnPasskey, setPasskeyOnly, verifyPasskeyRegistration } from "~/lib/auth/passkeys.server";
-import { jobs, passkey, passkeyRecoveries, passkeyRecoveryPermits, profiles, session, signingChallenges, verification } from "~/lib/db/schema";
+import { jobs, passkey, passkeyRecoveries, passkeyRecoveryPermits, profiles, session, memberSignatures, signingChallenges, verification } from "~/lib/db/schema";
 import { isAllowedAuthEndpoint } from "~/lib/auth/endpoints.server";
 import { getAuth, issuePasskeySession } from "~/lib/auth/auth.server";
 import { recoveryToken } from "~/lib/auth/passkey-recovery-token.server";
@@ -51,7 +51,7 @@ describe("passkey lifecycle barriers", () => {
   it("requires fresh passkey verification and an existing UV assertion for protected enrollment", async () => {
     const { userId, sessionId } = await member("protected_add");
     const key = await signingCredential(h.db, userId);
-    await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, userId));
+    await h.db.update(profiles).set({ passkeyOnly: true }).where(eq(profiles.userId, userId));
     await expect(passkeyRegistrationOptions(h.db, userId, sessionId, "Additional")).rejects.toMatchObject({ code: "SESSION_NOT_FRESH" });
     await usePasskeyProof(sessionId);
     const proof = await passkeyRegistrationOptions(h.db, userId, sessionId, "Additional");
@@ -77,8 +77,34 @@ describe("passkey lifecycle barriers", () => {
     await expect(passkeyRegistrationOptions(h.db, userId, sessionId, "New key")).rejects.toMatchObject({ code: "operator_recovery_required" });
   });
 
+  it("removes a spare passkey with a fresh passkey session and no write challenge", async () => {
+    const as = "protected_remove";
+    const { userId, sessionId } = await member(as);
+    const spare = await signingCredential(h.db, userId);
+    const last = await signingCredential(h.db, userId);
+    await h.db.update(profiles).set({ passkeyOnly: true }).where(eq(profiles.userId, userId));
+    const { action } = await import("~/routes/settings");
+    const submit = (passkeyId: string) => h.outcome(() => action(h.args(h.request("/settings", {
+      as, form: { intent: "delete-passkey", passkeyId },
+    }))));
+    await h.db.update(session).set({ loginMethod: "passkey", reauthenticationMethod: "email_code", reauthenticatedAt: new Date() }).where(eq(session.id, sessionId));
+    const reauth = { status: 302, location: expect.stringContaining("purpose=remove-passkey") };
+    expect(await submit(spare.id)).toMatchObject(reauth);
+    await h.db.update(session).set({ reauthenticationMethod: "passkey", reauthenticatedAt: new Date(Date.now() - 601_000) }).where(eq(session.id, sessionId));
+    expect(await submit(spare.id)).toMatchObject(reauth);
+    expect(await h.db.select().from(passkey).where(eq(passkey.userId, userId))).toHaveLength(2);
+    await usePasskeyProof(sessionId);
+    expect(await submit(spare.id)).toMatchObject({ status: 302, location: "/settings?saved=passkey-removed#settings-passkeys" });
+    expect(await submit(last.id)).toMatchObject({ status: 409, value: { data: { error: "last_passkey" } } });
+    expect(await h.db.select().from(passkey).where(eq(passkey.userId, userId))).toMatchObject([{ id: last.id }]);
+    expect(await h.db.select().from(signingChallenges).where(eq(signingChallenges.userId, userId))).toEqual([]);
+    expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.userId, userId))).toEqual([]);
+    expect(await notices(userId)).toEqual(["removed"]);
+  });
+
   it.each(["email_link", "email_code"])("allows removing the last unprotected key after reauthentication with %s", async method => {
     const { userId, sessionId } = await member(`unprotected_${method}`);
+    await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, userId));
     const key = await signingCredential(h.db, userId);
     await usePasskeyProof(sessionId);
     await expect(remove(userId, key.id, sessionId)).rejects.toMatchObject({ code: "remaining_login_required" });
@@ -128,6 +154,8 @@ describe("passkey lifecycle barriers", () => {
   it("invalidates earlier recovery work and commits the replacement key, permit and passkey session together", async () => {
     const { userId, sessionId } = await member("recoverable");
     const other = await member("ordinary_recovery");
+    await signingCredential(h.db, other.userId);
+    await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, other.userId));
     const boss = await member("recovery_operator");
     const operator = { id: boss.userId, email: "recovery_operator@example.com" };
     const key = await signingCredential(h.db, userId);

@@ -1,9 +1,6 @@
-import fs from "node:fs";
-import { join } from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { clientHeaders, enMessages as en, state, useMember, waitForFormReady } from "./helpers";
-import { acceptSignedWrite, enableSigningAuthenticator, installSeededSigningKey } from "./signing-helper";
 
 async function create(page: Page, kind: "topic" | "reply") {
   const headers = { origin: state().baseURL };
@@ -19,13 +16,10 @@ async function create(page: Page, kind: "topic" | "reply") {
   return `/c/${id}/edit`;
 }
 
-for (const kind of ["topic", "reply"] as const) for (const signed of [false, true]) {
-  test(`${kind}: two screens preserve the refused edit and its device copy, signing ${signed}`, async ({ page, context }) => {
-    await useMember(page, `edit_version_${kind}_${signed ? "signed" : "plain"}@example.com`, "/t/new");
-    const authenticator = signed ? await installSeededSigningKey(page, `edit_version_${kind}_signed@example.com`) : null;
-    const path = signed
-      ? JSON.parse(fs.readFileSync(join(state().dir, "signed-edit-targets.json"), "utf8"))[kind] as string
-      : await create(page, kind);
+for (const kind of ["topic", "reply"] as const) {
+  test(`${kind}: two screens preserve the refused edit and its device copy`, async ({ page, context }) => {
+    await useMember(page, `edit_version_${kind}_plain@example.com`, "/t/new");
+    const path = await create(page, kind);
     const stale = await context.newPage();
     await page.goto(path);
     await stale.goto(path);
@@ -41,16 +35,9 @@ for (const kind of ["topic", "reply"] as const) for (const signed of [false, tru
     }
     await page.locator('textarea[name="body"]').fill("Saved B");
     await page.getByRole("button", { name: en.save_changes, exact: true }).click();
-    if (signed) await acceptSignedWrite(page);
     await expect(page).not.toHaveURL(/\/edit$/);
-    if (authenticator) {
-      const next = await enableSigningAuthenticator(stale);
-      const { credentials } = await authenticator.client.send("WebAuthn.getCredentials", { authenticatorId: authenticator.authenticatorId });
-      for (const credential of credentials) await next.client.send("WebAuthn.addCredential", { authenticatorId: next.authenticatorId, credential });
-    }
     const response = stale.waitForResponse(r => r.request().method() === "POST" && new URL(r.url()).pathname.startsWith(path));
     await stale.getByRole("button", { name: en.save_changes, exact: true }).click();
-    if (signed) await acceptSignedWrite(stale);
     expect((await response).status()).toBe(409);
     await expect(stale.getByRole("alert")).toContainText(en.edit_conflict);
     await expect(stale.locator('textarea[name="body"]')).toHaveValue("My unsent C");

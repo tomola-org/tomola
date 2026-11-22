@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { appeals, entries, entryMentionSnapshots, entryRevisions, jobs, memberSignatures, moderationActions, profiles, reports, translationRevisions, translations, villages, votes } from "~/lib/db/schema";
+import { appeals, entries, entryMentionSnapshots, entryRevisions, jobs, memberSignatures, moderationActions, reports, translationRevisions, translations, villages, votes } from "~/lib/db/schema";
 import { createReply, createTopic, editEntry, softDeleteEntry } from "~/lib/entries.server";
 import { deleteEntryRevision, EDIT_GRACE_MS, readEntryHistory } from "~/lib/entry-history.server";
 import { historyDiff } from "~/lib/history-diff.server";
@@ -16,7 +16,6 @@ import { setVote } from "~/lib/votes.server";
 import { createAppeal, decideAppeal } from "~/lib/appeals.server";
 import { fixEntry } from "~/lib/moderation.server";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
-import { attachSigningProof, signingCredential } from "./helpers/signing";
 import { PG_MODE } from "./helpers/pg-test";
 import { parseBlocks } from "./helpers/md";
 
@@ -356,13 +355,10 @@ it.skipIf(!PG_MODE).each(["reply", "vote"])("serializes a concurrent first %s wi
   expect(await revisions(id)).toHaveLength(1);
 });
 
-it.skipIf(!PG_MODE)("orders a signed reply edit after an already queued child reply without deadlock", { tags: ["postgres"] }, async () => {
+it.skipIf(!PG_MODE)("orders a browser reply edit after an already queued child reply without deadlock", { tags: ["postgres"] }, async () => {
   const id = await topic();
-  const parent = await createReply(h.db, author, id, { body: "Signed parent.", lang: "en" }, { now: start });
+  const parent = await createReply(h.db, author, id, { body: "Parent reply.", lang: "en" }, { now: start });
   if (!parent.ok) throw new Error(parent.error);
-  const credential = await signingCredential(h.db, author);
-  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, author));
-  const request = await attachSigningProof(h.db, author, h.request(`/c/${parent.id}/edit`, { as: "history_author", form: { body: "Signed correction.", lang: "en" } }), credential);
   let ready!: () => void, release!: () => void;
   const inside = new Promise<void>(resolve => { ready = resolve; });
   const gate = new Promise<void>(resolve => { release = resolve; });
@@ -376,6 +372,7 @@ it.skipIf(!PG_MODE)("orders a signed reply edit after an already queued child re
     const { rows } = await h.db.execute(sql`select count(*)::int as waiting from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and cardinality(pg_blocking_pids(pid)) > 0`) as { rows: { waiting: number }[] };
     return rows[0].waiting;
   };
+  const request = h.request(`/c/${parent.id}/edit`, { as: "history_author", form: { body: "Corrected reply.", lang: "en" } });
   const child = createReply(h.db, reader, id, { body: "Queued child.", lang: "en", parentId: parent.id });
   let results: Promise<PromiseSettledResult<unknown>[]> | undefined;
   try {
@@ -385,8 +382,6 @@ it.skipIf(!PG_MODE)("orders a signed reply edit after an already queued child re
     results = Promise.allSettled([child, edited]);
     await expect.poll(waiting).toBeGreaterThanOrEqual(2);
   } finally { release(); }
-  try {
-    await blocker;
-    expect(await results!).toMatchObject([{ status: "fulfilled", value: { ok: true } }, { status: "fulfilled", value: { status: 302 } }]);
-  } finally { await h.db.update(profiles).set({ signPosts: false }).where(eq(profiles.userId, author)); }
+  await blocker;
+  expect(await results!).toMatchObject([{ status: "fulfilled", value: { ok: true } }, { status: "fulfilled", value: { status: 302 } }]);
 });

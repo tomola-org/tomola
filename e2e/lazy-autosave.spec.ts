@@ -2,7 +2,6 @@ import { expect, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { clientHeaders, enMessages as en, useMember, waitForFormReady } from "./helpers";
 import { routeModule } from "./support/module-route";
-import { acceptSignedWrite, installSeededSigningKey } from "./signing-helper";
 
 const body = (page: Page) => page.locator('textarea[name="body"]').first();
 const form = (page: Page) => page.locator("form", { has: body(page) }).first();
@@ -109,18 +108,19 @@ test("a reply draft stays clean on opening and saves writing entered before auto
   }
 });
 
-test("signing waits for an in-flight autosave and reviews the latest saved fields", async ({ page }) => {
+test("publishing waits for in-flight autosave and submits the latest fields", async ({ page }) => {
   await page.setExtraHTTPHeaders(clientHeaders("10.31.4.5"));
-  await useMember(page, "lazy_autosave_signing@example.com", "/settings");
-  await installSeededSigningKey(page, "lazy_autosave_signing@example.com");
+  await useMember(page, "lazy_autosave_publish_pending@example.com", "/settings");
   await page.goto("/t/new");
   await waitForFormReady(form(page));
   await expect(form(page)).toHaveAttribute("data-autosave", "ready");
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   let stored = false;
-  let signing = 0;
-  page.on("request", request => { if (new URL(request.url()).pathname === "/signing") signing++; });
+  const isPublish = (request: import("@playwright/test").Request) =>
+    request.method() === "POST" && new URL(request.url()).pathname.replace(/\.data$/, "") === "/t/new";
+  let publications = 0;
+  page.on("request", request => { if (isPublish(request)) publications++; });
   await page.route("**/drafts/autosave", async route => {
     const response = await route.fetch();
     stored = true;
@@ -130,20 +130,17 @@ test("signing waits for an in-flight autosave and reviews the latest saved field
   try {
     await body(page).fill("The first saved text");
     await expect.poll(() => stored).toBe(true);
-    await body(page).fill("The latest text before signing");
+    await body(page).fill("The latest text before publishing");
     await page.getByRole("button", { name: en.submit_post, exact: true }).click();
-    expect(signing).toBe(0);
+    expect(publications).toBe(0);
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    const preview = page.waitForRequest(request => new URL(request.url()).pathname === "/signing");
+    const publishing = page.waitForRequest(isPublish);
     release();
-    const fields = (await preview).postDataJSON().fields as [string, string][];
-    const submitted = new Map(fields);
-    expect(submitted.get("body")).toBe("The latest text before signing");
+    const submitted = new URLSearchParams((await publishing).postData() ?? "");
+    expect(submitted.get("body")).toBe("The latest text before publishing");
     expect(submitted.get("fromDraft")).toMatch(/^\d+$/);
-    expect(await (await page.request.get(`/drafts/${submitted.get("fromDraft")}`)).text()).toContain("The latest text before signing");
-    await acceptSignedWrite(page);
     await expect(page).toHaveURL(/\/t\/\d+\?posted=/);
-    await expect(page.locator(".longread").first()).toContainText("The latest text before signing");
+    await expect(page.locator(".longread").first()).toContainText("The latest text before publishing");
   } finally { release(); }
 });
 

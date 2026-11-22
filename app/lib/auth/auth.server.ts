@@ -142,7 +142,7 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
             const reject = () => new APIError("UNAUTHORIZED", { code: proof?.method === "google" ? "account_not_linked" : "INVALID_TOKEN", message: "Invalid account" });
             try { await lockSigningMember(tx, value.userId); }
             catch (error) { if (error instanceof SigningError) throw reject(); throw error; }
-            const [profile] = await tx.select({ passkeyOnly: profiles.passkeyOnly, signPosts: profiles.signPosts }).from(profiles).where(eq(profiles.userId, value.userId));
+            const [profile] = await tx.select({ passkeyOnly: profiles.passkeyOnly }).from(profiles).where(eq(profiles.userId, value.userId));
             if (profile?.passkeyOnly && proof?.method !== "passkey") throw reject();
             if (proof?.method === "google" && !(await linkedGoogle(tx, value.userId, proof.googleSubject))) throw reject();
             if (proof?.method === "google" && proof.sourceSessionId && profile && protectedLogin(profile)) throw reject();

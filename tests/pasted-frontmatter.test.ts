@@ -109,9 +109,9 @@ describe("the new topic and reply forms with pasted frontmatter", () => {
   afterAll(() => h.restore());
 
   const newTopic = async (fields: Record<string, string>) =>
-    h.outcome(async () => (await import("~/routes/topic-new")).action(await h.signedArgs(h.request("/t/new", { as: "hana", form: fields }))));
+    h.outcome(async () => (await import("~/routes/topic-new")).action(h.args(h.request("/t/new", { as: "hana", form: fields }))));
   const reply = async (fields: Record<string, string>) =>
-    h.outcome(async () => (await import("~/routes/topic")).action(await h.signedArgs(h.request(`/t/${topicId}`, { as: "hana", form: fields }), { id: String(topicId) })));
+    h.outcome(async () => (await import("~/routes/topic")).action(h.args(h.request(`/t/${topicId}`, { as: "hana", form: fields }), { id: String(topicId) })));
 
   it("posts a topic whose title, language and AI declaration come from the pasted frontmatter", async () => {
     const res = await newTopic({ title: "", body: md("title: From frontmatter\nlang: en\nai_assistance: coauthor", "Hello there."), lang: "" });
@@ -221,7 +221,7 @@ describe("the new topic and reply forms with pasted frontmatter", () => {
   it("strips the pasted frontmatter from the preview only for the forms that strip it on submit, and decides exactly as submit does", async () => {
     const { action } = await import("~/routes/preview");
     const preview = async (body: string, flag?: string) => {
-      const res = (await action(await h.signedArgs(h.request("/preview", { as: "hana", form: { body, ...(flag ? { frontmatter: flag } : {}) } })))) as Response;
+      const res = (await action(h.args(h.request("/preview", { as: "hana", form: { body, ...(flag ? { frontmatter: flag } : {}) } })))) as Response;
       return { status: res.status, text: await res.text() };
     };
     const shown = await preview(md("title: T\nlang: en", "Only **this** shows."), "topic");
@@ -259,7 +259,7 @@ describe("the new topic form drawn again after a refusal (no JavaScript)", () =>
     aiMaterialLabels: { add: m.ai_material_add(), title: m.ai_material_title(), help: m.ai_material_input_help({ count: POST_AI_MATERIAL_CHARS }), error: m.ai_material_error() },
     previewFailureLabel: m.draft_autosave_failed(),
     defaultLang: "ja", prefill: null, asksStance: false, alt: null, altNotFound: false, draftIds: [],
-    signPosts: false, formKey: "plain", initialValues: { title: undefined, body: undefined },
+    formKey: "plain", initialValues: { title: undefined, body: undefined },
     draftStart: { startTitle: "", startBody: "" }, draftScope: "topic-new", responseField: { name: "responseTo", value: "" },
     responsePlaceHint: null, newDraftAction: "/t/new?newdraft=1", showIntro: false, sharePrefilled: false, intro: false,
   }));

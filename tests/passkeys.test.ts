@@ -150,7 +150,7 @@ describe("the passkey list in /settings", () => {
 
   it("removes a passkey of one's own, but not someone else's, and not from another origin", async () => {
     const remove = (as: string, id: string, headers: Record<string, string> = {}) =>
-      h.outcome(async () => settingsAction(await h.signedArgs(h.request("/settings", { as, form: { intent: "delete-passkey", passkeyId: id }, headers }))));
+      h.outcome(async () => settingsAction(h.args(h.request("/settings", { as, form: { intent: "delete-passkey", passkeyId: id }, headers }))));
     expect(await remove("hana", "p-kim-1")).toMatchObject({ status: 404 });
     expect(await h.db.select().from(passkey).where(eq(passkey.id, "p-kim-1"))).toHaveLength(1);
     expect(await remove("hana", "p-hana-1", { origin: "https://evil.example" })).toMatchObject({ status: 403 });

@@ -63,7 +63,7 @@ export const onboardingData = loaderFixture<OnboardingRoute.ComponentProps["load
 }));
 export const settingsData = loaderFixture<SettingsRoute.ComponentProps["loaderData"]>(() => ({
   homeArea: "ja", handle: "fixture", displayLang: null, readLangs: ["ja"], nextAreaChange: null,
-  nextHandleChange: null, saved: null, passkeys: [], emailPref: "auto", signPosts: false,
+  nextHandleChange: null, saved: null, passkeys: [], emailPref: "auto",
   login: { fresh: false, passkeyFresh: false, remainingFresh: false, protected: false, needsRecovery: false, passkeyOnly: false, canEnable: false, remaining: { tokens: 0, connections: 0, links: 0 } },
   shareBookmarklet: "", nushi: null, avatarUrl: "/avatar/fixture", avatarUploaded: false, introEntryId: null,
   returnTo: null, displayName: null, displayNameLatin: null, colorScheme: null, credentialFresh: false,
@@ -110,7 +110,7 @@ export const topicData = loaderFixture<TopicData>(() => ({
   loadedAt: "2026-10-03T00:00:00.000Z", stanceTag: null, follow: null, saved: false, postedFollowed: false,
   replyTarget: null, replyToTopic: false, writeTag: null, langParam: "en", markdownHref: "/t/1.md",
   replyCount: 0, replyLangCount: 0, replyBranches: null, page: 1, hasNextPage: false, pageCount: 1,
-  latestReplyHref: null, operator: false, ownerId: null, connectDraftLabel: m.connect_draft_link(), defaultLang: "ja", signPosts: false,
+  latestReplyHref: null, operator: false, ownerId: null, connectDraftLabel: m.connect_draft_link(), defaultLang: "ja",
   displayLang: "en", readingLanguage: { current: "en", enabled: ["ja", "en"], usual: "en" }, translating: [],
   related: { rows: [], omitted: false, hasNext: false, pageCount: 1 },
   aiOpen: { mdUrl: "http://localhost/t/1.md", mdPath: "/t/1.md" },

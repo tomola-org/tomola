@@ -21,7 +21,7 @@ export function runRetentionCleanup(db: Db, now = new Date(), options: Retention
     await drainRetentionRows(db, "push_deliveries", pushDeliveries, and(isNotNull(pushDeliveries.completedAt), lt(pushDeliveries.completedAt, daysBefore(now, RETENTION.finishedPushDays)))!, results);
     // The ledger contains no member identifier or request text; no link to anonymize.
     await drainRetentionRows(db, "llm_usage", llmUsage, lt(llmUsage.createdAt, monthsBefore(now, RETENTION.llmUsageMonths)), results);
-    // Short-lived signing requests also contain copies of post text.
+    // Historical posting challenges can contain copies of post text.
     await drainRetentionRows(db, "signing_challenges", signingChallenges, lte(signingChallenges.expiresAt, now), results);
     return results;
   });

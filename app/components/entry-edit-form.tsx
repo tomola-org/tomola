@@ -15,7 +15,7 @@ import { languageLabel } from "~/lib/language-label";
 import { LANG_LABELS, isLang } from "~/lib/languages";
 import type { StanceTag } from "~/lib/stances";
 import { m } from "~/paraglide/messages.js";
-import { SignedForm, SendButton } from "~/components/signed-form";
+import { EntryForm, SendButton } from "~/components/entry-form";
 
 const AiImport = lazy(() => import("~/components/edit-ai-import"));
 const RefusedEditKeeper = lazy(() => import("~/components/refused-edit-keeper"));
@@ -36,8 +36,6 @@ export function EntryEditForm({
   editVersion,
   conflict,
   errorText,
-  signingView,
-  signPosts,
   BodyEditor,
   bodyAccessory,
   writingHelp,
@@ -61,8 +59,6 @@ export function EntryEditForm({
   conflict?: { message: string; label: string; href: string };
   // The screen may supply the error wording: a typo-correction error can concern either the moderation action or the post. Otherwise use entryErrorMessage.
   errorText?: string;
-  signingView?: string;
-  signPosts: boolean;
   BodyEditor?: ComponentType<BodyEditorProps>;
   bodyAccessory?: ReactNode;
   writingHelp?: ReactNode;
@@ -82,8 +78,7 @@ export function EntryEditForm({
     <main className="space-y-4">
       <h1 className="text-2xl font-bold">{heading}</h1>
       {fixNote && <p className="ui-meta text-muted-foreground">{m.original_lang({ lang: languageLabel(entry.lang) })}</p>}
-      <SignedForm protectUnsaved="edit" unsavedInitialValues={{ title: base.title, body: base.body, lang: base.lang, stanceTag: stanceTag?.current ?? "" }} signatureRequired={signPosts} method="post" className="space-y-3" key={baseSourceHash}>
-        {signingView && <input type="hidden" name="signingView" value={signingView} />}
+      <EntryForm protectUnsaved="edit" unsavedInitialValues={{ title: base.title, body: base.body, lang: base.lang, stanceTag: stanceTag?.current ?? "" }} method="post" className="space-y-3" key={baseSourceHash}>
         {baseSourceHash !== undefined && <input type="hidden" name="sourceHash" value={baseSourceHash} />}
         {opened.editVersion !== undefined && <input type="hidden" name="editVersion" value={opened.editVersion} />}
         {keeper && <DraftKeeper {...keeper} startTitle={entry.kind === "topic" ? orBlank(base.title) : undefined} startBody={base.body} />}
@@ -111,7 +106,7 @@ export function EntryEditForm({
             {m.cancel()}
           </Link>
         </div>
-      </SignedForm>
+      </EntryForm>
     </main>
   );
 }

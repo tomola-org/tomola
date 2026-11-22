@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { Route } from "./+types/draft-preview";
 import { ArticleByline, ArticleSignature, ArticleVillageLink } from "~/components/article-byline";
 import { RouteError } from "~/components/route-error";
-import { SendButton, SignedForm } from "~/components/signed-form";
+import { SendButton, EntryForm } from "~/components/entry-form";
 import { SigningChanges, SigningLastEditor } from "~/components/signing-changes";
 import { StanceChoices } from "~/components/stance-panel";
 import { TranslatedEntry } from "~/components/translated-entry";
@@ -62,7 +62,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const author = { handle: profile.handle, name: profile.displayName, latin: profile.displayNameLatin };
   const content = { title, body, lang };
   const requiresReview = needsDraftConfirmation(row);
-  const confirmation = requiresReview && !profile.signPosts && (await getWriter(db, user.id, { profile })).ok
+  const confirmation = requiresReview && (await getWriter(db, user.id, { profile })).ok
     ? await confirmationForDraftPreview(db, row, posting)
     : undefined;
   const signingView = signingViewToken({ userId: user.id, kind: "draft", id: row.id, version: String(version), ...content });
@@ -76,7 +76,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     id: row.id, version, asksStance, content, headline, html, author, village,
     reading: readingVersions(html, lang, original),
     posting: posting && { selected: posting.selected, explicit: posting.explicit },
-    signingView, signPosts: profile.signPosts, editor, requiresReview, confirmation,
+    signingView, editor, requiresReview, confirmation,
     baseline: row.aiBaseline ? { ...row.aiBaseline, lang } : null,
     tabTitle: m.draft_preview_title({ title: title ?? (headline || m.draft_untitled()) }),
   }, { headers: headers() });
@@ -96,7 +96,7 @@ export function meta({ loaderData }: Route.MetaArgs) {
 }
 
 export default function DraftPreview({ loaderData, actionData }: Route.ComponentProps) {
-  const { id, content, headline, html, version, asksStance, reading, author, village, posting, signingView, signPosts, editor, baseline, requiresReview, confirmation } = loaderData;
+  const { id, content, headline, html, version, asksStance, reading, author, village, posting, signingView, editor, baseline, requiresReview, confirmation } = loaderData;
   const [prior] = useState(() => ({ id, version, content: previousDraftView(id) }));
   useEffect(() => { clearPreviousDraftView(id); }, [id]);
   const viewed = prior.id === id && prior.version === version && prior.content?.lang === content.lang ? prior.content : baseline;
@@ -106,7 +106,7 @@ export default function DraftPreview({ loaderData, actionData }: Route.Component
   const conflictMessage = m.draft_preview_conflict();
   const stale = error === "draft_conflict" || error === "not_found" || error === "village_changed" || actionData?.saved;
   return <>
-    <SignedForm method="post" action={`${editPath}/preview`} signatureRequired={signPosts} confirmAiDraft={requiresReview} signIntent="publish" fixedSigningContent draftConflictMessage={conflictMessage}
+    <EntryForm method="post" action={`${editPath}/preview`} confirmAiDraft={requiresReview} fixedContent draftConflictMessage={conflictMessage}
       className="sticky top-0 z-10 mb-6">
       <input type="hidden" name="version" value={version} />
       <input type="hidden" name="title" value={content.title ?? ""} />
@@ -130,11 +130,11 @@ export default function DraftPreview({ loaderData, actionData }: Route.Component
           <SendButton intent="publish" disabled={stale || !content.body.trim() || posting !== null && !village}>{m.draft_preview_publish()}</SendButton>
         </div>
       </aside>
-    </SignedForm>
+    </EntryForm>
     <main className="reading-column reading-topic space-y-6">
       {error && <p role="alert" className="text-destructive">{error === "draft_conflict" ? conflictMessage : error === "not_found" ? m.ai_write_gone() : entryErrorMessage(error)}</p>}
       {isDraftConfirmationError(error) && <noscript><a className="underline" href={`${editPath}/preview`}>{m.draft_confirmation_reload()}</a></noscript>}
-      {(editor.id || signPosts && viewed) && <div className="space-y-2 ui-help">
+      {(editor.id || requiresReview && viewed) && <div className="space-y-2 ui-help">
         <SigningLastEditor editor={editor} />
         <SigningChanges preview={{ viewed, current: null, content }} />
       </div>}

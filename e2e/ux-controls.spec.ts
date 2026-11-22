@@ -5,79 +5,10 @@ import { test, richEditorTest } from "./editor-fixture";
 import fs from "node:fs";
 import path from "node:path";
 import { clientHeaders, useMember, waitForClientRoute, waitForFormReady, waitForHydration, state, enMessages as m, openReplyMore } from "./helpers";
-import { installSeededSigningKey } from "./signing-helper";
 
 const body = (page: Page) => page.locator('textarea[name="body"]');
 const post = (page: Page, url: string, text: string, lang = "en") => page.request.post(url, { form: { body: text, lang }, headers: { Origin: new URL(page.url()).origin } });
 const fixture = (): { topicId: number; replyId: number; questionId: number } => JSON.parse(fs.readFileSync(path.join(state().dir, "ux-controls.json"), "utf8"));
-
-test.describe("signing failure guidance", () => {
-  let context: BrowserContext;
-  test.beforeAll(async ({ browser }) => {
-    context = await browser.newContext({ extraHTTPHeaders: clientHeaders("10.31.4.6") });
-    const page = await context.newPage();
-    await useMember(page, "ux_signer@example.com", "/settings");
-    await installSeededSigningKey(page, "ux_signer@example.com");
-    if (!(await page.locator("#settings-advanced").evaluate(element => (element as HTMLDetailsElement).open))) await page.locator("#settings-advanced > summary").click();
-    await expect(page.getByRole("checkbox", { name: m.settings_sign_posts_label, exact: true })).toBeChecked();
-    await page.close();
-  });
-  test.afterAll(() => context?.close());
-  for (const [kind, status, lacksPasskeys] of [["cancelled", 0, false], ["unsupported", 0, false], ["network_failed", 502, false], ["network_failed", 503, false], ["login_required", 401, false], ["network_failed", 502, true]] as const) {
-    test(`explains a signing failure: ${kind} ${status}${lacksPasskeys ? " on unsupported device" : ""}`, async () => {
-      const page = await context.newPage();
-      try {
-        await page.goto("/t/new");
-        await waitForClientRoute(page);
-        // Keep early input covered: recovery must not prepend earlier failed writing.
-        await body(page).fill("Keep this text after the signing failure.");
-        await waitForFormReady(page.locator("form", { has: body(page) }));
-        await expect(page.locator('form[data-autosave="ready"]')).toHaveCount(1);
-        await expect(body(page)).toHaveValue("Keep this text after the signing failure.");
-        if (lacksPasskeys) await page.evaluate(() => Object.defineProperty(window, "PublicKeyCredential", { configurable: true, value: undefined }));
-        if (kind === "network_failed" || kind === "login_required") {
-          await page.route("**/signing", route => route.fulfill({ status, contentType: status === 503 ? "text/plain" : "text/html", body: "Temporarily unavailable" }));
-        } else {
-          await page.evaluate(kind => {
-            if (kind === "unsupported") Object.defineProperty(window, "PublicKeyCredential", { configurable: true, value: undefined });
-            else Object.defineProperty(navigator.credentials, "get", { configurable: true, value: () => Promise.reject(new DOMException("Cancelled", "NotAllowedError")) });
-          }, kind);
-        }
-        await page.getByRole("button", { name: m.submit_post, exact: true }).click();
-        if (kind === "cancelled" || kind === "unsupported") {
-          await page.getByRole("dialog").getByRole("button", { name: m.signing_accept_post, exact: true }).click();
-        }
-        await expect(page.getByRole("alert")).toHaveText(m[`signing_${kind}`]);
-        if (kind === "cancelled" || kind === "unsupported") {
-          await expect(page.getByRole("dialog").getByRole("button", { name: m.signing_accept_post, exact: true })).toBeEnabled();
-          await expect(page.getByRole("dialog").getByRole("button", { name: m.save_draft, exact: true })).toHaveCount(0);
-          await page.getByRole("dialog").getByRole("button", { name: m.cancel, exact: true }).click();
-          await expect(page.locator('[data-draft-autosave]')).toHaveAttribute("data-draft-autosave", "saved");
-        }
-        await expect(body(page)).toHaveValue("Keep this text after the signing failure.");
-        if (kind === "login_required") await expect(page.getByRole("link", { name: m.login_title, exact: true })).toHaveAttribute("href", /\/login\?next=/);
-      } finally { await page.close(); }
-    });
-  }
-  for (const intent of ["preview", "challenge"]) test(`explains maintenance during signing ${intent} and keeps the text`, async () => {
-    const page = await context.newPage();
-    try {
-      await page.goto("/t/new");
-      await waitForClientRoute(page);
-      await body(page).fill("Keep this text during maintenance.");
-      await waitForFormReady(page.locator("form", { has: body(page) }));
-      await expect(page.locator('form[data-autosave="ready"]')).toHaveCount(1);
-      await expect(body(page)).toHaveValue("Keep this text during maintenance.");
-      await page.route("**/signing", route => route.request().postDataJSON().intent === intent
-        ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "maintenance_readonly", message: m.maintenance_readonly }) })
-        : route.continue());
-      await page.getByRole("button", { name: m.submit_post, exact: true }).click();
-      if (intent === "challenge") await page.getByRole("dialog").getByRole("button", { name: m.signing_accept_post, exact: true }).click();
-      await expect(page.getByRole("alert")).toHaveText(m.maintenance_readonly);
-      await expect(body(page)).toHaveValue("Keep this text during maintenance.");
-    } finally { await page.close(); }
-  });
-});
 
 test("one press reports a translation, the title is reported on its own, and details update a report", async ({ browser }) => {
   const authorContext = await browser.newContext();
@@ -185,7 +116,7 @@ test("reply AI saves a reply draft and imports text before publication", async (
     await beforeHydration(page, topicPath, async () => {
       await body(page).fill("My original");
       field = await body(page).elementHandle();
-      controls = await routeModule(page, "app/components/signed-form-controls.tsx", async route => { await held; await route.continue(); });
+      controls = await routeModule(page, "app/components/entry-form-controls.tsx", async route => { await held; await route.continue(); });
     }, () => waitForHydration(page));
     await controls.assertHit();
     await expect(reply).not.toHaveAttribute("data-ready", "true");

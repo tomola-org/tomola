@@ -9,7 +9,7 @@ import { CHAT_CONSENT_VERSION } from "../app/lib/village-chat-consent";
 
 export async function seedAccountDeletion(db: Db, directory: string) {
   const result: Record<string, { topicId: number; slug: string; body: string; chat: string }> = {};
-  for (const scenario of ["keep", "delete", "signed", "duplicate", "choose"]) {
+  for (const scenario of ["keep", "delete", "duplicate", "choose"]) {
     const member = async (role: string) => {
       const [row] = await db.select({ id: user.id }).from(user).where(eq(user.email, `quit_${scenario}_${role}@example.com`));
       if (!row) throw new Error("Missing account deletion fixture member");

@@ -16,7 +16,7 @@ describe("after posting a reply", () => {
   afterAll(() => h.restore());
 
   const reply = async (query: string) =>
-    h.outcome(async () => (await import("~/routes/topic")).action(await h.signedArgs(h.request(`/t/${topicId}${query}`, { as: "hana", form: { body: "返信", lang: "ja", aiAssistance: "none" } }), { id: String(topicId) })));
+    h.outcome(async () => (await import("~/routes/topic")).action(h.args(h.request(`/t/${topicId}${query}`, { as: "hana", form: { body: "返信", lang: "ja", aiAssistance: "none" } }), { id: String(topicId) })));
 
   it("keeps ?lang= in the redirect, and drops an unknown value", async () => {
     expect((await reply("?lang=en")).location).toMatch(new RegExp(`^/t/${topicId}\\?lang=en&posted=(\\d+)#c-\\1$`));

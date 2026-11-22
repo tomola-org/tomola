@@ -480,7 +480,6 @@ async function loaderImplementation({ request, params }: Route.LoaderArgs) {
     ownerId: user?.id ?? null,
     connectDraftLabel: m.connect_draft_link(),
     defaultLang: profile ? defaultPostLang(profile) : displayLang,
-    signPosts: profile?.signPosts ?? false,
     displayLang,
     readingLanguage: readingLanguageChoice(request, profile),
     translating,
@@ -1022,7 +1021,7 @@ export default function Topic({ loaderData, actionData }: Route.ComponentProps) 
         {/* Clear only after the member publishes a reply; revalidation preserves the editor. */}
         {/* Drop the AI copy when the published reply first renders, ahead of the form reset. */}
         {canReply && loaderData.ownerId && (
-          <TopicReplyForm key={replyFormKey} signatureRequired={loaderData.signPosts} respondWithPost={loaderData.respondWithPost}
+          <TopicReplyForm key={replyFormKey} respondWithPost={loaderData.respondWithPost}
             nushiAvailable={loaderData.nushiAvailable}
             owner={loaderData.ownerId} threadId={topic.id} keeper={{ scope: `reply:${topic.id}:${replyTarget?.id ?? ""}`, family: `reply:${topic.id}:`, startBody: "" }}
             error={actionData?.intent === "reply" ? actionData.error ?? undefined : undefined}

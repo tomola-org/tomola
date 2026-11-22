@@ -4,7 +4,7 @@ import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
 import { createReply, createTopic, softDeleteEntry } from "~/lib/entries.server";
 import { createDraft } from "~/lib/drafts.server";
 import { drafts, entries } from "~/lib/db/schema";
-import { previewSignedWrite } from "~/lib/signing.server";
+import { previewDraftPublication } from "~/lib/signing.server";
 
 let h: RouteHarness;
 beforeAll(async () => { h = await setupRouteHarness(); await h.signIn("hana"); await h.signIn("kim"); });
@@ -21,13 +21,19 @@ const reply = async (threadId: number, body: string, parentId?: number) => {
   return r.id;
 };
 const form = (fields: Record<string, string>) => { const f = new FormData(); f.set("body", "A new reply"); f.set("lang", "en"); for (const [k, v] of Object.entries(fields)) f.set(k, v); return f; };
-const contextOf = async (path: string, fields: Record<string, string> = {}, userId = h.ids.kim) => (await previewSignedWrite(h.db, userId, path, form(fields))).targetContext;
+async function contextOf(target: { threadId?: number; parentId?: number; altOf?: number }) {
+  const userId = h.ids.kim;
+  const draft = await createDraft(h.db, userId, { kind: "topic", body: "Draft", lang: "en" }, { via: "api" });
+  if (!draft.ok) throw new Error(draft.error);
+  await h.db.update(drafts).set({ kind: target.threadId ? "reply" : "topic", asksStance: target.altOf !== undefined, ...target }).where(eq(drafts.id, draft.id));
+  return (await previewDraftPublication(h.db, userId, `/drafts/${draft.id}`, form({ intent: "publish", version: "1" }))).targetContext;
+}
 
-describe("signing preview target context", () => {
+describe("draft confirmation target context", () => {
   it("shows the topic and the reply being answered on a normal reply", async () => {
     const t = await topic("Live topic", "Live topic body");
     const r = await reply(t, "Live reply body");
-    const context = await contextOf(`/t/${t}`, { parentId: String(r) });
+    const context = await contextOf({ threadId: t, parentId: r });
     expect(context.thread?.body).toBe("Live topic body");
     expect(context.parent?.body).toBe("Live reply body");
   });
@@ -38,12 +44,12 @@ describe("signing preview target context", () => {
     await softDeleteEntry(h.db, t);
     const live = await topic("Live target", "Live target body");
     // As the parent of a reply in the deleted topic.
-    expect(await contextOf(`/t/${t}`, { parentId: String(r) })).toEqual({ thread: null, parent: null });
+    expect(await contextOf({ threadId: t, parentId: r })).toEqual({ thread: null, parent: null });
     // As the reply's own id used as a topic id, and as an alternative framing's original.
-    expect(await contextOf(`/t/${r}`)).toEqual({ thread: null, parent: null });
-    expect(await contextOf("/t/new", { altOf: String(r) })).toEqual({ thread: null, parent: null });
+    expect(await contextOf({ threadId: r })).toEqual({ thread: null, parent: null });
+    expect(await contextOf({ altOf: r })).toEqual({ thread: null, parent: null });
     // As a parent of a reply to some other live topic.
-    const other = await contextOf(`/t/${live}`, { parentId: String(r) });
+    const other = await contextOf({ threadId: live, parentId: r });
     expect(other.thread?.body).toBe("Live target body");
     expect(other.parent).toBeNull();
   });
@@ -51,7 +57,7 @@ describe("signing preview target context", () => {
   it("does not reveal the deleted topic itself or its replies through a plain reply preview", async () => {
     const t = await topic("Deleted root", "Deleted root body");
     await softDeleteEntry(h.db, t);
-    expect(await contextOf(`/t/${t}`)).toEqual({ thread: null, parent: null });
+    expect(await contextOf({ threadId: t })).toEqual({ thread: null, parent: null });
   });
 
   it("returns no content for targets of the wrong kind or from another topic", async () => {
@@ -60,22 +66,22 @@ describe("signing preview target context", () => {
     const ra = await reply(a, "Reply in A");
     const rb = await reply(b, "Reply in B");
     // A reply of another topic as the parent.
-    expect(await contextOf(`/t/${a}`, { parentId: String(rb) })).toMatchObject({ parent: null });
+    expect(await contextOf({ threadId: a, parentId: rb })).toMatchObject({ parent: null });
     // A topic as the parent.
-    expect(await contextOf(`/t/${a}`, { parentId: String(b) })).toMatchObject({ parent: null });
+    expect(await contextOf({ threadId: a, parentId: b })).toMatchObject({ parent: null });
     // A reply as the original of an alternative framing.
-    expect(await contextOf("/t/new", { altOf: String(ra) })).toEqual({ thread: null, parent: null });
+    expect(await contextOf({ altOf: ra })).toEqual({ thread: null, parent: null });
     // The reply's own thread still shows normally.
-    expect((await contextOf(`/t/${a}`, { parentId: String(ra) })).parent?.body).toBe("Reply in A");
+    expect((await contextOf({ threadId: a, parentId: ra })).parent?.body).toBe("Reply in A");
     // A reply id used as the thread of a reply form.
-    expect(await contextOf(`/t/${ra}`)).toMatchObject({ thread: null });
+    expect(await contextOf({ threadId: ra })).toMatchObject({ thread: null });
   });
 
   it("keeps showing a visible reply under a hidden topic, but not the hidden topic", async () => {
     const t = await topic("Hidden topic", "Hidden topic body");
     const r = await reply(t, "Visible reply under hidden topic");
     await h.db.update(entries).set({ hiddenAt: new Date() }).where(eq(entries.id, t));
-    const context = await contextOf(`/t/${t}`, { parentId: String(r) });
+    const context = await contextOf({ threadId: t, parentId: r });
     expect(context.thread).toBeNull();
     expect(context.parent?.body).toBe("Visible reply under hidden topic");
   });
@@ -84,7 +90,7 @@ describe("signing preview target context", () => {
     const t = await topic("Topic with hidden reply", "Body");
     const r = await reply(t, "Hidden reply body");
     await h.db.update(entries).set({ hiddenAt: new Date() }).where(eq(entries.id, r));
-    expect((await contextOf(`/t/${t}`, { parentId: String(r) })).parent).toBeNull();
+    expect((await contextOf({ threadId: t, parentId: r })).parent).toBeNull();
   });
 
   it("does not reveal replies of a deleted topic when publishing a saved draft", async () => {
@@ -92,7 +98,7 @@ describe("signing preview target context", () => {
     const r = await reply(t, "Reply behind a draft");
     const draft = await createDraft(h.db, h.ids.kim, { kind: "reply", threadId: t, parentId: r, body: "Draft reply", lang: "en" });
     if (!draft.ok) throw new Error(draft.error);
-    const publish = (userId: string) => previewSignedWrite(h.db, userId, `/drafts/${draft.id}`, form({ intent: "publish" }));
+    const publish = (userId: string) => previewDraftPublication(h.db, userId, `/drafts/${draft.id}`, form({ intent: "publish" }));
     const before = (await publish(h.ids.kim)).targetContext;
     expect(before.thread?.body).toBe("Draft target body");
     expect(before.parent?.body).toBe("Reply behind a draft");
@@ -109,7 +115,7 @@ describe("signing preview target context", () => {
     // Forge the stored parent directly: the draft routes validate it, but the preview must not rely on that.
     await h.db.update(drafts).set({ parentId: r }).where(eq(drafts.id, draft.id));
     await softDeleteEntry(h.db, t);
-    const context = (await previewSignedWrite(h.db, h.ids.kim, `/drafts/${draft.id}`, form({ intent: "publish" }))).targetContext;
+    const context = (await previewDraftPublication(h.db, h.ids.kim, `/drafts/${draft.id}`, form({ intent: "publish" }))).targetContext;
     expect(context.thread?.body).toBe("Draft live body");
     expect(context.parent).toBeNull();
   });
