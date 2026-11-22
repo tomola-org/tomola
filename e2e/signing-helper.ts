@@ -19,9 +19,9 @@ export async function enableSigningAuthenticator(page: Page) {
   return current;
 }
 
-export async function installSeededSigningKey(page: Page, email: string) {
+export async function installSeededSigningKey(page: Page, email: string, dir = state().dir) {
   const { client, authenticatorId } = await enableSigningAuthenticator(page);
-  const credential = JSON.parse(fs.readFileSync(path.join(state().dir, "members", `${email}.webauthn.json`), "utf8"));
+  const credential = JSON.parse(fs.readFileSync(path.join(dir, "members", `${email}.webauthn.json`), "utf8"));
   await client.send("WebAuthn.addCredential", { authenticatorId, credential });
   return { client, authenticatorId };
 }

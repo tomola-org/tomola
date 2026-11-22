@@ -9,7 +9,7 @@ export function aiDraftMember(repeatEachIndex = 0): SeedMember {
 }
 
 export const SIGNING_MEMBER_FIXTURES = new Set([
-  "signer", "language_signer", "trim_auth", "quit_signed_writer", "ux_signer",
+  "signer", "language_signer", "language_fallback", "trim_auth", "quit_signed_writer", "ux_signer",
   "edit_version_topic_signed", "edit_version_reply_signed", "vtarget_signed_review",
   "draft_autosave_personal_md", "draft_autosave_personal_rich", "lazy_autosave_signing",
   "zwrite_signing_errors", "ai_import_signed", "ai_confirm_signed",

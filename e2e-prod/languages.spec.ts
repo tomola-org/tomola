@@ -1,7 +1,7 @@
-import { smtpLoginCodeInbox, test, useMember, state } from "./helpers";
+import { state, test, useMember } from "./helpers";
 import { expect } from "@playwright/test";
 import { clientHeaders, enMessages, formatMessage, waitForFormReady } from "../e2e/helpers";
-import { addSettingsPasskey, enableSigningAuthenticator, acceptSignedWrite } from "../e2e/signing-helper";
+import { acceptSignedWrite, installSeededSigningKey } from "../e2e/signing-helper";
 
 const french = "Nous avons une place pour les personnes qui veulent partager leurs idées avec les autres.";
 
@@ -9,16 +9,9 @@ test("unopened French prose preserves its language and shows a non-blocking noti
   const context = await browser.newContext({ extraHTTPHeaders: clientHeaders("10.26.0.2") });
   const page = await context.newPage();
   try {
-    await useMember(page, "language_fallback_prod@example.com");
-    await enableSigningAuthenticator(page);
-    await page.goto("/settings");
-    await addSettingsPasskey(page, { inbox: smtpLoginCodeInbox });
-    await expect(page.getByText(enMessages.settings_passkeys_added, { exact: true })).toBeVisible();
-    if (!(await page.locator("#settings-advanced").evaluate(element => (element as HTMLDetailsElement).open))) await page.locator("#settings-advanced > summary").click();
-    await page.getByRole("checkbox", { name: enMessages.settings_sign_posts_label, exact: true }).check();
-    await page.locator('form:has(input[name="intent"][value="sign-posts"])').getByRole("button", { name: enMessages.save_changes, exact: true }).click();
-    await acceptSignedWrite(page);
-    await expect(page).toHaveURL(url => url.pathname === "/settings" && url.searchParams.get("saved") === "sign-posts" && url.hash === "#settings-signing");
+    const email = "language_fallback_prod@example.com";
+    await useMember(page, email);
+    await installSeededSigningKey(page, email, state().dir);
     await page.goto("/t/new");
     await waitForFormReady(page.locator('form', { has: page.locator('input[name="title"]') }));
     await page.getByLabel(enMessages.field_body, { exact: true }).fill(french);
