@@ -30,7 +30,7 @@
   "routes/latest": 277375,
   "routes/login": 238263,
   "routes/math-content": 240131,
-  "routes/mcp-consent": 223629,
+  "routes/mcp-consent": 223627,
   "routes/mcp-entry-delete": 244925,
   "routes/mcp-entry-edit": 297764,
   "routes/mcp-error": 202124,

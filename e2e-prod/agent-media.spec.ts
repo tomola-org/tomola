@@ -4,7 +4,7 @@ import { enMessages as en } from "../e2e/helpers";
 import { oauthLoopback } from "../e2e/support/oauth-loopback";
 import { test, expect, useMember, watchCsp, waitForClientRoute } from "./helpers";
 
-test("image upload permission is opt-in for personal tokens and OAuth consent under production CSP", async ({ page, request }) => {
+test("image uploads follow personal token and OAuth permissions under production CSP", async ({ page, request }) => {
   const watch = await watchCsp(page);
   await useMember(page, "upload_client_prod@example.com");
   await page.goto("/settings/tokens");
@@ -42,10 +42,11 @@ test("image upload permission is opt-in for personal tokens and OAuth consent un
       const verifier = "v".repeat(64);
       const params = new URLSearchParams({ client_id: clientId, redirect_uri: loopback.redirectURI, response_type: "code", scope: "draft media", resource: new URL("/mcp", page.url()).href, code_challenge_method: "S256", code_challenge: createHash("sha256").update(verifier).digest("base64url") });
       await page.goto(`/api/auth/oauth2/authorize?${params}`);
+      await waitForClientRoute(page);
       const permission = page.getByRole("checkbox", { name: en.media_upload_permission, exact: true });
-      await expect(permission).not.toBeChecked();
+      await expect(permission).toBeChecked();
       await expect(page.getByText(en.media_upload_help, { exact: true })).toBeVisible();
-      if (allowed) await permission.check();
+      if (!allowed) await permission.uncheck();
       const origin = new URL(page.url()).origin;
       await page.getByRole("button", { name: en.mcp_allow, exact: true }).click();
       await expect(page).toHaveURL(url => url.href.startsWith(loopback.redirectURI) && url.searchParams.has("code"));
