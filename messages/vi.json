@@ -1526,6 +1526,7 @@
   "settings_handle_help": "Bạn có thể đổi tên 90 ngày một lần (lần thay đổi đầu tiên được phép thực hiện bất cứ lúc nào). Tên cũ của bạn sẽ được giữ lại trong 90 ngày, và trong thời gian đó bạn có thể đổi lại tên cũ. Các lượt nhắc đến tên cũ bên trong các bài đăng sẽ được giữ nguyên.",
   "settings_handle_too_soon": "Bạn có thể đổi lại tên vào ngày {date}.",
   "nav_my_page": "Làng của tôi",
+  "nav_profile": "Hồ sơ",
   "member_page_edit_profile": "Chỉnh sửa hồ sơ",
   "member_page_write_intro": "Viết lời giới thiệu",
   "member_page_intro_hint": "Lời giới thiệu của bạn cũng xuất hiện trong danh sách giới thiệu. Dù ngắn gọn cũng sẽ giúp các thành viên khác tìm thấy bạn. Hãy viết những điều bạn quan tâm hoặc những gì bạn muốn thảo luận tại đây. Bạn không cần phải cung cấp tên thật hay cơ quan của mình.",
