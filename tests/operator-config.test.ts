@@ -1,11 +1,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { RouterContextProvider } from "react-router";
 import { afterEach, expect, it, vi } from "vitest";
+import { securityHeadersMiddleware } from "~/lib/http/security-headers.server";
 import { loadOperatorConfig, operatorDocument, publicOperatorSettings } from "~/lib/operator-config.server";
 import { hasStanceConsent, needsTrialConsent, validateTrialInput } from "~/lib/trial-consent";
 import { operatorCopy, formatOperatorCopy } from "~/lib/operator-settings";
 import { assertStartupConfig } from "~/lib/startup-checks.server";
+import { loader as loadRobots } from "~/routes/robots-txt";
 
 const temporary: string[] = [];
 afterEach(() => { vi.unstubAllEnvs(); for (const directory of temporary.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
@@ -17,6 +20,83 @@ function copy() {
   const settings = JSON.parse(fs.readFileSync(file, "utf8"));
   return { directory, file, settings, load: () => loadOperatorConfig({ TOMOLA_OPERATOR_DIR: directory }), save: () => fs.writeFileSync(file, JSON.stringify(settings)) };
 }
+
+async function requestRobots(method: "GET" | "HEAD", headers?: HeadersInit) {
+  const url = new URL("https://forum.example/robots.txt");
+  const request = new Request(url, { method, headers });
+  const args = { request, url, pattern: "/robots.txt", params: {}, context: new RouterContextProvider() };
+  return await securityHeadersMiddleware(args, async () => loadRobots(args)) as Response;
+}
+
+it("serves the operator's exact bytes with public text headers for GET and HEAD", async () => {
+  const { directory } = copy();
+  const content = Buffer.from("\uFEFF# クロール\r\nContent-Signal: search=yes\r\n");
+  fs.writeFileSync(path.join(directory, "robots.txt"), content);
+  vi.stubEnv("TOMOLA_OPERATOR_DIR", directory);
+  vi.stubEnv("NODE_ENV", "production");
+  const expectedHeaders = {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Cache-Control": "public, max-age=3600",
+    "X-Content-Type-Options": "nosniff",
+    "Cross-Origin-Opener-Policy": "same-origin",
+  };
+  for (const reading of ["", "1"]) {
+    vi.stubEnv("PUBLIC_READING", reading);
+    for (const headers of [undefined, { Cookie: "better-auth.session_token=fixture" }]) {
+      for (const method of ["GET", "HEAD"] as const) {
+        const response = await requestRobots(method, headers);
+        expect(response.status).toBe(200);
+        for (const [name, value] of Object.entries(expectedHeaders)) expect(response.headers.get(name)).toBe(value);
+        expect(response.headers.get("Content-Security-Policy")).toContain("default-src 'self'");
+        expect(Buffer.from(await response.arrayBuffer())).toEqual(method === "GET" ? content : Buffer.alloc(0));
+      }
+    }
+  }
+});
+
+it("returns 404 for GET and HEAD when the optional robots.txt is absent", async () => {
+  vi.stubEnv("TOMOLA_OPERATOR_DIR", copy().directory);
+  expect(() => assertStartupConfig()).not.toThrow();
+  expect((await requestRobots("GET")).status).toBe(404);
+  const head = await requestRobots("HEAD");
+  expect(head.status).toBe(404);
+  expect(head.body).toBeNull();
+});
+
+it("serves the startup copy even when robots.txt changes before the first request", async () => {
+  const fixture = copy();
+  const file = path.join(fixture.directory, "robots.txt");
+  fs.writeFileSync(file, "# Startup\n");
+  vi.stubEnv("TOMOLA_OPERATOR_DIR", fixture.directory);
+  assertStartupConfig();
+  fs.writeFileSync(file, "# Edited\n");
+  expect(await (await requestRobots("GET")).text()).toBe("# Startup\n");
+  expect(fixture.load().robotsTxt).toBe("# Edited\n");
+});
+
+it.each([
+  ["", "is empty"],
+  ["é".repeat(32 * 1024) + "x", "must be at most 64 KiB"],
+  [Buffer.from([0xc3, 0x28]), "must be valid UTF-8"],
+  ["# Text\0", "contains a NUL byte"],
+])("rejects invalid robots.txt at startup (%#)", (content, error) => {
+  const { directory } = copy();
+  fs.writeFileSync(path.join(directory, "robots.txt"), content);
+  expect(() => assertStartupConfig({ NODE_ENV: "test", TOMOLA_OPERATOR_DIR: directory })).toThrow(`Operator settings: robots.txt ${error}`);
+});
+
+it("accepts robots.txt of exactly 64 KiB", () => {
+  const fixture = copy();
+  const content = "é".repeat(32 * 1024);
+  fs.writeFileSync(path.join(fixture.directory, "robots.txt"), content);
+  expect(fixture.load().robotsTxt).toBe(content);
+});
+
+it("rejects an unreadable robots.txt entry at startup", () => {
+  const { directory } = copy();
+  fs.symlinkSync("missing-target", path.join(directory, "robots.txt"));
+  expect(() => assertStartupConfig({ NODE_ENV: "test", TOMOLA_OPERATOR_DIR: directory })).toThrow("Operator settings: robots.txt must be a readable file");
+});
 
 it("requires an explicit directory and readable valid JSON", () => {
   expect(() => loadOperatorConfig({})).toThrow("TOMOLA_OPERATOR_DIR is required");

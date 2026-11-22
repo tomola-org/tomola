@@ -66,13 +66,46 @@ const schema = z.object({
 }).strict();
 
 export type AiUseSettings = z.infer<typeof aiUseSchema>;
-export type OperatorConfig = PublicOperatorSettings & { aiUse: AiUseSettings; documents: Record<string, Record<string, string>> };
+export type OperatorConfig = PublicOperatorSettings & { aiUse: AiUseSettings; documents: Record<string, Record<string, string>>; robotsTxt: string | null };
 const placeholders = /【[^】]*】|\{\{[^}]*\}\}|REPLACE_ME|Example Operator|(?:contact|privacy)@example\.org/i;
 const documentKinds = ["terms", "privacy", "ai-policy", "principles-footer", "principles-rules-status", "principles-objections-contact"] as const;
+const ROBOTS_TXT_MAX_BYTES = 64 * 1024;
 
 function read(file: string): string {
   try { return fs.readFileSync(file, "utf8"); }
   catch { throw new Error(`Operator settings: missing or unreadable file ${file}`); }
+}
+
+function readRobotsTxt(directory: string): string | null {
+  const file = path.resolve(directory, "robots.txt");
+  const bytes = Buffer.alloc(ROBOTS_TXT_MAX_BYTES + 1);
+  let length = 0;
+  try {
+    if (!fs.lstatSync(file, { throwIfNoEntry: false })) return null;
+    // A nonblocking open lets us reject a FIFO even when it has no writer.
+    const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    try {
+      if (!fs.fstatSync(fd).isFile()) throw new Error("Expected a regular file");
+      while (length < bytes.length) {
+        const count = fs.readSync(fd, bytes, length, bytes.length - length, null);
+        if (count === 0) break;
+        length += count;
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    throw new Error("Operator settings: robots.txt must be a readable file");
+  }
+  if (length === 0) throw new Error("Operator settings: robots.txt is empty");
+  if (length > ROBOTS_TXT_MAX_BYTES) throw new Error("Operator settings: robots.txt must be at most 64 KiB");
+  const content = bytes.subarray(0, length);
+  if (content.includes(0)) throw new Error("Operator settings: robots.txt contains a NUL byte");
+  try {
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(content);
+  } catch {
+    throw new Error("Operator settings: robots.txt must be valid UTF-8");
+  }
 }
 
 // Validate the whole directory before returning any settings. Documents are
@@ -113,13 +146,14 @@ export function loadOperatorConfig(env: Env = process.env): OperatorConfig {
     documents[kind] = sources;
   }
   const { status: _status, ...settings } = parsed.data;
-  return { ...settings, documents };
+  return { ...settings, documents, robotsTxt: readRobotsTxt(directory) };
 }
 
 let cached: { directory: string | undefined; config: OperatorConfig } | undefined;
-export function operatorConfig(): OperatorConfig {
-  const directory = process.env.TOMOLA_OPERATOR_DIR;
-  if (!cached || cached.directory !== directory) cached = { directory, config: loadOperatorConfig() };
+export function operatorConfig(env: Env = process.env): OperatorConfig {
+  if (env !== process.env) return loadOperatorConfig(env);
+  const directory = env.TOMOLA_OPERATOR_DIR;
+  if (!cached || cached.directory !== directory) cached = { directory, config: loadOperatorConfig(env) };
   return cached.config;
 }
 

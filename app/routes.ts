@@ -88,6 +88,7 @@ export default [
   route("glossary.txt", "routes/glossary-md.ts", { id: "glossary-txt" }),
   route("glossary.yaml", "routes/glossary-export.ts"),
   // Public guidance without authentication.
+  route("robots.txt", "routes/robots-txt.ts"),
   route("llms.txt", "routes/llms-txt.ts", { id: "llms-txt" }),
   route("ai.txt", "routes/llms-txt.ts", { id: "ai-txt" }),
   route("help/ai.md", "routes/llms-txt.ts", { id: "help-ai" }),

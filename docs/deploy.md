@@ -88,12 +88,19 @@ Moving unchanged wording into settings does not change consent versions. Review
 any substantive policy change and its consent-version implications separately;
 editing copy does not automatically request renewed consent.
 
+The operator may add `robots.txt` next to `operator.json` and chooses the policy
+for search indexing and AI crawlers. The app serves the file verbatim at
+`/robots.txt` with a one-hour public cache, regardless of `PUBLIC_READING` and
+sign-in. Without the file, the URL returns 404. If present, the file must be
+readable, nonempty UTF-8, at most 64 KiB, and contain no NUL bytes. Startup checks
+these limits and accepts any directive syntax.
+
 Startup validates the complete directory before migrations in Docker and before
 accepting requests in the standalone server. Missing settings, invalid types,
 missing editions, empty documents, example values and unresolved placeholders
 stop startup with an English error. Document placeholders never switch off
-participation checks. Settings and documents are read on startup; restart the
-server after changing them. `TOMOLA_SITE_STAGE` remains independent.
+participation checks. Settings, documents and `robots.txt` are read on startup.
+Restart the server after changing them. `TOMOLA_SITE_STAGE` remains independent.
 
 For Compose, set `TOMOLA_OPERATOR_DIR` to an absolute host directory. Compose
 bind-mounts it read-only at `/operator` and sets the container's variable to that
@@ -102,10 +109,10 @@ can traverse the directories and read the files. For another container launcher,
 mount the directory read-only and set `TOMOLA_OPERATOR_DIR` to its container path.
 The image contains no site's operating documents.
 
-`pnpm dev` uses the fictional `tests/fixtures/operator/` when the variable is
-unset. Unit and browser tests use that fixed fixture too. Supply an explicit
-directory to inspect another operator locally; do not use real API keys or mail
-recipients for that check.
+`pnpm dev` uses the [fictional operator fixture](../tests/fixtures/operator/README.md)
+when the variable is unset. Unit and browser tests use that fixed fixture too.
+Supply an explicit directory to inspect another operator locally; do not use
+real API keys or mail recipients for that check.
 
 This guide describes a single-server setup with Docker Compose. It has three parts: PostgreSQL with pgvector, the app (which runs both the web server and the worker), and Caddy for HTTPS and the reverse proxy.
 

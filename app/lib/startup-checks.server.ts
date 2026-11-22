@@ -1,7 +1,7 @@
 import { assertNushiConfig } from "./nushi-config.server";
 import { pushConfig } from "./push/config.server";
 import { googleLoginConfig } from "./auth/google-config.server";
-import { loadOperatorConfig } from "~/lib/operator-config.server";
+import { operatorConfig } from "~/lib/operator-config.server";
 import { createFigureReader, figureTranslationEnabled } from "./figure-reading.server";
 import { translationEagerConfig } from "./translation-eager-config.server";
 import { assertVillageChatConfig, villageChatEnabled } from "./village-chat-enabled.server";
@@ -160,7 +160,7 @@ export function assertStartupConfig(
     resolveChatEngine(env);
   }
   homeTrialEnabled(env);
-  loadOperatorConfig(env);
+  operatorConfig(env);
   if (isDevOrTest(env)) return;
   monthlyBudgetMicro(env);
   const secret = env.BETTER_AUTH_SECRET?.trim();

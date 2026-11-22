@@ -77,13 +77,17 @@ export const middleware: MiddlewareFunction[] = [
       throw error;
     }
   }); },
-  sessionCookieMiddleware,
-  async (ctx, next) => {
-    await prepareUiLocale(ctx.request);
-    return paraglideMiddleware(ctx.request, async () => withLocaleHeaders(await next()));
-  },
-  logoutNoticeMiddleware,
-  welcomeMiddleware,
+  // Keep the operator's public robots.txt independent of session cookies, locale and flash messages.
+  ...([
+    sessionCookieMiddleware,
+    async (ctx, next) => {
+      await prepareUiLocale(ctx.request);
+      return paraglideMiddleware(ctx.request, async () => withLocaleHeaders(await next()));
+    },
+    logoutNoticeMiddleware,
+    welcomeMiddleware,
+  ] satisfies MiddlewareFunction[]).map<MiddlewareFunction>(middleware => (ctx, next) =>
+    ctx.pattern.replace(/^\//, "") === "robots.txt" ? next() : middleware(ctx, next)),
 ];
 
 // Start one job worker on the process's first load (startWorker uses globalThis to prevent duplicate startup;

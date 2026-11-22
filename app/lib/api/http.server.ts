@@ -63,11 +63,11 @@ export function notFound(request: Request, format: Format): Response {
 }
 
 // Public guidance (/llms.txt, etc.). It contains no member content and may be cached.
-export function publicResponse(request: Request, body: string, contentType: string): Response {
+export function publicResponse(request: Request, body: string, contentType: string, maxAge = 300): Response {
   return new Response(request.method === "HEAD" ? null : body, {
     headers: {
       "Content-Type": contentType,
-      "Cache-Control": "public, max-age=300",
+      "Cache-Control": `public, max-age=${maxAge}`,
       "X-Content-Type-Options": "nosniff",
     },
   });
