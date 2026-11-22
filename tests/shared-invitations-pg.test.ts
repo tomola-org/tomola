@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { completeAccountDeletion, deleteAccount, requestAccountDeletion } from "~/lib/account-delete.server";
@@ -195,7 +195,8 @@ describe.skipIf(!REAL_PG_URL)("shared invitation registration on PostgreSQL", { 
         { id: "legacy_issuer", name: "", email: "legacy_issuer@example.com" },
         { id: "legacy_waiting", name: "", email: "legacy_waiting@example.com", emailVerified: true },
       ]);
-      await old.insert(profiles).values({ userId: "legacy_issuer", handle: "legacy_issuer", handleKey: "legacy_issuer", homeArea: "other", readLangs: ["en"] });
+      // The legacy database predates later profile columns, so write only the columns it already had.
+      await old.execute(sql`insert into profiles (user_id, handle, handle_key, home_area, read_langs) values ('legacy_issuer', 'legacy_issuer', 'legacy_issuer', 'other', array['en'])`);
       await acceptTrialFixture(old, "legacy_issuer");
       const [village] = await old.insert(villages).values({ slug: "legacy-village", kind: "invite_public", name: "Legacy village" }).returning();
       await old.insert(villageMembers).values({ userId: "legacy_issuer", villageId: village.id, role: "owner" });
