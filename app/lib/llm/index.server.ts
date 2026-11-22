@@ -8,7 +8,7 @@ import { assertBudget, getBudgetState, getChatBudgetStatus } from "./usage.serve
 import { budgetAllows } from "./usage-policy";
 import { CHAT_PROMPT_VERSION, decodeChatEntities } from "./prompt.server";
 import { villageChatEnabled } from "../village-chat-enabled.server";
-import { translateChecked, type CheckedTranslation } from "./translate.server";
+import { prepareTranslationLinks, translateChecked, type CheckedTranslation } from "./translate.server";
 import { currentDivergenceSampleRate, isDivergenceSampled } from "./divergence-sample.server";
 import type { DivergenceJudge, EmbeddingEngine, EmbedRequest, EmbedResult, EngineId, JudgeRequest, JudgeResult, LlmEnv, TranslationEngine, TranslationRequest, TranslationRole } from "./types";
 
@@ -75,10 +75,10 @@ export type TranslationOutcome = CheckedTranslation & {
   costUsdMicro: number;
 };
 
-export function hasSavedTranslation(role: TranslationRole, req: TranslationRequest, opts: LlmOptions = {}): boolean {
+export async function hasSavedTranslation(role: TranslationRole, req: TranslationRequest, opts: LlmOptions = {}): Promise<boolean> {
   const engines = opts.engines ?? resolveEngines(opts.env);
   const engine = role === "primary" ? engines.primary : role === "secondary" ? engines.secondary : engines.retry;
-  return !!engine && hasPaidTranslationCall(translationCallKey(engine, req, role === "retry" ? "retry" : "translate", role));
+  return !!engine && hasPaidTranslationCall(translationCallKey(engine, (await prepareTranslationLinks(req)).request, role === "retry" ? "retry" : "translate", role));
 }
 
 export async function translate(db: Db, role: TranslationRole, req: TranslationRequest, opts: LlmOptions = {}): Promise<TranslationOutcome> {
@@ -86,15 +86,19 @@ export async function translate(db: Db, role: TranslationRole, req: TranslationR
   const engines = opts.engines ?? resolveEngines(opts.env);
   const engine = role === "primary" ? engines.primary : role === "secondary" ? engines.secondary : (engines.retry ?? null);
   const purpose = role === "retry" ? "retry" : "translate";
-  if (!engine || !hasPaidTranslationCall(translationCallKey(engine, req, purpose, role))) {
+  if (!engine) {
     assertBudget(await getBudgetState(db, now, opts.env), purpose, now, role);
+    throw new LlmError("unavailable", `No ${role} translation engine is configured`);
   }
-  if (!engine) throw new LlmError("unavailable", `No ${role} translation engine is configured`);
   let costUsdMicro = 0;
   const metered = meteredEngine(db, { ...opts, purpose, role, now: opts.clock ?? opts.now }).translation(engine, {
     reusePaidResult: true, addCost: cost => { costUsdMicro += cost; },
   });
-  const result = await translateChecked(metered, { ...req, postTranslation: true });
+  const result = await translateChecked(metered, { ...req, postTranslation: true }, async input => {
+    if (!hasPaidTranslationCall(translationCallKey(engine, input, purpose, role))) {
+      assertBudget(await getBudgetState(db, now, opts.env), purpose, now, role);
+    }
+  });
   return { ...result, engine: engine.id, costUsdMicro };
 }
 

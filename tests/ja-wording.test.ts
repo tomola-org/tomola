@@ -57,11 +57,11 @@ describe("names, precedence and what counts as the first occurrence", () => {
 });
 
 describe("versions", () => {
-  it("records the details preservation instructions for other-language sources", () => {
-    expect(promptVersionOf({ from: "other" })).toBe("translate-other-v2");
+  it("records the post prompt version for other-language sources", () => {
+    expect(promptVersionOf({ from: "other" })).toBe("translate-other-v3");
     expect(system({}, "other", "en")).toContain(":::details[");
   });
-  it("are raised for the three kinds of request", () => {
-    expect([PROMPT_VERSION, CHAT_PROMPT_VERSION, VILLAGE_PROMPT_VERSION]).toEqual(["translate-v14", "chat-v4", "village-v2"]);
+  it("records the current version of each request kind", () => {
+    expect([PROMPT_VERSION, CHAT_PROMPT_VERSION, VILLAGE_PROMPT_VERSION]).toEqual(["translate-v15", "chat-v4", "village-v2"]);
   });
 });

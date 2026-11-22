@@ -18,7 +18,7 @@ export function nushiReadingTranslator(
 ) {
   const metered = meteredEngine(db, { ...options, purpose: "ask_village" }).translation(engine);
   return async (request: Pick<TranslationRequest, "text" | "from" | "to">) => {
-    const result = await translateChecked(metered, { ...request, signal: options.signal });
+    const result = await translateChecked(metered, { ...request, nushiReading: true, signal: options.signal });
     return result.text.length > NUSHI_READING_MAX || result.flags.some(rejectsFlag) ? null : result.text;
   };
 }

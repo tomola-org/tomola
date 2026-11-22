@@ -79,7 +79,11 @@ it.each([
   "[price](https://example.org/$5/$10)",
 ])("preserves dollar-bearing link destinations while preventing math: %s", async link => {
   const source = `${link} を参照。`;
-  const result = await translateChecked(engineReturning(`See ${link}.`), { text: source, from: "ja", to: "en" });
+  const fake = createFakeEngine();
+  const result = await translateChecked({ ...fake, async translate(req) {
+    const out = await fake.translate(req);
+    return { ...out, text: `See ${req.text.replace(" を参照。", "")}.` };
+  } }, { text: source, from: "ja", to: "en" });
   expect(result).toMatchObject({ flags: [], attempts: 1 });
   expect(extractLinks(result.text)).toEqual(extractLinks(source));
   const html = await renderMarkdown(result.text);

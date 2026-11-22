@@ -1,3 +1,4 @@
+import { markdownTask } from "~/lib/markdown-budget.server";
 import { createHash, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { Db } from "~/lib/db/client.server";
@@ -95,7 +96,7 @@ export async function runEvaluation(db: Db, set: EvalSet, env: LlmEnv, deps: { t
         let leakDetections = out.leakDetections;
         let title: string | undefined;
         if (item.title) {
-          const result = await translateChecked(metered, { text: item.title, from: item.from, to, field: "title", glossary: matchGlossary(glossary.filter(r => r.lang === item.from && r.targetLang === to), item.title), titleBodyContext: titleBodyContext(item.text, out.text, item.title), ...(terminology ? { terminology } : {}) });
+          const result = await translateChecked(metered, { text: item.title, from: item.from, to, field: "title", glossary: matchGlossary(glossary.filter(r => r.lang === item.from && r.targetLang === to), item.title), titleBodyContext: await markdownTask("protectedTitleBodyContext", [item.text, out.text, item.title]), ...(terminology ? { terminology } : {}) });
           title = result.text; flags.push(...result.flags); leakDetections += result.leakDetections;
           translation = textWithTitle(title, out.text);
         }

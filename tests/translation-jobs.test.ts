@@ -77,6 +77,32 @@ const jobRows = (db: Db, kind: string) => db.select().from(jobs).where(eq(jobs.k
 const transRows = (db: Db, entryId: number) =>
   db.select().from(translations).where(eq(translations.entryId, entryId)).orderBy(asc(translations.lang), asc(translations.field), asc(translations.kind));
 
+it("sends masked post destinations to the engine and saves the original addresses", async () => {
+  const db = await setup();
+  const url = "https://docs.example.test/guide/one#part";
+  const alternate = "https://docs.example.test/guide/two";
+  const body = `本文 [資料](${url}) と <${alternate}>。再掲 [資料](${url})。`;
+  const title = `題 [項目](${url})`;
+  const id = await newTopic(db, { body, title });
+  const fake = createFakeEngine();
+  const requests: TranslationRequest[] = [];
+  const primary: TranslationEngine = { ...fake, async translate(req) {
+    requests.push(req);
+    return fake.translate(req);
+  } };
+  await run(db, { primary, secondary: null, judge: null }, { now: new Date(Date.now() + 1_000) });
+  expect(requests.find(req => req.field === "title" && req.titleBodyContext)?.titleBodyContext).toMatch(/TMLINK\d+X\d+Z/);
+  for (const request of requests) {
+    expect(request.text).not.toContain("docs.example.test");
+    expect(request.titleBodyContext ?? "").not.toContain("docs.example.test");
+  }
+  const rows = (await transRows(db, id)).filter(row => row.lang === "fr");
+  expect(rows).toEqual(expect.arrayContaining([
+    expect.objectContaining({ field: "body", text: `[fr] ${body}`, flags: [], promptVersion: PROMPT_VERSION }),
+    expect.objectContaining({ field: "title", text: `[fr] ${title}`, flags: [], promptVersion: PROMPT_VERSION }),
+  ]));
+});
+
 it("resets first display for new source revisions, preserving it for retries of the same revision", async () => {
   const db = await setup();
   const id = await newTopic(db);

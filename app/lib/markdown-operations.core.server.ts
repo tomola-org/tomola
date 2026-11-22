@@ -8,6 +8,7 @@ import * as structure from "./llm/structure.core.server.ts";
 import * as copyDetection from "./llm/copy-detection.core.server.ts";
 import * as langDetect from "./lang-detect.core.server.ts";
 import * as headline from "./headline.core.server.ts";
+import { maskLinkContext, maskLinkTargets, protectedTitleBodyContext, restoreLinkTargets } from "./llm/link-targets.core.server.ts";
 import * as inspection from "./llm/translation-inspect.core.server.ts";
 import * as frontmatter from "./entry-frontmatter.core.server.ts";
 import * as draftIssues from "./draft-issues.core.server.ts";
@@ -34,6 +35,7 @@ const core = {
 
 export const markdownOperations = {
   ...core,
+  maskLinkTargets, maskLinkContext, protectedTitleBodyContext, restoreLinkTargets,
   renderUncachedMarkdown(...args: Parameters<typeof core.renderMarkdown>) {
     return withoutMarkdownParseCache(() => core.renderMarkdown(...args));
   },

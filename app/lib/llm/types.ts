@@ -52,8 +52,12 @@ export type TranslationRequest = {
   // The @mentions of the source body (the members it names, as written: "@hana"; the quoted ones included, they are shown as mentions). The translation keeps every one of
   // them (the prompt rule, and checkStructure). Only the body of a post has them.
   mentions?: string[];
+  // Distinguish paid call checkpoints whose masked prompts have different destinations.
+  maskedSourceHash?: string;
   // Additional retry warning after the previous output failed structure checks; used by translateChecked.
   retryNote?: string;
+  // Generated readings use the original Markdown prompt in posts and chat.
+  nushiReading?: true;
   // Only village chat translations may use preceding messages as context.
   chat?: { context: string[] };
   // The name or the description of a village: short plain text (not Markdown) that stands alone, translated without any context from other members' texts.

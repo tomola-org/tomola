@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Lang } from "~/lib/languages";
 import { FLAG_LINK_MISMATCH, FLAG_QUALITY_MISMATCH, FLAG_STRUCTURE_MISMATCH, FLAG_UNTRANSLATED, FLAG_UNTRANSLATED_SCRIPT, FLAG_UNTRANSLATED_SIMILAR } from "./flags";
 import type * as core from "./translation-inspect.core.server";
@@ -7,6 +8,7 @@ import { FLAG_MARKDOWN_BUDGET } from "./flags";
 import type { TranslationEngine, TranslationRequest, TranslationResult } from "./types";
 import { FLAG_OUTPUT_LEAK } from "./flags";
 import { LlmError } from "./errors.server";
+import { KEEP_LINK_MARKERS, usesPostTranslationPrompt } from "./prompt.server";
 
 // translations.flags constants live in ./flags; also re-exported here for existing imports.
 export { FLAG_LINK_MISMATCH, FLAG_QUALITY_MISMATCH, FLAG_STRUCTURE_MISMATCH, FLAG_UNTRANSLATED, FLAG_UNTRANSLATED_SCRIPT, FLAG_UNTRANSLATED_SIMILAR };
@@ -31,32 +33,55 @@ export async function inspectTranslation(...args: Parameters<typeof core.inspect
   }
 }
 
+export async function prepareTranslationLinks(req: TranslationRequest) {
+  if (!usesPostTranslationPrompt(req)) return { request: req };
+  const { text, targets, literals } = await markdownTask("maskLinkTargets", [req.text]);
+  const request = text === req.text ? req : { ...req, text, maskedSourceHash: createHash("sha256").update(req.text).digest("hex") };
+  return { request, targets, literals };
+}
+
 // Translate and check structure, links and untranslated output. On failure, retry once with a warning.
 // Persistent output leaks throw a terminal error before storage. Other failed
 // checks flag the second output. Legacy structure_mismatch remains
 // visible; quality_mismatch hides strong preservation failures. Other display
 // rules live in ./flags. Rethrow engine failures unchanged.
-export async function translateChecked(engine: TranslationEngine, req: TranslationRequest): Promise<CheckedTranslation> {
+export async function translateChecked(engine: TranslationEngine, req: TranslationRequest, beforeCall?: (input: TranslationRequest) => Promise<void>): Promise<CheckedTranslation> {
+  const { request, targets, literals } = await prepareTranslationLinks(req);
+  await beforeCall?.(request);
+  async function check(result: TranslationResult) {
+    let invalidMarkers = false;
+    let text = result.text;
+    if (targets && (Object.keys(targets).length || /TMLINK/i.test(text))) {
+      const prefix = engine.id === "fake" ? /^\[[^\]\n]+\] /.exec(text)?.[0] ?? "" : "";
+      const restored = await markdownTask("restoreLinkTargets", [text.slice(prefix.length), targets, literals]);
+      text = prefix + restored.text;
+      invalidMarkers = !restored.valid;
+    }
+    const problems = await inspectTranslation(req, text, engine.id);
+    if (invalidMarkers && !problems.flags.includes(FLAG_LINK_MISMATCH)) problems.flags.push(FLAG_LINK_MISMATCH);
+    if (targets && problems.flags.includes(FLAG_LINK_MISMATCH)) problems.notes.push(KEEP_LINK_MARKERS);
+    return { ...problems, text: problems.normalizedText ?? text };
+  }
   let leakDetections = 0;
   try {
-    const first = await engine.translate(req);
-    const firstProblems = await inspectTranslation(req, first.text, engine.id);
+    const first = await engine.translate(request);
+    const firstProblems = await check(first);
     if (firstProblems.flags.includes(FLAG_OUTPUT_LEAK)) leakDetections++;
     if (req.figure && req.figureCharacterBudgets) {
       if (firstProblems.flags.includes(FLAG_OUTPUT_LEAK)) throw new LlmError("output_leak", "Figure shortening output failed the leak check");
       return { ...first, flags: firstProblems.flags, attempts: 1, leakDetections };
     }
-    if (firstProblems.notes.length === 0) return { ...first, text: firstProblems.normalizedText ?? first.text, flags: [], attempts: 1, leakDetections };
+    if (firstProblems.notes.length === 0) return { ...first, text: firstProblems.text, flags: [], attempts: 1, leakDetections };
 
-    const second = await engine.translate({ ...req, retryNote: firstProblems.notes.join(" Also, ") });
-    const secondProblems = await inspectTranslation(req, second.text, engine.id);
+    const second = await engine.translate({ ...request, retryNote: firstProblems.notes.join(" Also, ") });
+    const secondProblems = await check(second);
     if (secondProblems.flags.includes(FLAG_OUTPUT_LEAK)) {
       leakDetections++;
       throw new LlmError("output_leak", "Translation output failed the leak check after one retry");
     }
     return {
       ...second,
-      text: secondProblems.normalizedText ?? second.text,
+      text: secondProblems.text,
       inputTokens: first.inputTokens + second.inputTokens,
       outputTokens: first.outputTokens + second.outputTokens,
       ...(first.thoughtTokens !== undefined || second.thoughtTokens !== undefined ? { thoughtTokens: (first.thoughtTokens ?? 0) + (second.thoughtTokens ?? 0) } : {}),

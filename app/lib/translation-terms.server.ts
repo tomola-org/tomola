@@ -1,3 +1,4 @@
+import { markdownTask } from "./markdown-budget.server";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "./db/client.server";
 import { entries, translations } from "./db/schema";
@@ -24,7 +25,8 @@ export function postTerminologyBodies(entry: TermSource, translation?: { text: s
 // reading its translations. No reference-index row or notification is needed.
 export async function translationTermsFor(db: Db, entry: TermSource & { id: number }, to: Lang): Promise<TranslationTerms | undefined> {
   const { body: sourceBody } = postTerminologyBodies(entry);
-  const author = authorTermDeclarations(sourceBody, to);
+  const [maskedSource] = await markdownTask("maskLinkContext", [sourceBody]);
+  const author = authorTermDeclarations(maskedSource, to);
   const terms: TranslationTerms = { author };
   if (entry.kind === "topic") {
     const target = parseResponsePost(entry.body)?.topicId ?? null;
@@ -40,10 +42,11 @@ export async function translationTermsFor(db: Db, entry: TermSource & { id: numb
         const title = original.lang === to ? original.title ?? undefined : current("title")?.text;
         const originalBodies = postTerminologyBodies(original, current("body"));
         const body = original.lang === to ? originalBodies.body : originalBodies.translation;
-        const declarations = authorTermDeclarations(originalBodies.body, to);
+        const [maskedBody, maskedTranslation, maskedTitle, maskedTitleTranslation] = await markdownTask("maskLinkContext", [originalBodies.body, body ?? "", original.title ?? "", title ?? ""]);
+        const declarations = authorTermDeclarations(maskedBody, to);
         terms.response = {
-          ...(original.title && title ? { title: { source: original.title.slice(0, 300), translation: title.slice(0, 300) } } : {}),
-          passages: body ? terminologyPassages(originalBodies.body, body, sourceBody) : [], author: declarations,
+          ...(original.title && title ? { title: { source: maskedTitle.slice(0, 300), translation: maskedTitleTranslation.slice(0, 300) } } : {}),
+          passages: body ? terminologyPassages(maskedBody, maskedTranslation, maskedSource) : [], author: declarations,
         };
         if (!terms.response.title && !terms.response.passages.length && !declarations.length) delete terms.response;
       }

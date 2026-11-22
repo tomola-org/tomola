@@ -60,7 +60,7 @@ export type MarkdownExecutorOptions = {
   cpuMs?: number; translationCpuMs?: number; wallMs?: number; startupMs?: number; shutdownMs?: number;
   readWaitMs?: number; writeWaitMs?: number; backgroundWaitMs?: number; workerFile?: string;
 };
-const translationOperations = new Set(["inspectTranslation", "checkStructure", "judgeCopy", "looksUntranslated", "detectCopy", "bigramDice"]);
+const translationOperations = new Set(["maskLinkTargets", "maskLinkContext", "protectedTitleBodyContext", "restoreLinkTargets", "inspectTranslation", "checkStructure", "judgeCopy", "looksUntranslated", "detectCopy", "bigramDice"]);
 const defaultWorkerFile = fileURLToPath(new URL("../../server/markdown-worker.mjs", import.meta.url));
 
 // Idle workers close their message port and leave V8 through its normal exit

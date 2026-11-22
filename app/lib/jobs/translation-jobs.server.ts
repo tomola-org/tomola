@@ -3,7 +3,7 @@ import { completeTranslationReports } from "../translation-report-results.server
 import { lockReviewableEntry, rootTopic, rootTopicOn, reviewableWithTopic } from "../visibility.server";
 import { recordTranslationGeneration } from "../eval/signals.server";
 import { safeErrorText } from "~/lib/error-text.server";
-import { MarkdownBusyError } from "../markdown-budget.server";
+import { markdownTask, MarkdownBusyError } from "../markdown-budget.server";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db, Tx } from "~/lib/db/client.server";
 import { divergences, entries, jobs, translationReports, translations } from "~/lib/db/schema";
@@ -34,7 +34,7 @@ import {
   type TranslateJobPayload,
 } from "~/lib/translations.server";
 import { recordRevision } from "~/lib/translation-revisions.server";
-import { titleBodyContext, TITLE_BODY_MAX_CHARS } from "~/lib/translation-terms";
+import { TITLE_BODY_MAX_CHARS } from "~/lib/translation-terms";
 import { postTerminologyBodies, translationTermsFor } from "~/lib/translation-terms.server";
 import { firstSeenAtForSource } from "~/lib/translation-first-seen.server";
 import { availabilityKey, loadTranslationAvailability } from "~/lib/translation-availability.server";
@@ -60,7 +60,7 @@ async function contextForTitle(db: Db, entry: EntryForJob, lang: Lang, title: st
   const chosen = pickTranslation(rows, entry.sourceHash, entry.mentionRevision);
   const body = chosen && !chosen.flags.includes("stale") && isUsablePrimary(chosen, entry.sourceHash, entry.mentionRevision) ? chosen : undefined;
   const context = postTerminologyBodies(entry, body);
-  return titleBodyContext(context.body, context.translation, title);
+  return markdownTask("protectedTitleBodyContext", [context.body, context.translation, title]);
 }
 
 type EntryForJob = {
@@ -261,7 +261,7 @@ export function createTranslationHandlers(deps: TranslationJobDeps = {}) {
     });
     const options = llm(ctx);
     // Resume inspection of a paid fallback before attempting primary again.
-    if (hasSavedTranslation("secondary", req, options)) {
+    if (await hasSavedTranslation("secondary", req, options)) {
       try { return restored(await translate(ctx.db, "secondary", req, options), true); }
     catch (error) {
       if (isRefusal(error)) Object.assign(error as object, { sourceContentFailure: job.payload.primaryRefused === true });
