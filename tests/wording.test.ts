@@ -113,7 +113,6 @@ describe("AI use is not written as an exception", () => {
   it("the screens and the guides say that posts under a member's name are only those the member has confirmed", () => {
     expect(helpAiMd()).toContain("Posts under your name are only those you have confirmed");
     expect(llmsTxt()).toContain("Publishing happens only in the member's browser");
-    expect(llmsTxt()).toContain("If the member has turned on passkey confirmation in settings");
     expect(JSON.stringify(openApiDocument())).toContain("only those the member has confirmed");
   });
 

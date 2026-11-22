@@ -18,8 +18,8 @@ preferences. Language villages are excluded. Membership and ownership are
 checked again during deletion; a changed roster can require the member to
 reload and confirm again.
 
-Deletion requires a login within the last 24 hours, plus the existing passkey
-confirmation when signing is enabled. Repeated submissions reach the completed
+Deletion requires a login within the last 24 hours and the member must type
+their current username. Repeated submissions reach the completed
 screen using an opaque receipt that cannot authorize deletion. The current
 username and previous names still held at departure stay anonymously reserved
 for the normal rename period. Existing mention snapshots retain their frozen

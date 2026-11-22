@@ -525,9 +525,13 @@ changing a tag without its digest does not update the pinned image. Changing
 
 ## 7. Passkeys and the host name
 
-Passkeys are bound to the host name of the site where they were registered. Enrollment in per-post signing is closed. Existing signing members can still sign posts and turn the setting off with a passkey. Before enabling member access, check passkey login in a real browser with a certificate that matches the host name. On deployments with existing signing members, also check signed posting and turning signing off. Keep the same host name across deployment changes. Changing the host name requires guidance to members that includes logging in again by email and registering passkeys again.
+Passkeys are bound to the host name where members registered them. Before enabling member access, check passkey login in a real browser with a certificate that matches the host name. Keep that host name across deployment changes. If it must change, plan how members will register replacement keys. Members with another sign-in method can use it on the new host. For passkey-only members without a usable key, follow [manual passkey recovery](runbooks/passkey-recovery.md).
 
 ## 8. Database
+
+### Retiring per-post signing
+
+The migration sets `profiles.sign_posts` to false and keeps the column, historical signatures and challenge table. The previous application version can run against the migrated database. Check AI-draft review and passkey-only login and key removal after deploying.
 
 ### pgvector (permission for `CREATE EXTENSION vector`)
 

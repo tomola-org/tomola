@@ -181,8 +181,6 @@ describe("public guides", () => {
     expect(text).toContain("Publishing happens only in the member's browser");
     expect(text).toContain("A client registered without media will receive invalid_scope if it requests media; reconnect and register the client again with media included.");
     expect(text).toContain("API and MCP credentials cannot publish");
-    expect(text).toContain("does not prove that AI cannot use the passkey");
-    expect(text).toContain("If the member has turned on passkey confirmation in settings");
     expect(text).not.toContain("AI cannot publish.");
     const help = await (await get("/help/ai.md")).text();
     expect(help).toContain("optional; omitted when absent");

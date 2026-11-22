@@ -148,17 +148,17 @@ Machine-facing details should not clutter manual reading, while AI representatio
 
 **Rationale and limits.** External credential permissions enforce the boundary that people take responsibility for content published in their names. Personal unnamed positions and their history are not provided. This boundary proves neither comprehension nor that AI cannot operate a browser.
 
-## 24 Change post signing from mandatory to optional
+## 24 Retire per-post passkey signing
 
-**Current choice and former policy.** Mandatory passkey signing for named posts, replies, edits and renames, with enrollment before the first post, was replaced by a member preference that defaults off. Ordinary posts need no additional confirmation; AI-last-edited drafts retain full-text confirmation. API and MCP gain no publishing permission.
+**Current design and reason.** Repeated passkey checks raised the barrier to writing. Browser posting and editing use the member's session. Publishing an AI draft requires a review of the text and destination, with a ten-minute confirmation tied to the member and draft version. API and MCP credentials cannot publish.
 
-**Reason for change and retained boundary.** Repeated passkey requests raised the barrier to writing. When signing is chosen, a roughly two-minute single-use challenge binds member, operation, content, destination and revision. Verification, consumption, mutation and evidence storage share a transaction. Toggling signing and deleting a key still require signatures. Signing proves neither reading, comprehension nor exclusive human use of a key.
+**Existing data.** The migration clears the stored posting preference. Historical signatures remain available through the personal export subject to its ownership rules.
 
-## 25 Keep optional signing separate from key protection
+## 25 Protect login methods with recent reauthentication
 
-**Current design and operating requirement.** Adding to an existing key set requires verification with an existing key; deletion requires a signature. The last key cannot be deleted. Enrollment history prevents bypass through supposed first enrollment. Total key loss uses identity review, a reason record, session revocation, a short re-enrollment window and email notice.
+**Current design.** Adding or removing a key requires recent reauthentication. In passkey-only mode, removal requires a passkey check within ten minutes and a key must remain. Adding another key in that mode also uses an existing key to approve the addition. Other members can remove their last key after confirming a remaining sign-in method.
 
-**Rationale and scope.** Optional post signing does not relax replacement or deletion of credentials into ordinary-post authority. General email-only recovery remains a separate design problem. Allowing members without keys to post is consistent with protecting the last enrolled key.
+**Recovery.** When a passkey-only member loses all usable keys, an operator verifies identity and records the reason. Recovery revokes existing credentials, sends a notice and permits a short window for enrollment.
 
 ## 26 Enforce boundaries on MCP connections and consent
 

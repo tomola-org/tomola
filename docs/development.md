@@ -30,7 +30,7 @@ Use pnpm 12.21.0, as pinned in `package.json` and the Dockerfile's `PNPM_VERSION
 
 Pin direct authentication dependencies (`better-auth`, `@better-auth/*` and `@simplewebauthn/*`) to exact versions and keep up with supported patch releases. Check the passkey plugin's dependency ranges before changing the SimpleWebAuthn major version. Prefer `^` for other dependencies, retaining existing explicit compatibility pins. The two Inlang plugins are also pinned exactly so their build-time code is covered by the lockfile's integrity checks.
 
-Review `pnpm outdated` and `pnpm audit --prod` when updating dependencies. Update the selected packages, commit the lockfile, and verify the affected authentication, signing and OAuth paths. Reinstall with `pnpm install --frozen-lockfile` and regenerate the third-party notices after production dependencies change.
+Review `pnpm outdated` and `pnpm audit --prod` when updating dependencies. Update the selected packages, commit the lockfile, and verify the affected passkey authentication and OAuth paths. Reinstall with `pnpm install --frozen-lockfile` and regenerate the third-party notices after production dependencies change.
 
 Type checking uses TypeScript 7's `tsc`. Tools that need the TypeScript 6 compiler API, including `@typescript-eslint/parser`, use the `typescript` compatibility package. The two npm aliases follow [TypeScript's side-by-side installation guide](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/): `@typescript/native` supplies TypeScript 7, while `typescript` points to `@typescript/typescript6`, which re-exports the TypeScript 6 API and supplies `tsc6`. Keep both until the API consumers support TypeScript 7.
 

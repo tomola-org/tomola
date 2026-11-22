@@ -10,12 +10,12 @@ Keep changes within the requested scope. Read the relevant code and current docu
 | Comments | Confirm executable code, strings and directive comments are unchanged; check migration hashes only when affected |
 | Pure functions | Run the affected tests; use `pnpm test:fast` for a broader no-database check |
 | Application behavior | Run affected unit tests, necessary browser paths and type checks; `pnpm check:focused tests/<target>.test.ts` requires explicit files |
-| Database, locks, authentication, signatures or permissions | Keep boundary and regression coverage; use a dedicated database with `pnpm check:focused --pg tests/<target>.test.ts` for real PostgreSQL paths |
+| Database, locks, authentication, draft confirmation or permissions | Keep boundary and regression coverage; use a dedicated database with `pnpm check:focused --pg tests/<target>.test.ts` for real PostgreSQL paths |
 | Integration or deployment candidates | Verify the fixed candidate with `pnpm check:integration` or `pnpm check:release` as appropriate |
 
 Use regression tests when they can detect new behavior or a bug. Documentation, comments and mechanical moves do not require newly failing tests. Broaden verification when shared behavior, integration or unresolved failures justify it. Do not repeat unchanged successful checks without a reason.
 
-Preserve regression coverage for authentication, signing, private information and database concurrency. Import-based change detection cannot see every filesystem document read, runtime import or database effect; choose scope from the affected behavior too.
+Preserve regression coverage for authentication, draft confirmation, private information, historical signature exports and database concurrency. Import-based change detection cannot see every filesystem document read, runtime import or database effect; choose scope from the affected behavior too.
 
 Never test with production databases, real API keys, real email recipients or member data. Real PostgreSQL tests need an isolated test account permitted to create disposable databases. Use fake translation, embedding and mail fixtures for local verification.
 
