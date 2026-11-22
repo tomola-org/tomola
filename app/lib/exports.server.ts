@@ -312,7 +312,8 @@ export async function buildObservationExport(
 // Version 18 separates member follows from shared-village follows.
 // Version 19 includes the member's pending post edits and village proposals.
 // Version 20 added previewed_at to drafts, recording when they were last saved with Preview.
-export const MEMBER_EXPORT_VERSION = 20;
+// Version 21 withholds signature payloads when they may contain another member's text.
+export const MEMBER_EXPORT_VERSION = 21;
 
 export type MemberExport = {
   format: "tomola-member-export";
@@ -406,7 +407,7 @@ export type MemberExport = {
   village_proposals: Awaited<ReturnType<typeof exportOwnVillageProposals>>;
   village_follows: Array<{ village: string; created_at: string }>;
   member_follows: Array<{ handle: string; created_at: string }>;
-  signatures: Array<{ id: number; entry_id: number | null; source_hash: string | null; operation: string; signed_payload: string; payload_hash: string; challenge: string; credential_id: string; public_key: string; rp_id: string; origin: string; assertion: Record<string, unknown>; authenticator_data: string; client_data_json: string; signature: string; created_at: string }>;
+  signatures: Array<{ id: number; entry_id: number | null; source_hash: string | null; operation: string; signed_payload?: string; payload_hash: string; challenge: string; credential_id: string; public_key: string; rp_id: string; origin: string; assertion?: Record<string, unknown>; authenticator_data: string; client_data_json: string; signature: string; created_at: string; payload_withheld: "not_author" | "unknown_owner" | null }>;
   ai_materials: Awaited<ReturnType<typeof exportPostAiMaterials>>;
   chat_messages: Awaited<ReturnType<typeof exportOwnChat>>;
   nushi_sources: Array<{ answer_id: number; entry_id: number; author: string; created_at: string }>;
@@ -456,7 +457,7 @@ export async function buildMemberExport(db: Db, userId: string, opts: { now?: Da
     db.select().from(follows).where(eq(follows.userId, userId)).orderBy(asc(follows.createdAt), asc(follows.threadId)),
     exportVillageFollows(db, userId),
     exportMemberFollows(db, userId),
-    db.select({ signature: memberSignatures }).from(memberSignatures).leftJoin(entries, eq(entries.id, memberSignatures.entryId))
+    db.select({ signature: memberSignatures, authorId: entries.authorId }).from(memberSignatures).leftJoin(entries, eq(entries.id, memberSignatures.entryId))
       .where(and(eq(memberSignatures.userId, userId), or(isNull(memberSignatures.entryId), isNull(entries.deletedAt))))
       .orderBy(asc(memberSignatures.createdAt), asc(memberSignatures.id)),
     db.select({ topicId: savedTopics.topicId, createdAt: savedTopics.createdAt }).from(savedTopics).where(eq(savedTopics.userId, userId)).orderBy(asc(savedTopics.createdAt), asc(savedTopics.topicId)),
@@ -558,7 +559,18 @@ export async function buildMemberExport(db: Db, userId: string, opts: { now?: Da
     village_proposals: await exportOwnVillageProposals(db, userId, now),
     village_follows: villageFollowRows,
     member_follows: memberFollowRows,
-    signatures: signatureRows.map(({ signature: s }) => ({ id: s.id, entry_id: s.entryId, source_hash: s.sourceHash, operation: s.operation, signed_payload: s.payload, payload_hash: s.payloadHash, challenge: s.challenge, credential_id: s.credentialId, public_key: s.publicKey, rp_id: s.rpId, origin: s.origin, assertion: s.assertion, authenticator_data: s.authenticatorData, client_data_json: s.clientDataJson, signature: s.signature, created_at: s.createdAt.toISOString() })),
+    signatures: signatureRows.map(({ signature: s, authorId }) => {
+      const settingsOperation = s.entryId === null && ["change-display-name", "change-handle", "change-signing-preference"].includes(s.operation);
+      const withheld = settingsOperation || authorId === userId ? null : authorId === null ? "unknown_owner" : "not_author";
+      return {
+        id: s.id, entry_id: s.entryId, source_hash: s.sourceHash, operation: s.operation,
+        payload_hash: s.payloadHash, challenge: s.challenge, credential_id: s.credentialId,
+        public_key: s.publicKey, rp_id: s.rpId, origin: s.origin,
+        authenticator_data: s.authenticatorData, client_data_json: s.clientDataJson, signature: s.signature,
+        created_at: s.createdAt.toISOString(), payload_withheld: withheld,
+        ...(withheld === null ? { signed_payload: s.payload, assertion: s.assertion } : {}),
+      };
+    }),
     chat_messages: await exportOwnChat(db, userId),
   };
 }

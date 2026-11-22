@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { divergences, drafts, entries, entryEmbeddings, profiles, rateLimits, translations, votes } from "~/lib/db/schema";
+import { divergences, drafts, entries, entryEmbeddings, memberSignatures, profiles, rateLimits, translations, votes } from "~/lib/db/schema";
 import { createDraft } from "~/lib/drafts.server";
 import { createReply, createTopic, editEntry, softDeleteEntry } from "~/lib/entries.server";
 import { authorKeyOf, AUTHOR_KEY_LENGTH, buildMemberExport, buildObservationExport, MEMBER_EXPORT_VERSION, OBSERVATION_EXPORT_VERSION } from "~/lib/exports.server";
@@ -346,4 +346,34 @@ describe("the drafts of other members do not leak into the observation export", 
     expect((await h.db.select().from(drafts)).length).toBeGreaterThan(1);
     expect(JSON.stringify(await buildObservationExport(h.db, { model: null }))).not.toContain("DRAFT");
   });
+});
+
+it("exports only allowed signature fields and withholds payloads without an authorized owner", async () => {
+  const userId = h.ids.hanako_unique;
+  const evidence = {
+    userId, payload: "Fixture payload", payloadHash: "fixture-hash", credentialId: "fixture-key",
+    publicKey: "public-key", rpId: "localhost", origin: "http://localhost", assertion: { fixture: true },
+    authenticatorData: "auth-data", clientDataJson: "client-data", signature: "signature",
+  };
+  const [entry] = await h.db.select({ hash: entries.sourceHash }).from(entries).where(eq(entries.id, ids.hanakoTopic));
+  const signatures = await h.db.insert(memberSignatures).values([
+    { ...evidence, entryId: ids.hanakoTopic, sourceHash: entry.hash, operation: "edit-topic", challenge: "own" },
+    { ...evidence, entryId: ids.johnnyTopic, operation: "edit-topic", challenge: "another" },
+    { ...evidence, entryId: null, operation: "edit-topic", challenge: "unattached" },
+    { ...evidence, entryId: null, operation: "change-handle", challenge: "settings" },
+    { ...evidence, entryId: ids.hanakoDeleted, operation: "create-topic", challenge: "deleted" },
+  ]).returning({ id: memberSignatures.id });
+  const out = await buildMemberExport(h.db, userId);
+  expect(out.version).toBe(21);
+  const byChallenge = new Map(out.signatures.map(signature => [signature.challenge, signature]));
+  const fields = ["id", "entry_id", "source_hash", "operation", "payload_hash", "challenge", "credential_id", "public_key", "rp_id", "origin", "authenticator_data", "client_data_json", "signature", "created_at", "payload_withheld"];
+  for (const challenge of ["own", "settings"]) {
+    expect(byChallenge.get(challenge)).toMatchObject({ payload_withheld: null, signed_payload: evidence.payload, assertion: evidence.assertion });
+    expect(Object.keys(byChallenge.get(challenge)!).sort()).toEqual([...fields, "signed_payload", "assertion"].sort());
+  }
+  expect(byChallenge.get("another")?.payload_withheld).toBe("not_author");
+  expect(byChallenge.get("unattached")?.payload_withheld).toBe("unknown_owner");
+  for (const challenge of ["another", "unattached"]) expect(Object.keys(byChallenge.get(challenge)!).sort()).toEqual([...fields].sort());
+  expect(byChallenge.has("deleted")).toBe(false);
+  expect(out.entries.find(entry => entry.id === ids.hanakoTopic)?.signature_ids).toContain(signatures[0].id);
 });
