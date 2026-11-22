@@ -2406,7 +2406,12 @@
   "reauth_for_disconnect_google": "0333d529c7a21055",
   "login_methods_on": "d02262e532b7ef08",
   "login_methods_off": "b813e311be01b528",
-  "login_methods_update_failed": "15266d56a01e8c79"
+  "login_methods_update_failed": "15266d56a01e8c79",
+  "draft_confirmation_retry": "370fc15bd4b1852e",
+  "draft_confirmation_use_preview": "f76d31224ad1f212",
+  "draft_confirmation_reply_javascript": "5118dfc289e8298d",
+  "draft_confirmation_reload": "aca0cb564602cc45",
+  "settings_signing_closed": "682a3ec6806575f4"
  },
  "fr": {
   "install_guide_intro": "56c1efd040194a82",
@@ -4814,7 +4819,12 @@
   "reauth_for_disconnect_google": "0333d529c7a21055",
   "login_methods_on": "d02262e532b7ef08",
   "login_methods_off": "b813e311be01b528",
-  "login_methods_update_failed": "15266d56a01e8c79"
+  "login_methods_update_failed": "15266d56a01e8c79",
+  "draft_confirmation_retry": "370fc15bd4b1852e",
+  "draft_confirmation_use_preview": "f76d31224ad1f212",
+  "draft_confirmation_reply_javascript": "5118dfc289e8298d",
+  "draft_confirmation_reload": "aca0cb564602cc45",
+  "settings_signing_closed": "682a3ec6806575f4"
  },
  "de": {
   "site_name": "9f815107c11fb1b4",
@@ -7653,7 +7663,12 @@
   "reauth_for_disconnect_google": "0333d529c7a21055",
   "login_methods_on": "d02262e532b7ef08",
   "login_methods_off": "b813e311be01b528",
-  "login_methods_update_failed": "15266d56a01e8c79"
+  "login_methods_update_failed": "15266d56a01e8c79",
+  "draft_confirmation_retry": "370fc15bd4b1852e",
+  "draft_confirmation_use_preview": "f76d31224ad1f212",
+  "draft_confirmation_reply_javascript": "5118dfc289e8298d",
+  "draft_confirmation_reload": "aca0cb564602cc45",
+  "settings_signing_closed": "682a3ec6806575f4"
  },
  "zh-Hans": {
   "install_guide_intro": "56c1efd040194a82",
@@ -10061,7 +10076,12 @@
   "reauth_for_disconnect_google": "0333d529c7a21055",
   "login_methods_on": "d02262e532b7ef08",
   "login_methods_off": "b813e311be01b528",
-  "login_methods_update_failed": "15266d56a01e8c79"
+  "login_methods_update_failed": "15266d56a01e8c79",
+  "draft_confirmation_retry": "370fc15bd4b1852e",
+  "draft_confirmation_use_preview": "f76d31224ad1f212",
+  "draft_confirmation_reply_javascript": "5118dfc289e8298d",
+  "draft_confirmation_reload": "aca0cb564602cc45",
+  "settings_signing_closed": "682a3ec6806575f4"
  },
  "ko": {
   "install_guide_intro": "56c1efd040194a82",
@@ -12469,7 +12489,12 @@
   "reauth_for_disconnect_google": "0333d529c7a21055",
   "login_methods_on": "d02262e532b7ef08",
   "login_methods_off": "b813e311be01b528",
-  "login_methods_update_failed": "15266d56a01e8c79"
+  "login_methods_update_failed": "15266d56a01e8c79",
+  "draft_confirmation_retry": "370fc15bd4b1852e",
+  "draft_confirmation_use_preview": "f76d31224ad1f212",
+  "draft_confirmation_reply_javascript": "5118dfc289e8298d",
+  "draft_confirmation_reload": "aca0cb564602cc45",
+  "settings_signing_closed": "682a3ec6806575f4"
  },
  "th": {
   "install_guide_intro": "56c1efd040194a82",
@@ -14877,7 +14902,12 @@
   "reauth_for_disconnect_google": "0333d529c7a21055",
   "login_methods_on": "d02262e532b7ef08",
   "login_methods_off": "b813e311be01b528",
-  "login_methods_update_failed": "15266d56a01e8c79"
+  "login_methods_update_failed": "15266d56a01e8c79",
+  "draft_confirmation_retry": "370fc15bd4b1852e",
+  "draft_confirmation_use_preview": "f76d31224ad1f212",
+  "draft_confirmation_reply_javascript": "5118dfc289e8298d",
+  "draft_confirmation_reload": "aca0cb564602cc45",
+  "settings_signing_closed": "682a3ec6806575f4"
  },
  "vi": {
   "install_guide_intro": "56c1efd040194a82",
@@ -17285,7 +17315,12 @@
   "reauth_for_disconnect_google": "0333d529c7a21055",
   "login_methods_on": "d02262e532b7ef08",
   "login_methods_off": "b813e311be01b528",
-  "login_methods_update_failed": "15266d56a01e8c79"
+  "login_methods_update_failed": "15266d56a01e8c79",
+  "draft_confirmation_retry": "370fc15bd4b1852e",
+  "draft_confirmation_use_preview": "f76d31224ad1f212",
+  "draft_confirmation_reply_javascript": "5118dfc289e8298d",
+  "draft_confirmation_reload": "aca0cb564602cc45",
+  "settings_signing_closed": "682a3ec6806575f4"
  },
  "id": {
   "install_guide_intro": "56c1efd040194a82",
@@ -19693,7 +19728,12 @@
   "reauth_for_disconnect_google": "0333d529c7a21055",
   "login_methods_on": "d02262e532b7ef08",
   "login_methods_off": "b813e311be01b528",
-  "login_methods_update_failed": "15266d56a01e8c79"
+  "login_methods_update_failed": "15266d56a01e8c79",
+  "draft_confirmation_retry": "370fc15bd4b1852e",
+  "draft_confirmation_use_preview": "f76d31224ad1f212",
+  "draft_confirmation_reply_javascript": "5118dfc289e8298d",
+  "draft_confirmation_reload": "aca0cb564602cc45",
+  "settings_signing_closed": "682a3ec6806575f4"
  },
  "es": {
   "install_guide_intro": "56c1efd040194a82",
@@ -22101,6 +22141,11 @@
   "reauth_for_disconnect_google": "0333d529c7a21055",
   "login_methods_on": "d02262e532b7ef08",
   "login_methods_off": "b813e311be01b528",
-  "login_methods_update_failed": "15266d56a01e8c79"
+  "login_methods_update_failed": "15266d56a01e8c79",
+  "draft_confirmation_retry": "370fc15bd4b1852e",
+  "draft_confirmation_use_preview": "f76d31224ad1f212",
+  "draft_confirmation_reply_javascript": "5118dfc289e8298d",
+  "draft_confirmation_reload": "aca0cb564602cc45",
+  "settings_signing_closed": "682a3ec6806575f4"
  }
 }

@@ -3267,5 +3267,10 @@
   "reauth_for_disconnect_google": "Verifique su identidad como {who} antes de desconectar Google.",
   "login_methods_on": "El inicio de sesión solo con claves de acceso está activado.",
   "login_methods_off": "El inicio de sesión solo con claves de acceso está desactivado.",
-  "login_methods_update_failed": "No se pudo cambiar su configuración de inicio de sesión. Recargue esta página e inténtelo de nuevo."
+  "login_methods_update_failed": "No se pudo cambiar su configuración de inicio de sesión. Recargue esta página e inténtelo de nuevo.",
+  "draft_confirmation_retry": "Revisa el contenido y vuelve a pulsar Publicar.",
+  "draft_confirmation_use_preview": "Si JavaScript está desactivado, abre la vista previa para publicar este borrador.",
+  "draft_confirmation_reply_javascript": "Activa JavaScript para publicar esta respuesta.",
+  "draft_confirmation_reload": "Volver a cargar la vista previa",
+  "settings_signing_closed": "Ya no se puede activar la firma por publicación."
 }

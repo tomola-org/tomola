@@ -21,10 +21,12 @@ import { renderEntryHtml } from "~/lib/entries.server";
 import type { SourceLang } from "~/lib/languages";
 import { headlineFromBody } from "~/lib/headline.server";
 import { withMarkdownPersistedRead } from "~/lib/markdown-budget.server";
+import { getWriter } from "~/lib/members.server";
 import { resolveMentionTargets } from "~/lib/mentions.server";
 import { parseIdOrNull } from "~/lib/params.server";
 import { readingVersions } from "~/lib/reading.server";
-import { signingViewToken } from "~/lib/signing.server";
+import { DRAFT_CONFIRMATION_FIELD, isDraftConfirmationError, needsDraftConfirmation } from "~/lib/signing";
+import { confirmationForDraftPreview, signingViewToken } from "~/lib/signing.server";
 import { titleOrNull } from "~/lib/text";
 import { postingVillageName } from "~/lib/village-name";
 import { villagesEnabled } from "~/lib/villages-enabled.server";
@@ -59,6 +61,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const village = posting?.choices.find(choice => choice.slug === posting.selected) ?? null;
   const author = { handle: profile.handle, name: profile.displayName, latin: profile.displayNameLatin };
   const content = { title, body, lang };
+  const requiresReview = needsDraftConfirmation(row);
+  const confirmation = requiresReview && !profile.signPosts && (await getWriter(db, user.id, { profile })).ok
+    ? await confirmationForDraftPreview(db, row, posting)
+    : undefined;
   const signingView = signingViewToken({ userId: user.id, kind: "draft", id: row.id, version: String(version), ...content });
   const editor = {
     id: row.clientId ?? (row.via === "api" ? `token:${row.tokenId ?? "deleted"}` : null),
@@ -70,7 +76,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     id: row.id, version, asksStance, content, headline, html, author, village,
     reading: readingVersions(html, lang, original),
     posting: posting && { selected: posting.selected, explicit: posting.explicit },
-    signingView, signPosts: profile.signPosts, editor,
+    signingView, signPosts: profile.signPosts, editor, requiresReview, confirmation,
     baseline: row.aiBaseline ? { ...row.aiBaseline, lang } : null,
     tabTitle: m.draft_preview_title({ title: title ?? (headline || m.draft_untitled()) }),
   }, { headers: headers() });
@@ -90,7 +96,7 @@ export function meta({ loaderData }: Route.MetaArgs) {
 }
 
 export default function DraftPreview({ loaderData, actionData }: Route.ComponentProps) {
-  const { id, content, headline, html, version, asksStance, reading, author, village, posting, signingView, signPosts, editor, baseline } = loaderData;
+  const { id, content, headline, html, version, asksStance, reading, author, village, posting, signingView, signPosts, editor, baseline, requiresReview, confirmation } = loaderData;
   const [prior] = useState(() => ({ id, version, content: previousDraftView(id) }));
   useEffect(() => { clearPreviousDraftView(id); }, [id]);
   const viewed = prior.id === id && prior.version === version && prior.content?.lang === content.lang ? prior.content : baseline;
@@ -100,7 +106,7 @@ export default function DraftPreview({ loaderData, actionData }: Route.Component
   const conflictMessage = m.draft_preview_conflict();
   const stale = error === "draft_conflict" || error === "not_found" || error === "village_changed" || actionData?.saved;
   return <>
-    <SignedForm method="post" action={`${editPath}/preview`} signatureRequired={signPosts} confirmAiDraft={Boolean(editor.id)} signIntent="publish" fixedSigningContent draftConflictMessage={conflictMessage}
+    <SignedForm method="post" action={`${editPath}/preview`} signatureRequired={signPosts} confirmAiDraft={requiresReview} signIntent="publish" fixedSigningContent draftConflictMessage={conflictMessage}
       className="sticky top-0 z-10 mb-6">
       <input type="hidden" name="version" value={version} />
       <input type="hidden" name="title" value={content.title ?? ""} />
@@ -108,6 +114,7 @@ export default function DraftPreview({ loaderData, actionData }: Route.Component
       <input type="hidden" name="lang" value={content.lang} />
       {asksStance && <input type="hidden" name="asksStance" value="1" />}
       <input type="hidden" name="signingView" value={signingView} />
+      {confirmation && <input type="hidden" name={DRAFT_CONFIRMATION_FIELD} value={confirmation} />}
       {posting && <>
         <input type="hidden" name="village" value={posting.explicit ? posting.selected : ""} />
         <input type="hidden" name="villageExplicit" value={posting.explicit ? "1" : "0"} />
@@ -126,6 +133,7 @@ export default function DraftPreview({ loaderData, actionData }: Route.Component
     </SignedForm>
     <main className="reading-column reading-topic space-y-6">
       {error && <p role="alert" className="text-destructive">{error === "draft_conflict" ? conflictMessage : error === "not_found" ? m.ai_write_gone() : entryErrorMessage(error)}</p>}
+      {isDraftConfirmationError(error) && <noscript><a className="underline" href={`${editPath}/preview`}>{m.draft_confirmation_reload()}</a></noscript>}
       {(editor.id || signPosts && viewed) && <div className="space-y-2 ui-help">
         <SigningLastEditor editor={editor} />
         <SigningChanges preview={{ viewed, current: null, content }} />

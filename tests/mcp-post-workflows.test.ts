@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { draftReceipts, drafts, entries, entryEditProposals, memberSignatures, profiles } from "~/lib/db/schema";
 import { publishDraft } from "~/lib/drafts.server";
+import { previewSignedWrite } from "~/lib/signing.server";
 import { createReply, createTopic, deleteOwnEntry, editEntry } from "~/lib/entries.server";
 import { createClientDraft, deleteClientDraft, getClientDraftStatus, updateClientDraft, type McpClientIdentity } from "~/lib/mcp/drafts.server";
 import { confirmEntryDeletion, discardEntryEdit, exportOwnEntryEditProposals, getClientEntryEdit, getClientEntryEditStatus, getEntryDeletionReview, prepareEntryDeletion, prepareEntryEdit, pruneEntryEditProposals } from "~/lib/mcp/post-proposals.server";
@@ -38,14 +39,17 @@ describe("MCP post approvals through the browser routes", () => {
     expect(made.status).toEqual({ draftId: made.id, status: "pending", version: 1 });
     const updated = success(await updateClientDraft(h.db, owner, client, made.id, { expectedVersion: 1, body: "The newer source text." }));
     expect(updated.draft.version).toBe(2);
-    const submit = (intent: string, version: number) => h.outcome(() => action(h.args(h.request(`/drafts/${made.id}`, {
-      as: "workflow_owner", form: { intent, version: String(version), title: input.title, body, lang: "en" },
+    const submit = (intent: string, version: number, confirmation = "") => h.outcome(() => action(h.args(h.request(`/drafts/${made.id}`, {
+      as: "workflow_owner", form: { intent, version: String(version), title: input.title, body, lang: "en", confirmation },
     }), { id: String(made.id) })));
     for (const intent of ["save", "delete", "publish"]) expect(await submit(intent, 1)).toMatchObject({ status: 409 });
     expect(await getClientDraftStatus(h.db, owner, client, made.id)).toMatchObject({ status: "pending", version: 2 });
     expect(await getClientDraftStatus(h.db, owner, otherClient, made.id)).toEqual({ draftId: made.id, status: "unknown" });
     expect(await getClientDraftStatus(h.db, differentMember, client, made.id)).toEqual({ draftId: made.id, status: "unknown" });
-    const published = await submit("publish", 2);
+    const path = `/drafts/${made.id}`;
+    const form = await h.request(path, { form: { intent: "publish", version: "2", title: input.title, body, lang: "en" } }).formData();
+    const { confirmation } = await previewSignedWrite(h.db, owner, path, form);
+    const published = await submit("publish", 2, confirmation);
     expect(published).toMatchObject({ status: 302 });
     const [post] = await h.db.select().from(entries).where(eq(entries.title, input.title));
     const receipt = await getClientDraftStatus(h.db, owner, client, made.id);
@@ -56,14 +60,20 @@ describe("MCP post approvals through the browser routes", () => {
     expect(await getClientDraftStatus(h.db, owner, client, made.id)).toEqual({ draftId: made.id, status: "published" });
   });
 
-  it("consumes a client reply draft from the linked browser editor only once", async () => {
+  it("requires the draft confirmation route before consuming a client reply from an unsigned session", async () => {
     const { action } = await import("~/routes/topic");
     const topic = success(await createTopic(h.db, owner, { body: "The reply destination.", lang: "en" }));
     const made = success(await createClientDraft(h.db, owner, client, { kind: "reply", threadId: topic.id, lang: "en", body }));
     const submit = () => h.outcome(() => action(h.args(h.request(`/t/${topic.id}`, { as: "workflow_owner",
       form: { body, lang: "en", fromDraft: String(made.id), fromDraftVersion: "1" },
     }), { id: String(topic.id) })));
-    expect(await submit()).toMatchObject({ status: 302 });
+    expect(await submit()).toMatchObject({ status: 409, value: { data: { error: "confirmation_required" } } });
+    const { action: draftAction } = await import("~/routes/draft");
+    const path = `/drafts/${made.id}`;
+    const form = { intent: "publish", version: "1", body, lang: "en" };
+    const { confirmation } = await previewSignedWrite(h.db, owner, path, await h.request(path, { form }).formData());
+    const approval = h.request(path, { as: "workflow_owner", form: { ...form, confirmation: confirmation! } });
+    expect(await h.outcome(() => draftAction(h.args(approval, { id: String(made.id) })))).toMatchObject({ status: 302 });
     expect(await submit()).toMatchObject({ status: 409 });
     const [reply] = await h.db.select().from(entries).where(eq(entries.threadId, topic.id));
     expect(await getClientDraftStatus(h.db, owner, client, made.id)).toMatchObject({ status: "published", entryUrl: expect.stringContaining(`#c-${reply.id}`) });

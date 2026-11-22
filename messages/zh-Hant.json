@@ -2551,5 +2551,10 @@
   "reauth_for_disconnect_google": "解除 Google 帳號連結前，請確認你是 {who} 本人。",
   "login_methods_on": "僅用通行密鑰登入已開啟。",
   "login_methods_off": "僅用通行密鑰登入已關閉。",
-  "login_methods_update_failed": "無法變更登入設定。請重新載入頁面後再試。"
+  "login_methods_update_failed": "無法變更登入設定。請重新載入頁面後再試。",
+  "draft_confirmation_retry": "請確認內容，然後再次點選「發布」。",
+  "draft_confirmation_use_preview": "如果 JavaScript 已停用，請開啟預覽後發布這份草稿。",
+  "draft_confirmation_reply_javascript": "請啟用 JavaScript 以發布這則回覆。",
+  "draft_confirmation_reload": "重新載入預覽",
+  "settings_signing_closed": "現在無法再啟用逐篇貼文簽署。"
 }

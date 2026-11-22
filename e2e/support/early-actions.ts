@@ -103,7 +103,7 @@ export async function earlySettings(page: Page) {
   await pressAcrossHydration(page, "/settings", () => advanced.locator(":scope > summary"));
   await expect(advanced).toHaveAttribute("open");
   await expect(advanced.locator(":scope > summary")).toHaveText(messages.settings_advanced_heading);
-  // Hydrate the server's native 403 document, rather than an action-data fetch.
+  // Hydrate the server's native 409 document, rather than an action-data fetch.
   const rejectedSave = async (route: import("@playwright/test").Route) => {
     if (!route.request().isNavigationRequest() || new URL(route.request().url()).pathname !== "/settings") {
       await route.continue(); return;
@@ -111,7 +111,7 @@ export async function earlySettings(page: Page) {
     const response = await route.fetch({ method: "POST", maxRedirects: 0, postData: "intent=sign-posts&signPosts=1", headers: {
       ...await route.request().allHeaders(), Origin: new URL(route.request().url()).origin, "Content-Type": "application/x-www-form-urlencoded",
     } });
-    expect(response.status()).toBe(403);
+    expect(response.status()).toBe(409);
     await route.fulfill({ response });
   };
   await page.route("**/settings", rejectedSave);

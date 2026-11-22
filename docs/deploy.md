@@ -518,7 +518,7 @@ changing a tag without its digest does not update the pinned image. Changing
 
 ## 7. Passkeys and the host name
 
-Passkeys are bound to the host name of the site where they were registered. Signing posts is chosen by each member in settings and is off by default. Changing the signing setting and deleting a passkey always require a signature, whatever the signing setting is. Before enabling member access, in a real browser whose certificate matches the host name, check passkey login, and turning the signing setting on, posting, and turning it off again. Keep the same host name across deployment changes. Changing the host name requires guidance to members that includes logging in again by email and registering passkeys again.
+Passkeys are bound to the host name of the site where they were registered. Enrollment in per-post signing is closed. Existing signing members can still sign posts and turn the setting off with a passkey. Before enabling member access, check passkey login in a real browser with a certificate that matches the host name. On deployments with existing signing members, also check signed posting and turning signing off. Keep the same host name across deployment changes. Changing the host name requires guidance to members that includes logging in again by email and registering passkeys again.
 
 ## 8. Database
 

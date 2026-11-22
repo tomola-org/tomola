@@ -5,7 +5,7 @@ import { recordDraftPublication } from "./eval/signals.server";
 import { finishQuestionDraft } from "./ai-question-usage.server";
 import { checkBodyBudget } from "~/lib/markdown.server";
 import { withEntryRender } from "./entry-render-preparation.server";
-import { and, count, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, count, desc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { AI_ASSISTANCE, type AiAssistance } from "~/lib/ai-assistance";
@@ -23,6 +23,7 @@ import {
 import { headlineFromBody } from "~/lib/headline.server";
 import { SOURCE_LANGS, type SourceLang, type Lang } from "~/lib/languages";
 import { plainExcerpt } from "~/lib/plain-text.server";
+import { needsDraftConfirmation } from "~/lib/signing";
 import { loadStanceAttrFacts } from "~/lib/questions.server";
 import { checkStanceAttributes, STANCE_TAGS, type StanceAttrError, type StanceTag } from "~/lib/stances";
 import { titleOrNull } from "~/lib/text";
@@ -59,6 +60,7 @@ export type Draft = {
   // For via = "api", the creating token's name (null if its row is absent) and frontmatter exactly as received (null if absent).
   tokenName: string | null;
   rawFrontmatter: string | null;
+  requiresReview: boolean;
   clientId: string | null;
   clientName: string | null;
   clientUri: string | null;
@@ -171,6 +173,7 @@ function toDraft(row: DraftRow, threadTitle: string | null = null, tokenName: st
     stanceTag: row.stanceTag as StanceTag | null,
     tokenName,
     rawFrontmatter: row.rawFrontmatter,
+    requiresReview: needsDraftConfirmation(row),
     clientId: row.clientId,
     clientName: row.clientName,
     clientUri: row.clientUri,
@@ -484,19 +487,22 @@ export function linkedDraftOf(form: FormData): { id: number; version: number } |
   return Number.isSafeInteger(values.id) && values.version <= 2_147_483_647 ? values : null;
 }
 
-// A client draft may also be published from a browser editor linked to it. Reserve that
-// version before creating a post, so publication through the draft screen cannot win too.
-// Ordinary web editors may publish their form while leaving a replaced local draft in place.
-export async function lockLinkedClientDraft(tx: Tx, authorId: string, form: FormData): Promise<boolean> {
+// A browser editor can publish a linked client draft with a signature. Unsigned
+// client drafts go through the draft form's confirmation and publication checks.
+export async function checkLinkedClientDraft(tx: Tx, authorId: string, form: FormData): Promise<"draft_conflict" | "confirmation_required" | null> {
   const linked = linkedDraftOf(form);
-  if (!linked) return true;
+  if (!linked) return null;
   if (villagesEnabled()) await lockVillageProfile(tx, authorId);
   const [draft] = await tx.select({ version: drafts.version }).from(drafts)
-    .where(and(eq(drafts.id, linked.id), eq(drafts.authorId, authorId), eq(drafts.via, "api"))).for("update");
-  if (draft) return draft.version === linked.version;
+    .where(and(eq(drafts.id, linked.id), eq(drafts.authorId, authorId), or(eq(drafts.via, "api"), isNotNull(drafts.clientKey), isNotNull(drafts.clientId)))).for("update");
+  if (draft) {
+    if (draft.version !== linked.version) return "draft_conflict";
+    const [profile] = await tx.select({ signPosts: profiles.signPosts }).from(profiles).where(eq(profiles.userId, authorId));
+    return profile?.signPosts ? null : "confirmation_required";
+  }
   const [consumed] = await tx.select({ id: draftReceipts.draftId }).from(draftReceipts)
     .where(and(eq(draftReceipts.draftId, linked.id), eq(draftReceipts.authorId, authorId)));
-  return !consumed;
+  return consumed ? "draft_conflict" : null;
 }
 
 // Called inside the post transaction. Browser-side edits never overwrite a newer AI draft.

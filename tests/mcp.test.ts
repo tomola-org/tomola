@@ -247,6 +247,22 @@ describe("Member MCP workflow discovery", () => {
 });
 
 describe("MCP ownership and output security", () => {
+  it("cannot obtain draft confirmation with an OAuth bearer token alone", async () => {
+    const accessToken = (await authorize(await register())).access_token;
+    const draft = await memberJson(await memberCall(accessToken, "tomola_draft_create", { kind: "topic", body: "OAuth confirmation fixture", lang: "en" }));
+    const id = String(draft.id);
+    const pathname = `/drafts/${id}`;
+    const headers = { Authorization: `Bearer ${accessToken}`, Origin: base };
+    const { action } = await import("~/routes/signing");
+    const { loader } = await import("~/routes/draft-preview");
+    const request = new Request(`${base}/signing`, { method: "POST", headers, body: JSON.stringify({
+      intent: "preview", pathname, fields: [["intent", "publish"], ["version", "1"], ["body", "OAuth confirmation fixture"], ["lang", "en"]],
+    }) });
+    await expect(action({ request, params: {} } as never)).rejects.toMatchObject({ status: 302 });
+    await expect(loader({ request: new Request(`${base}${pathname}/preview`, { headers }), params: { id } } as never)).rejects.toMatchObject({ status: 302 });
+    await memberCall(accessToken, "tomola_draft_delete", { id: draft.id, expectedVersion: 1 });
+  });
+
   it("includes canonical AI guidance in member initialization instructions", async () => {
     const client = new LegacyClient({ name: "guidance-fixture", version: "1" });
     try {

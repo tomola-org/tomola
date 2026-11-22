@@ -129,7 +129,11 @@ describe("asks_stance is set when the topic is created, on every way of creating
     expect(res.status).toBe(201);
     const { id } = (await res.json()) as { id: number };
     expect(await getDraft(h.db, hana, id)).toMatchObject({ asksStance: true, via: "api", altOf: null });
-    const published = await submit("draft", "hana", `/drafts/${id}`, { intent: "publish", title: "AI の問い", body: "本文。", lang: "ja", aiAssistance: "none", asksStance: "1" }, { id: String(id) });
+    const path = `/drafts/${id}`;
+    const fields = { intent: "publish", version: "1", title: "AI の問い", body: "本文。", lang: "ja", aiAssistance: "none", asksStance: "1" };
+    const { previewSignedWrite } = await import("~/lib/signing.server");
+    const { confirmation } = await previewSignedWrite(h.db, hana, path, await h.request(path, { form: fields }).formData());
+    const published = await submit("draft", "hana", path, { ...fields, confirmation: confirmation! }, { id: String(id) });
     expect(await row(idFrom(published.location))).toMatchObject({ asksStance: true, via: "api" });
   });
 

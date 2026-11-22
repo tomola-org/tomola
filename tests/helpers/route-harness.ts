@@ -36,9 +36,9 @@ export type RouteHarness = {
   restore(): void;
 };
 
-export async function setupRouteHarness(): Promise<RouteHarness> {
+export async function setupRouteHarness(dbOptions?: Parameters<typeof createTestDb>[0]): Promise<RouteHarness> {
   const saved: G = { __tomolaDb: g.__tomolaDb, __tomolaAuth: g.__tomolaAuth };
-  const db = await createTestDb();
+  const db = await createTestDb(dbOptions);
   g.__tomolaDb = Promise.resolve(db);
   const cookies: Record<string, string> = {};
   const ids: Record<string, string> = {};

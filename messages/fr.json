@@ -3267,5 +3267,10 @@
   "reauth_for_disconnect_google": "Confirmez votre identité en tant que {who} avant de dissocier votre compte Google.",
   "login_methods_on": "La connexion par clé d’accès uniquement est activée.",
   "login_methods_off": "La connexion par clé d’accès uniquement est désactivée.",
-  "login_methods_update_failed": "Impossible de modifier vos paramètres de connexion. Rechargez la page et réessayez."
+  "login_methods_update_failed": "Impossible de modifier vos paramètres de connexion. Rechargez la page et réessayez.",
+  "draft_confirmation_retry": "Vérifiez le contenu, puis cliquez à nouveau sur Publier.",
+  "draft_confirmation_use_preview": "Si JavaScript est désactivé, ouvrez l’aperçu pour publier ce brouillon.",
+  "draft_confirmation_reply_javascript": "Activez JavaScript pour publier cette réponse.",
+  "draft_confirmation_reload": "Recharger l’aperçu",
+  "settings_signing_closed": "Il n’est plus possible d’activer la signature par publication."
 }

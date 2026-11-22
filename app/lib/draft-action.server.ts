@@ -7,7 +7,7 @@ import { formString, readEntryForm } from "~/lib/entry-form.server";
 import { parseId } from "~/lib/params.server";
 import { hitMemberLimit, rateLimitHeaders } from "~/lib/rate-limit.server";
 import { postedLocation } from "~/lib/posted-ui";
-import { assertDraftPreviewPublication, SigningError, SigningFailureResponse, signingViewToken, withSignedWrite } from "~/lib/signing.server";
+import { SigningFailureResponse, signingViewToken, withSignedWrite } from "~/lib/signing.server";
 import { titleOrNull } from "~/lib/text";
 import { villagesEnabled } from "~/lib/villages-enabled.server";
 
@@ -32,12 +32,13 @@ export async function draftAction({ request, params }: { request: Request; param
     const versionOptions = { returnVersion: true, expectedVersion };
     const proof = (version: number) => signingViewToken({ userId: user.id, kind: "draft", id, version: String(version), title: draft?.kind === "topic" ? titleOrNull(title) : null, body, lang });
     async function result(error: string | null, saved = false, version?: number, altRemoved = false, status = error ? 400 : 200, resolvedVillage?: string) {
-      const latest = !fromPreview && error === "draft_conflict" ? await getDraft(db, user.id, id) : null;
+      const latest = !fromPreview && (error === "draft_conflict" || error === "confirmation_changed") ? await getDraft(db, user.id, id) : null;
+      const showLatest = latest && (error === "draft_conflict" || latest.version !== expectedVersion);
       const latestView = latest ? signingViewToken({ userId: user.id, kind: "draft", id, version: String(latest.version), title: latest.title, body: latest.body, lang: latest.lang }) : null;
       // Echo unsaved input, using the new basis whenever this request saved before publication was refused.
       const target = resolvedVillage ?? village;
-      const values = error && intent !== "delete" ? { title, body, lang, asksStance, version: version !== undefined ? String(version) : formString(form, "version"), signingView: version !== undefined ? proof(version) : formString(form, "signingView"), ...(villagesEnabled() ? { village: target } : {}) } : null;
-      return data({ error, saved, altRemoved, previewFailed: intent === "preview", version, signingView: version === undefined ? undefined : proof(version), latest: latest ? { draft: latest, signingView: latestView! } : null, values, ...(villagesEnabled() && draft?.kind === "topic" ? { village: target ?? draft.village ?? null } : {}) }, { status, headers: { "Cache-Control": "private, no-store" } });
+      const values = error && intent !== "delete" ? { title, body, lang, asksStance, stanceTag: form.has("stanceTag") ? stanceTag : undefined, version: version !== undefined ? String(version) : formString(form, "version"), signingView: version !== undefined ? proof(version) : formString(form, "signingView"), ...(villagesEnabled() ? { village: target } : {}) } : null;
+      return data({ error, saved, altRemoved, previewFailed: intent === "preview", version, signingView: version === undefined ? undefined : proof(version), latest: showLatest ? { draft: latest, signingView: latestView! } : null, values, ...(villagesEnabled() && draft?.kind === "topic" ? { village: target ?? draft.village ?? null } : {}) }, { status, headers: { "Cache-Control": "private, no-store" } });
     }
     if (!draft) {
       if (form.has("version")) return result("not_found", false, undefined, false, 404);
@@ -60,15 +61,6 @@ export async function draftAction({ request, params }: { request: Request; param
       throw redirect(`/drafts/${id}/preview`);
     }
     if (intent === "publish") {
-      if (fromPreview) {
-        if (draft.kind !== "topic" || draft.version !== expectedVersion) return result("draft_conflict", false, undefined, false, 409);
-        try { assertDraftPreviewPublication(form, user.id, draft); }
-        catch (error) {
-          if (error instanceof SigningError) return result(error.code, false, undefined, false, error.status);
-          throw error;
-        }
-        if (villagesEnabled() && (villageExplicit !== Boolean(draft.village) || village !== (draft.village ?? ""))) return result("draft_conflict", false, undefined, false, 409);
-      }
       const rate = await hitMemberLimit(db, draft.kind === "topic" ? "topic" : "reply", user.id);
       if (!rate.allowed) {
         const refused = await result("rate_limited", false, undefined, false, 429);
@@ -79,7 +71,7 @@ export async function draftAction({ request, params }: { request: Request; param
       let res;
       try {
         res = await withSignedWrite(db, user.id, request, form, async tx => {
-          // The conditional update is inside the signed transaction, before creating any post.
+          // Save inside the publication transaction, before creating the post.
           const saved = await updateDraft(tx, user.id, id, input, versionOptions);
           if (!saved.ok) return saved;
           didSave = true;
@@ -110,7 +102,7 @@ export async function draftAction({ request, params }: { request: Request; param
     if (!(error instanceof MarkdownBusyError) && !(error instanceof SigningFailureResponse)) throw error;
     const form = await retained.formData();
     const raw = readEntryForm(form);
-    const values = { title: raw.title, body: raw.body, lang: raw.lang, asksStance: raw.asksStance, version: formString(form, "version"), signingView: formString(form, "signingView"), ...(villagesEnabled() ? { village: error instanceof SigningFailureResponse ? error.village ?? raw.village : raw.village } : {}) };
+    const values = { title: raw.title, body: raw.body, lang: raw.lang, asksStance: raw.asksStance, stanceTag: form.has("stanceTag") ? raw.stanceTag : undefined, version: formString(form, "version"), signingView: formString(form, "signingView"), ...(villagesEnabled() ? { village: error instanceof SigningFailureResponse ? error.village ?? raw.village : raw.village } : {}) };
     return data({ error: error instanceof SigningFailureResponse ? error.code : "busy", saved: false, altRemoved: false, previewFailed: formString(form, "intent") === "preview", version: undefined, signingView: undefined, latest: null, values }, { status: error instanceof SigningFailureResponse ? error.status : 503, headers: error instanceof SigningFailureResponse ? { "Cache-Control": "private, no-store" } : { "Retry-After": "1" } });
   }
 

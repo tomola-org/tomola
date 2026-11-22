@@ -25,7 +25,10 @@ const sessionIds = new WeakMap<Request, string>();
 async function getSessionUserImplementation(request: Request): Promise<SessionUser | null> {
   const auth = await getAuth();
   // Attach session-refresh and invalid-cookie deletion Set-Cookie headers to the response via root middleware (session-cookies.server.ts).
-  const { headers, response: session } = await auth.api.getSession({ headers: request.headers, returnHeaders: true });
+  const { headers, response: session } = await auth.api.getSession({
+    headers: request.headers, returnHeaders: true,
+    ...(isDraftPreviewRead(request) ? { query: { disableRefresh: true } } : {}),
+  });
   collectSessionCookies(headers);
   if (!session || isDeletedIdentity(session.user.id, session.user.email)) return null;
   sessionCreatedAt.set(request, session.session?.createdAt);
@@ -74,7 +77,7 @@ async function requireMemberImplementation(request: Request): Promise<Member> {
     if (!rate.allowed) throw data("Too many reads. Try again later.", { status: 429, headers: rateLimitHeaders(rate) });
   }
   // Insert operators (addresses in OPERATOR_EMAILS) into roles for queries and records. Determine operator status from the environment variable on every request.
-  await ensureOperatorRow(db, user);
+  if (!isDraftPreviewRead(request)) await ensureOperatorRow(db, user);
   return { user, profile, db };
 }
 
@@ -101,6 +104,11 @@ function documentUrl(request: Request): URL {
   url.pathname = url.pathname.replace(/\/_\.data$/, "/").replace(/\.data$/, "");
   if (url.searchParams.has("_routes")) url.searchParams.delete("_routes");
   return url;
+}
+
+// A draft preview issues a stateless confirmation without updating a valid session or an operator row.
+function isDraftPreviewRead(request: Request): boolean {
+  return (request.method === "GET" || request.method === "HEAD") && /^\/drafts\/\d+\/preview\/?$/.test(documentUrl(request).pathname);
 }
 
 type PrivilegedWriteReturn = { preserveFormAnchor?: boolean; fallbackPath?: string };

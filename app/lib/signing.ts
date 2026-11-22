@@ -18,9 +18,19 @@ export type SigningPreview = {
   targetContext: { thread: SigningContent | null; parent: SigningContent | null };
   enrolled: boolean;
   signatureRequired: boolean;
+  confirmation?: string;
 };
 export type SigningProof = { challenge: string; assertion: AuthenticationResponseJSON };
 export type SigningOptions = { challenge: string; options: PublicKeyCredentialRequestOptionsJSON };
 export const SIGNATURE_CHALLENGE_FIELD = "signatureChallenge";
 export const SIGNATURE_ASSERTION_FIELD = "signatureAssertion";
 export const SIGNING_VIEW_FIELD = "signingView";
+export const DRAFT_CONFIRMATION_FIELD = "confirmation";
+
+export function needsDraftConfirmation(draft: { via: string; clientKey: string | null; clientId: string | null }): boolean {
+  return draft.via === "api" || draft.clientKey !== null || draft.clientId !== null;
+}
+
+export function isDraftConfirmationError(code: string | null | undefined): boolean {
+  return code === "confirmation_required" || code === "confirmation_expired" || code === "confirmation_changed";
+}

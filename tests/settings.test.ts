@@ -190,7 +190,7 @@ describe("/settings (route)", () => {
     const result = await h.outcome(() => route.action(h.args(h.request("/settings", {
       as: "hana", form: { intent: "sign-posts", signPosts: "1" },
     }))));
-    expect(result).toMatchObject({ status: 403, value: { data: { intent: "sign-posts", error: "signature_required" } } });
+    expect(result).toMatchObject({ status: 409, value: { data: { intent: "sign-posts", error: "signing_closed" } } });
     expect((await getProfile(h.db, h.ids.hana))!.signPosts).toBe(before);
   });
 

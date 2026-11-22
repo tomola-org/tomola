@@ -2,7 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { clientHeaders, enMessages as en, useMember, waitForFormReady } from "./helpers";
 import { routeModule } from "./support/module-route";
-import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { acceptSignedWrite, installSeededSigningKey } from "./signing-helper";
 
 const body = (page: Page) => page.locator('textarea[name="body"]').first();
 const form = (page: Page) => page.locator("form", { has: body(page) }).first();
@@ -112,14 +112,7 @@ test("a reply draft stays clean on opening and saves writing entered before auto
 test("signing waits for an in-flight autosave and reviews the latest saved fields", async ({ page }) => {
   await page.setExtraHTTPHeaders(clientHeaders("10.31.4.5"));
   await useMember(page, "lazy_autosave_signing@example.com", "/settings");
-  await enableSigningAuthenticator(page);
-  await addSettingsPasskey(page);
-  await expect(page.getByText(en.settings_passkeys_added, { exact: true })).toBeVisible();
-  await page.locator("#settings-advanced").evaluate(element => { (element as HTMLDetailsElement).open = true; });
-  await page.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true }).check();
-  await page.locator('form:has(input[name="intent"][value="sign-posts"])').getByRole("button", { name: en.save_changes, exact: true }).click();
-  await acceptSignedWrite(page);
-  await expect(page).toHaveURL(url => url.searchParams.get("saved") === "sign-posts");
+  await installSeededSigningKey(page, "lazy_autosave_signing@example.com");
   await page.goto("/t/new");
   await waitForFormReady(form(page));
   await expect(form(page)).toHaveAttribute("data-autosave", "ready");

@@ -19,14 +19,14 @@ it("publishes, replies, edits, changes the handle and publishes drafts without p
   if (!topic.ok) throw new Error(topic.error);
   const reply = await createReply(h.db, h.ids.hana, topic.id, { body: "Original reply", lang: "ja" });
   if (!reply.ok) throw new Error(reply.error);
-  const draft = await createDraft(h.db, h.ids.hana, { kind: "topic", body: "AI draft", lang: "ja" }, { via: "api" });
+  const draft = await createDraft(h.db, h.ids.hana, { kind: "topic", body: "AI draft", lang: "ja" });
   if (!draft.ok) throw new Error(draft.error);
   const cases = [
     ["topic-new", "/t/new", {}, { body: "Unsigned topic", lang: "ja" }],
     ["topic", `/t/${topic.id}`, { id: String(topic.id) }, { body: "Unsigned reply", lang: "ja" }],
     ["topic-edit", `/t/${topic.id}/edit`, { id: String(topic.id) }, { title: "New title", body: "Edited topic" }],
     ["reply-edit", `/c/${reply.id}/edit`, { id: String(reply.id) }, { body: "Edited reply" }],
-    ["draft", `/drafts/${draft.id}`, { id: String(draft.id) }, { intent: "publish", version: "1", body: "Reviewed AI draft", lang: "ja" }],
+    ["draft", `/drafts/${draft.id}`, { id: String(draft.id) }, { intent: "publish", version: "1", body: "Browser draft", lang: "ja" }],
     ["settings", "/settings", {}, { intent: "handle", handle: "new_hana" }],
   ] as const;
   for (const [name, path, params, form] of cases) {
@@ -66,48 +66,51 @@ it("requires a signature for the signing preference and for protected key remova
   await h.signIn("protected_settings");
   const userId = h.ids.protected_settings;
   await h.db.update(profiles).set({ passkeyOnly: true }).where(eq(profiles.userId, userId));
-  for (const intent of ["sign-posts", "delete-passkey"]) {
-    expect(await h.outcome(() => action(h.args(h.request("/settings", { as: "protected_settings", form: { intent, signPosts: "1", passkeyId: "missing" } }))))).toMatchObject({ status: 403, value: { data: { error: "signature_required" } } });
-  }
+  const result = (form: Record<string, string>) => h.outcome(() => action(h.args(h.request("/settings", { as: "protected_settings", form }))));
+  expect(await result({ intent: "sign-posts", signPosts: "1", signatureAssertion: "invalid" }))
+    .toMatchObject({ status: 409, value: { data: { error: "signing_closed" } } });
+  expect(await result({ intent: "delete-passkey", passkeyId: "missing" }))
+    .toMatchObject({ status: 403, value: { data: { error: "signature_required" } } });
 });
 
-it("requires a registered passkey before either preference change and binds both old and new values", async () => {
+it("allows an existing signing member to turn it off with a registered passkey", async () => {
   await h.signIn("preference_owner");
   const userId = h.ids.preference_owner;
-  const form = new FormData(); form.set("intent", "sign-posts"); form.set("signPosts", "1");
+  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, userId));
+  const { action } = await import("~/routes/settings");
+  const request = h.request("/settings", { as: "preference_owner", form: { intent: "sign-posts" } });
+  expect(await h.outcome(() => action(h.args(request.clone())))).toMatchObject({ status: 403, value: { data: { error: "signature_required" } } });
+  const form = await request.clone().formData();
   const preview = await previewSignedWrite(h.db, userId, "/settings", form);
-  expect(preview.signatureRequired).toBe(true);
   await expect(issueSignedWrite(h.db, userId, "/settings", form, preview.payloadHash)).rejects.toMatchObject({ code: "passkey_required", status: 409 });
   const key = await signingCredential(h.db, userId);
-  const { action } = await import("~/routes/settings");
-  for (const enabled of [true, false]) {
-    const request = h.request("/settings", { as: "preference_owner", form: { intent: "sign-posts", ...(enabled ? { signPosts: "1" } : {}) } });
-    const signed = await attachSigningProof(h.db, userId, request, key);
-    expect(await h.outcome(() => action(h.args(signed)))).toMatchObject({ status: 302, location: "/settings?saved=sign-posts#settings-signing" });
-    expect((await h.db.select().from(profiles).where(eq(profiles.userId, userId)))[0].signPosts).toBe(enabled);
-  }
+  const signed = await attachSigningProof(h.db, userId, request, key);
+  expect(await h.outcome(() => action(h.args(signed)))).toMatchObject({ status: 302, location: "/settings?saved=sign-posts#settings-signing" });
   const records = await h.db.select().from(memberSignatures).where(eq(memberSignatures.userId, userId));
-  expect(records).toHaveLength(2);
-  expect(records.map(r => JSON.parse(r.payload).input)).toEqual([
-    { signPosts: true, previousSignPosts: false }, { signPosts: false, previousSignPosts: true },
-  ]);
-  expect(records.every(r => r.operation === "change-signing-preference" && r.entryId === null)).toBe(true);
-  expect((await buildMemberExport(h.db, userId)).profile?.sign_posts).toBe(false);
+  expect(records).toMatchObject([{ operation: "change-signing-preference", entryId: null }]);
+  expect(JSON.parse(records[0].payload).input).toEqual({ signPosts: false, previousSignPosts: true });
+  const exported = await buildMemberExport(h.db, userId);
+  expect(exported.profile?.sign_posts).toBe(false);
+  expect(exported.signatures).toMatchObject([{ signed_payload: records[0].payload, assertion: records[0].assertion, payload_withheld: null }]);
+  form.set("signPosts", "1");
+  await expect(previewSignedWrite(h.db, userId, "/settings", form)).rejects.toMatchObject({ code: "signing_closed", status: 409 });
+  await expect(issueSignedWrite(h.db, userId, "/settings", form, preview.payloadHash)).rejects.toMatchObject({ code: "signing_closed", status: 409 });
 });
 
 it("rejects preference tampering and a changed previous value without consuming proof", async () => {
   await h.signIn("preference_tamper");
   const userId = h.ids.preference_tamper; const key = await signingCredential(h.db, userId);
-  const form = new FormData(); form.set("intent", "sign-posts"); form.set("signPosts", "1");
+  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, userId));
+  const form = new FormData(); form.set("intent", "sign-posts");
   const preview = await previewSignedWrite(h.db, userId, "/settings", form);
   const options = await issueSignedWrite(h.db, userId, "/settings", form, preview.payloadHash);
   form.set("signatureChallenge", options.challenge); form.set("signatureAssertion", JSON.stringify(key.assert(options.options.challenge)));
   const mutate = async () => ({ ok: true });
-  form.delete("signPosts");
-  await expect(withSignedWrite(h.db, userId, h.request("/settings"), form, mutate)).rejects.toMatchObject({ status: 409 });
   form.set("signPosts", "1");
-  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, userId));
-  await expect(withSignedWrite(h.db, userId, h.request("/settings"), form, mutate)).rejects.toMatchObject({ status: 409 });
+  await expect(withSignedWrite(h.db, userId, h.request("/settings"), form, mutate)).rejects.toMatchObject({ code: "approval_changed", status: 409 });
+  form.delete("signPosts");
+  await h.db.update(profiles).set({ signPosts: false }).where(eq(profiles.userId, userId));
+  await expect(withSignedWrite(h.db, userId, h.request("/settings"), form, mutate)).rejects.toMatchObject({ code: "approval_changed", status: 409 });
   expect((await h.db.select().from(signingChallenges).where(eq(signingChallenges.challenge, options.challenge)))[0].usedAt).toBeNull();
   expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.userId, userId))).toHaveLength(0);
 });
@@ -117,7 +120,7 @@ it("keeps last-client metadata after an MCP client updates its own draft", async
   const created = await createClientDraft(h.db, h.ids.hana, client, { kind: "topic", body: "MCP draft", lang: "ja" });
   if (!created.ok) throw new Error(created.error);
   expect(await updateClientDraft(h.db, h.ids.hana, client, created.id, { body: "Last updated by MCP", expectedVersion: 1 })).toMatchObject({ ok: true });
-  const form = new FormData(); form.set("intent", "publish"); form.set("body", "Last updated by MCP"); form.set("lang", "ja");
+  const form = new FormData(); form.set("intent", "publish"); form.set("body", "Last updated by MCP"); form.set("version", "2"); form.set("lang", "ja");
   const preview = await previewSignedWrite(h.db, h.ids.hana, `/drafts/${created.id}`, form);
   expect(preview).toMatchObject({ signatureRequired: false, lastEditor: { id: client.id, name: client.name }, content: { body: "Last updated by MCP" } });
 });
@@ -128,15 +131,21 @@ it("applies the moderator's own preference to corrections and retains the modera
   const topic = await createTopic(h.db, h.ids.hana, { title: "Locked question", body: "Typoo", lang: "ja", asksStance: true });
   if (!topic.ok) throw new Error(topic.error);
   expect(await setStance(h.db, h.ids.voter, { questionId: topic.id, position: "agree", expectedVersion: 0 })).toMatchObject({ ok: true });
-  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, h.ids.hana));
+  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, h.ids.moriko));
+  const key = await signingCredential(h.db, h.ids.moriko);
   try {
     const { loader, action } = await import("~/routes/topic-edit");
     const params = { id: String(topic.id) }; const path = `/t/${topic.id}/edit`;
     const loaded = await loader(h.args(h.request(path, { as: "moriko" }), params));
-    expect(loaded).toMatchObject({ fix: true, signPosts: false });
+    expect(loaded).toMatchObject({ fix: true, signPosts: true });
     const post = h.request(path, { as: "moriko", form: { title: "Locked question", body: "Typo", sourceHash: loaded.sourceHash!, note: "Corrected the spelling" } });
-    expect(await h.outcome(() => action(h.args(post, params)))).toMatchObject({ status: 302 });
+    const signed = await attachSigningProof(h.db, h.ids.moriko, post, key);
+    expect(await h.outcome(() => action(h.args(signed, params)))).toMatchObject({ status: 302 });
     expect(await h.db.select().from(moderationActions).where(eq(moderationActions.targetEntryId, topic.id))).toHaveLength(1);
-    expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.entryId, topic.id))).toHaveLength(0);
-  } finally { await h.db.update(profiles).set({ signPosts: false }).where(eq(profiles.userId, h.ids.hana)); }
+    expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.entryId, topic.id))).toHaveLength(1);
+    const exported = await buildMemberExport(h.db, h.ids.moriko);
+    expect(exported.signatures).toMatchObject([{ entry_id: topic.id, operation: "edit-topic", payload_withheld: "not_author" }]);
+    expect(exported.signatures[0]).not.toHaveProperty("signed_payload");
+    expect(exported.signatures[0]).not.toHaveProperty("assertion");
+  } finally { await h.db.update(profiles).set({ signPosts: false }).where(eq(profiles.userId, h.ids.moriko)); }
 });

@@ -66,7 +66,12 @@ export const publicOnly = [
 ] as const;
 export const bothModes = [
   ["draft-preview", ".*"],
-  ["passkey-enrollment", "passkey-only sign-in"],
+  ["ai-draft", "AI draft confirmation|imported text is reviewed"],
+  ["signing", ".*"],
+  ["settings-order", "signing|rejected signature changes|advanced section fragments"],
+  ["lazy-autosave", "approval survives|signing"],
+  ["edit-version-check", "signing true"],
+  ["passkey-enrollment", "passkey-only sign-in|member without passkeys"],
   ["home-following", ".*"],
   ["load-more", "members"],
   ["introductions", ".*"],

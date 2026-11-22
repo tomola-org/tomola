@@ -2551,5 +2551,10 @@
   "reauth_for_disconnect_google": "解除 Google 账号关联前，请确认您是 {who} 本人。",
   "login_methods_on": "仅用通行密钥登录已开启。",
   "login_methods_off": "仅用通行密钥登录已关闭。",
-  "login_methods_update_failed": "无法更改登录设置。请重新加载页面后再试。"
+  "login_methods_update_failed": "无法更改登录设置。请重新加载页面后再试。",
+  "draft_confirmation_retry": "请确认内容，然后再次点击“发布”。",
+  "draft_confirmation_use_preview": "如果 JavaScript 已禁用，请打开预览后发布这份草稿。",
+  "draft_confirmation_reply_javascript": "请启用 JavaScript 以发布这条回复。",
+  "draft_confirmation_reload": "重新加载预览",
+  "settings_signing_closed": "现在无法再开启逐帖签名。"
 }

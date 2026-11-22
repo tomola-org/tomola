@@ -3155,5 +3155,10 @@
   "reauth_for_disconnect_google": "Hãy xác minh danh tính của bạn là {who} trước khi ngắt kết nối Google.",
   "login_methods_on": "Đăng nhập chỉ bằng khóa truy cập (passkey) đang bật.",
   "login_methods_off": "Đăng nhập chỉ bằng khóa truy cập (passkey) đang tắt.",
-  "login_methods_update_failed": "Không thể thay đổi cài đặt đăng nhập của bạn. Hãy tải lại trang này và thử lại."
+  "login_methods_update_failed": "Không thể thay đổi cài đặt đăng nhập của bạn. Hãy tải lại trang này và thử lại.",
+  "draft_confirmation_retry": "Hãy kiểm tra nội dung rồi nhấn Đăng một lần nữa.",
+  "draft_confirmation_use_preview": "Nếu JavaScript đang tắt, hãy mở bản xem trước để đăng bản nháp này.",
+  "draft_confirmation_reply_javascript": "Hãy bật JavaScript để đăng câu trả lời này.",
+  "draft_confirmation_reload": "Tải lại bản xem trước",
+  "settings_signing_closed": "Không thể bật tính năng ký từng bài viết nữa."
 }

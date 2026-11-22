@@ -1,7 +1,9 @@
+import fs from "node:fs";
+import { join } from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { clientHeaders, enMessages as en, state, useMember, waitForFormReady } from "./helpers";
-import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { acceptSignedWrite, enableSigningAuthenticator, installSeededSigningKey } from "./signing-helper";
 
 async function create(page: Page, kind: "topic" | "reply") {
   const headers = { origin: state().baseURL };
@@ -17,25 +19,13 @@ async function create(page: Page, kind: "topic" | "reply") {
   return `/c/${id}/edit`;
 }
 
-async function optIn(page: Page) {
-  await page.setExtraHTTPHeaders(clientHeaders("10.31.4.4"));
-  const authenticator = await enableSigningAuthenticator(page);
-  await page.goto("/settings");
-  await addSettingsPasskey(page);
-  await expect(page.getByText(en.settings_passkeys_added, { exact: true })).toBeVisible();
-  if (!await page.locator("#settings-advanced").evaluate(element => (element as HTMLDetailsElement).open)) await page.locator("#settings-advanced > summary").click();
-  await page.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true }).check();
-  await page.locator("form", { has: page.locator('input[name="intent"][value="sign-posts"]') }).getByRole("button", { name: en.save_changes, exact: true }).click();
-  await acceptSignedWrite(page);
-  await expect(page).toHaveURL(/saved=sign-posts/);
-  return authenticator;
-}
-
 for (const kind of ["topic", "reply"] as const) for (const signed of [false, true]) {
   test(`${kind}: two screens preserve the refused edit and its device copy, signing ${signed}`, async ({ page, context }) => {
     await useMember(page, `edit_version_${kind}_${signed ? "signed" : "plain"}@example.com`, "/t/new");
-    const path = await create(page, kind);
-    const authenticator = signed ? await optIn(page) : null;
+    const authenticator = signed ? await installSeededSigningKey(page, `edit_version_${kind}_signed@example.com`) : null;
+    const path = signed
+      ? JSON.parse(fs.readFileSync(join(state().dir, "signed-edit-targets.json"), "utf8"))[kind] as string
+      : await create(page, kind);
     const stale = await context.newPage();
     await page.goto(path);
     await stale.goto(path);

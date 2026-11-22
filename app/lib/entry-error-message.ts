@@ -1,4 +1,5 @@
 import type { BodyKind } from "./body-length";
+import { isDraftConfirmationError } from "./signing";
 import { m } from "~/paraglide/messages.js";
 
 // Convert post-save errors into interface messages, shared by topic-new and topic.
@@ -30,6 +31,7 @@ export function entryErrorMessage(error: string, kind: BodyKind = "topic"): stri
   if (error === "rate_limited") return m.error_rate_limited();
   // The Markdown worker was busy: the member did nothing wrong, and what was written is still in the form.
   if (error === "busy") return m.error_busy();
+  if (isDraftConfirmationError(error)) return m.draft_confirmation_retry();
   if (["approval_changed", "published_content_changed", "published_target_changed"].includes(error)) return m.signing_changed();
   if (["signature_required", "signature_not_required", "invalid_signature", "wrong_passkey", "user_verification_required", "challenge_used_or_unknown", "challenge_expired", "passkey_required", "invalid_view", "invalid_payload"].includes(error)) return m.signing_failed();
   return m.error_generic();

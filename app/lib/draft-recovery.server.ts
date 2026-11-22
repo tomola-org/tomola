@@ -14,6 +14,8 @@ export async function draftRecoveryToken(db: Db, userId: string, draft: Draft): 
   if (clientId === null && draft.via === "api") {
     const [row] = await db.select({ tokenId: drafts.tokenId }).from(drafts).where(and(eq(drafts.id, draft.id), eq(drafts.authorId, userId)));
     clientId = `token:${row?.tokenId ?? "deleted"}`;
+  } else if (clientId === null && draft.requiresReview) {
+    clientId = "client:unknown";
   }
   const context: Context = {
     kind: draft.kind, threadId: draft.threadId, parentId: draft.parentId, altOf: draft.altOf, responseTo: draft.responseTo, aiAssistance: draft.aiAssistance,

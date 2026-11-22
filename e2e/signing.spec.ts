@@ -1,11 +1,12 @@
 import { saveEditorDraft } from "./draft-autosave-helper";
 import fs from "node:fs";
+import path from "node:path";
 import { expect } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { waitForClientRoute, useMember, formatMessage, clientHeaders, enMessages, state, messageTitleField as titleField, waitForFormReady } from "./helpers";
-import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { acceptSignedWrite, installSeededSigningKey } from "./signing-helper";
 
-test("opted-in writes and both preference changes use real UV assertions; unsigned entrances are refused", async ({ browser }, info) => {
+test("signed writes and opting out use real UV assertions; unsigned submissions are refused", async ({ browser }, info) => {
   const context = await browser.newContext({ extraHTTPHeaders: clientHeaders("10.17.0.1") });
   const page = await context.newPage();
   const navigations: { at: number; path: string }[] = [];
@@ -13,16 +14,7 @@ test("opted-in writes and both preference changes use real UV assertions; unsign
   page.on("framenavigated", frame => { if (frame === page.mainFrame()) navigations.push({ at: Date.now(), path: new URL(frame.url()).pathname }); });
   try {
     await useMember(page, "signer@example.com");
-    const authenticator = await enableSigningAuthenticator(page);
-    await page.goto("/settings");
-    await addSettingsPasskey(page);
-    await expect(page.getByText(enMessages.settings_passkeys_added, { exact: true })).toBeVisible();
-    if (!(await page.locator("#settings-advanced").evaluate(element => (element as HTMLDetailsElement).open))) await page.locator("#settings-advanced > summary").click();
-    await page.getByRole("checkbox", { name: enMessages.settings_sign_posts_label, exact: true }).check();
-    await page.locator("form", { has: page.locator('input[name="intent"][value="sign-posts"]') }).getByRole("button", { name: enMessages.save_changes, exact: true }).click();
-    await acceptSignedWrite(page);
-    await expect(page).toHaveURL(url => url.pathname === "/settings" && url.searchParams.get("saved") === "sign-posts" && url.hash === "#settings-signing");
-    await expect(page.getByRole("checkbox", { name: enMessages.settings_sign_posts_label, exact: true })).toBeChecked();
+    const authenticator = await installSeededSigningKey(page, "signer@example.com");
     // Saving a private draft does not request approval or a WebAuthn signature.
     let signingRequests = 0;
     const countSigning = (request: import("@playwright/test").Request) => { if (new URL(request.url()).pathname === "/signing") signingRequests++; };
@@ -231,7 +223,7 @@ test("opted-in writes and both preference changes use real UV assertions; unsign
     expect(text).toContain("create-topic");
     expect(text).toContain("create-reply");
     const records = JSON.parse(text).signatures as { challenge: string; payload_hash: string }[];
-    expect(records).toHaveLength(8);
+    expect(records).toHaveLength(7);
     expect(JSON.parse(text).profile.sign_posts).toBe(true);
     for (const record of records) expect(Buffer.from(record.challenge, "base64url").toString("utf8")).toMatch(new RegExp(`^tomola:v1:[a-f0-9]{64}:${record.payload_hash}$`));
     if (!(await page.locator("#settings-advanced").evaluate(element => (element as HTMLDetailsElement).open))) await page.locator("#settings-advanced > summary").click();
@@ -239,11 +231,11 @@ test("opted-in writes and both preference changes use real UV assertions; unsign
     await page.locator("form", { has: page.locator('input[name="intent"][value="sign-posts"]') }).getByRole("button", { name: enMessages.save_changes, exact: true }).click();
     await acceptSignedWrite(page);
     await expect(page).toHaveURL(url => url.pathname === "/settings" && url.searchParams.get("saved") === "sign-posts" && url.hash === "#settings-signing");
-    await expect(page.getByRole("checkbox", { name: enMessages.settings_sign_posts_label, exact: true })).not.toBeChecked();
+    await expect(page.getByRole("checkbox", { name: enMessages.settings_sign_posts_label, exact: true })).toHaveCount(0);
     const disabledExport = await (await context.request.get("/settings/export")).json();
     expect(disabledExport.profile.sign_posts).toBe(false);
-    expect(disabledExport.signatures).toHaveLength(9);
-    expect(disabledExport.signatures.filter((r: { operation: string }) => r.operation === "change-signing-preference")).toHaveLength(2);
+    expect(disabledExport.signatures).toHaveLength(8);
+    expect(disabledExport.signatures.filter((r: { operation: string }) => r.operation === "change-signing-preference")).toHaveLength(1);
   } catch (error) {
     await info.attach("draft-server-log", { body: fs.readFileSync(state().logFile), contentType: "text/plain" });
     throw error;
@@ -251,4 +243,23 @@ test("opted-in writes and both preference changes use real UV assertions; unsign
     await info.attach("draft-input-values", { body: JSON.stringify({ ...draftInput, allNavigations: navigations }, null, 2), contentType: "application/json" });
     await context.close().catch(() => undefined);
   }
+});
+
+test("an existing signing member can publish an AI draft with a passkey", async ({ page }) => {
+  const fixtures = JSON.parse(fs.readFileSync(path.join(state().dir, "draft-confirmations.json"), "utf8"));
+  const { id, body } = fixtures.signed as { id: number; body: string };
+  await page.setExtraHTTPHeaders(clientHeaders("10.17.0.2"));
+  await useMember(page, "ai_confirm_signed@example.com", "/settings");
+  await installSeededSigningKey(page, "ai_confirm_signed@example.com");
+  await page.goto(`/drafts/${id}/preview`);
+  await expect(page.locator('input[name="confirmation"]')).toHaveCount(0);
+  await waitForFormReady(page.locator('form:has(input[name="signingView"])'));
+  const preview = page.waitForResponse(response => new URL(response.url()).pathname === "/signing" && response.request().postDataJSON()?.intent === "preview");
+  await page.getByRole("button", { name: enMessages.draft_preview_publish, exact: true }).click();
+  const approved = await (await preview).json();
+  expect(approved.signatureRequired).toBe(true);
+  expect(approved.confirmation).toBeUndefined();
+  await acceptSignedWrite(page);
+  await expect(page).toHaveURL(/\/t\/\d+\?posted=/);
+  await expect(page.locator(".longread").first()).toContainText(body);
 });

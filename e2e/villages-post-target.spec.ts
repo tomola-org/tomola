@@ -2,7 +2,7 @@ import { saveEditorDraft } from "./draft-autosave-helper";
 import fs from "node:fs";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
-import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { acceptSignedWrite, installSeededSigningKey } from "./signing-helper";
 import { test } from "./editor-fixture";
 import { localizedLanguageLabel } from "../app/lib/language-label";
 import { captureScreenshot, clientHeaders, enMessages as m, openUserMenu, openPlaces, state, useMember, waitForClientRoute, waitForFormReady, chooseEditorMode, openPostSettings, uiMessages, formatMessage } from "./helpers";
@@ -303,15 +303,7 @@ test("frontmatter stays in Markdown through destination review and rich editing 
 test("signed frontmatter conflicts update the displayed village before the second submission", async ({ page }) => {
   await page.setExtraHTTPHeaders(clientHeaders("10.31.4.2"));
   await useMember(page, "vtarget_signed_review@example.com", "/settings");
-  await enableSigningAuthenticator(page);
-  await addSettingsPasskey(page);
-  await expect(page.getByText(m.settings_passkeys_added, { exact: true })).toBeVisible();
-  await page.locator("#settings-advanced > summary").click();
-  const signing = page.locator("#settings-signing");
-  await signing.getByRole("checkbox", { name: m.settings_sign_posts_label, exact: true }).check();
-  await signing.getByRole("button", { name: m.save_changes, exact: true }).click();
-  await acceptSignedWrite(page);
-  await expect(signing.getByRole("status")).toHaveText(m.settings_saved);
+  await installSeededSigningKey(page, "vtarget_signed_review@example.com");
   let challenges = 0;
   page.on("request", request => { if (new URL(request.url()).pathname === "/signing" && request.postDataJSON()?.intent === "challenge") challenges++; });
   for (const declaration of ['"village": ja', 'village: ja\n"village": en']) {

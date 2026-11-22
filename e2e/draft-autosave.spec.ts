@@ -5,7 +5,7 @@ import { test } from "./editor-fixture";
 import { captureScreenshot, chooseEditorMode, clientHeaders, enMessages as en, formatMessage, messagePattern, openPostSettings, state, useMember as restoreAutosaveMember, waitForClientRoute, waitForFormReady } from "./helpers";
 import { baseOf } from "../app/lib/local-draft";
 import { LANG_LABELS } from "../app/lib/languages";
-import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { acceptSignedWrite, installSeededSigningKey } from "./signing-helper";
 import { beforeHydration } from "./support/prehydration";
 
 // Clock mocks remove Navigation Timing; explicit fresh visits need the native entries.
@@ -614,16 +614,7 @@ for (const mode of ["markdown", "rich"] as const) test(`personal destinations st
   const scenario = mode === "rich" ? "personal_rich" : "personal_md";
   await context.setExtraHTTPHeaders(clientHeaders(mode === "rich" ? "10.45.80.1" : "10.45.80.2"));
   await open(page, scenario);
-  await enableSigningAuthenticator(page);
-  await page.goto("/settings");
-  await addSettingsPasskey(page);
-  await expect(page.getByText(en.settings_passkeys_added, { exact: true })).toBeVisible();
-  const advanced = page.locator("#settings-advanced");
-  if (!(await advanced.evaluate(element => (element as HTMLDetailsElement).open))) await advanced.locator("summary").first().click();
-  await page.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true }).check();
-  await page.locator('form:has(input[name="intent"][value="sign-posts"])').getByRole("button", { name: en.save_changes, exact: true }).click();
-  await acceptSignedWrite(page);
-  await expect(page).toHaveURL(url => url.searchParams.get("saved") === "sign-posts");
+  await installSeededSigningKey(page, `draft_autosave_${scenario}@example.com`);
   await page.goto("/t/new");
   await waitForFormReady(page.locator("form", { has: body(page) }).first());
   if (mode === "rich") await chooseEditorMode(page, en.editor_mode_rich);

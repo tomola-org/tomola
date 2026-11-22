@@ -11,12 +11,14 @@ describe.skipIf(!PG_MODE)("preference and posting serialization on independent P
   let h: RouteHarness;
   beforeAll(async () => { h = await setupRouteHarness(); });
   afterAll(() => h?.restore());
-  it.each(["post-first", "preference-first"])("orders an unsigned post and signed opt-in: %s", async order => {
+  it.each(["post-first", "preference-first"])("orders a post and a signed opt-out: %s", async order => {
     await h.signIn(order);
     const userId = h.ids[order]; const key = await signingCredential(h.db, userId);
-    const request = await attachSigningProof(h.db, userId, h.request("/settings", { as: order, form: { intent: "sign-posts", signPosts: "1" } }), key);
+    await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, userId));
+    const postRequest = h.request("/t/new", { as: order, form: { body: `Concurrent ${order}`, lang: "ja" } });
+    const postForm = await (order === "post-first" ? await attachSigningProof(h.db, userId, postRequest, key) : postRequest).formData();
+    const request = await attachSigningProof(h.db, userId, h.request("/settings", { as: order, form: { intent: "sign-posts" } }), key);
     const preferenceForm = await request.formData();
-    const postForm = new FormData(); postForm.set("body", `Concurrent ${order}`); postForm.set("lang", "ja");
     let entered!: () => void; let release!: () => void;
     const inside = new Promise<void>(resolve => { entered = resolve; });
     const gate = new Promise<void>(resolve => { release = resolve; });
@@ -25,13 +27,13 @@ describe.skipIf(!PG_MODE)("preference and posting serialization on independent P
       return createTopic(tx, userId, { body: `Concurrent ${order}`, lang: "ja" });
     });
     const preference = (hold: boolean) => withSignedWrite(h.db, userId, request, preferenceForm, async tx => {
-      await tx.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, userId));
+      await tx.update(profiles).set({ signPosts: false }).where(eq(profiles.userId, userId));
       if (hold) { entered(); await gate; }
       return { ok: true };
     });
     const first = order === "post-first" ? post(true) : preference(true);
     await inside;
-    // Attach a rejection handler immediately; preference-first must reject the queued unsigned write.
+    // The unsigned write in the preference-first case must wait for the opt-out to commit.
     const second = Promise.allSettled([order === "post-first" ? preference(false) : post(false)]);
     try {
       await expect.poll(async () => {
@@ -41,8 +43,7 @@ describe.skipIf(!PG_MODE)("preference and posting serialization on independent P
     } finally { release(); }
     expect(await first).toMatchObject({ ok: true });
     const [outcome] = await second;
-    if (order === "post-first") expect(outcome).toMatchObject({ status: "fulfilled", value: { ok: true } });
-    else expect(outcome).toMatchObject({ status: "rejected", reason: { status: 403 } });
-    expect((await h.db.select().from(profiles).where(eq(profiles.userId, userId)))[0].signPosts).toBe(true);
+    expect(outcome).toMatchObject({ status: "fulfilled", value: { ok: true } });
+    expect((await h.db.select().from(profiles).where(eq(profiles.userId, userId)))[0].signPosts).toBe(false);
   });
 });

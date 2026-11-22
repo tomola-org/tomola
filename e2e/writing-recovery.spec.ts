@@ -3,7 +3,7 @@ import { test } from "./editor-fixture";
 import { baseOf } from "../app/lib/local-draft";
 import { beforeHydration } from "./support/prehydration";
 import { captureScreenshot, clientHeaders, enMessages as m, state, useMember as restoreWritingMember, waitForClientRoute, waitForFormReady } from "./helpers";
-import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { installSeededSigningKey } from "./signing-helper";
 import { pressAcrossHydration } from "./support/early-actions";
 
 const body = (page: Page) => page.locator('textarea[name="body"]').first();
@@ -156,15 +156,8 @@ test("each rejected destination submission returns focus and a new signing revie
     await expect(destination.getByRole("button")).toBeFocused();
   }
   await body(page).fill("");
-  await enableSigningAuthenticator(page);
-  await page.goto("/settings");
-  await addSettingsPasskey(page);
-  await expect(page.getByText(m.settings_passkeys_added, { exact: true })).toBeVisible();
-  await page.locator("#settings-advanced > summary").click();
-  await page.getByRole("checkbox", { name: m.settings_sign_posts_label, exact: true }).check();
-  await page.locator('form', { has: page.locator('input[name="intent"][value="sign-posts"]') }).getByRole("button", { name: m.save_changes, exact: true }).click();
-  await acceptSignedWrite(page);
-  await expect(page).toHaveURL(/saved=sign-posts/);
+  await restoreWritingMember(page, "zwrite_signing_errors@example.com", "/settings");
+  await installSeededSigningKey(page, "zwrite_signing_errors@example.com");
   await page.goto("/t/new"); await waitForFormReady(form(page));
   await body(page).fill("---\nvillage: missing-destination\n---\nSigned writing needing a destination.");
   await submit.click();

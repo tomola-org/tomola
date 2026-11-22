@@ -4,7 +4,7 @@ import { expect, type BrowserContext, type Page, type Route } from "@playwright/
 import { test } from "./editor-fixture";
 import { SIGNATURE_ASSERTION_FIELD, SIGNATURE_CHALLENGE_FIELD } from "../app/lib/signing";
 import { captureScreenshot, useMember, waitForClientRoute, clientHeaders, enMessages as en, formatMessage } from "./helpers";
-import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { acceptSignedWrite, installSeededSigningKey } from "./signing-helper";
 
 test.describe.configure({ mode: "serial" });
 let context: BrowserContext;
@@ -71,7 +71,7 @@ for (const width of [1280, 390]) {
     await captureScreenshot(page, { path: testInfo.outputPath(`settings-${width}.png`), fullPage: true }, "e2e-settings-order");
     await page.locator("#settings-advanced > summary").click();
     await expect(advanced.getByRole("heading", { level: 2, name: en.settings_advanced_heading, exact: true })).toBeVisible();
-    for (const name of [en.settings_sign_posts_label, en.settings_automation_heading, en.settings_share_heading]) await expect(advanced.getByRole("heading", { level: 3, name, exact: true })).toBeVisible();
+    for (const name of [en.settings_automation_heading, en.settings_share_heading]) await expect(advanced.getByRole("heading", { level: 3, name, exact: true })).toBeVisible();
     const share = page.locator("#settings-share");
     await expect(share.getByRole("button", { name: en.settings_share_copy, exact: true })).toBeVisible();
     await expect(share.getByRole("textbox")).toBeHidden();
@@ -98,7 +98,7 @@ test("an invalid handle remains at its section with the error in view", async ()
 });
 
 test("advanced section fragments open on arrival and after hash changes", async () => {
-  for (const id of ["settings-signing", "settings-tokens", "settings-share"]) {
+  for (const id of ["settings-tokens", "settings-share"]) {
     await page.goto(`/settings#${id}`);
     await waitForClientRoute(page);
     await expect(page.locator("#settings-advanced")).toHaveAttribute("open");
@@ -138,7 +138,7 @@ test("AI-link revocation and rejected signature changes preserve their own discl
       form: { intent: "sign-posts", signPosts: "1" },
       headers: { origin: new URL(nativePage.url()).origin },
     });
-    expect(error.status()).toBe(403);
+    expect(error.status()).toBe(409);
     expect(error.headers()["content-type"]).toContain("text/html");
     const errorHtml = await error.text();
     expect(errorHtml.match(/<details\b[^>]*\bid="settings-advanced"[^>]*>/)?.[0]).toMatch(/\bopen(?:=|[\s>])/);
@@ -152,37 +152,36 @@ test("AI-link revocation and rejected signature changes preserve their own discl
 });
 
 for (const width of [1280, 390]) {
-  test(`signing saves return to their section with feedback in view at width ${width}`, async ({}, testInfo) => {
+  test(`signing saves return to their section with feedback in view at width ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
-    await enableSigningAuthenticator(page);
-    await page.goto("/settings");
-    if (await page.getByText(en.settings_passkeys_none, { exact: true }).isVisible()) {
-      await addSettingsPasskey(page);
-      await expect(page.getByText(en.settings_passkeys_added, { exact: true })).toBeVisible();
-    }
-    await page.locator("#settings-advanced > summary").click();
+    await page.setExtraHTTPHeaders(clientHeaders(width === 1280 ? "10.26.63.4" : "10.26.63.5"));
+    const email = `settings_signing_saved_${width}@example.com`;
+    await useMember(page, email, "/settings#settings-signing");
+    await installSeededSigningKey(page, email);
+    await expect(page.locator("#settings-advanced")).toHaveAttribute("open");
     const signing = page.locator("#settings-signing");
     const signingAction = new URL((await signing.locator("form").getAttribute("action"))!, page.url());
     expect(signingAction.pathname).toBe("/settings"); expect(signingAction.hash).toBe("#settings-signing");
-    for (const enabled of [true, false]) {
-      await signing.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true }).setChecked(enabled);
-      await signing.getByRole("button", { name: en.save_changes, exact: true }).click();
-      await acceptSignedWrite(page);
-      await expect(page).toHaveURL(url => url.pathname === "/settings" && url.searchParams.get("saved") === "sign-posts" && url.hash === "#settings-signing");
-      await expect(page.locator("#settings-advanced")).toHaveAttribute("open");
-      await expect(signing.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true })).toBeChecked({ checked: enabled });
-      await expect(signing.getByRole("status")).toContainText(en.settings_saved);
-      await expect(signing.getByRole("status")).toBeInViewport({ ratio: 1 });
-    }
+    await signing.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true }).uncheck();
+    await signing.getByRole("button", { name: en.save_changes, exact: true }).click();
+    await acceptSignedWrite(page);
+    await expect(page).toHaveURL(url => url.pathname === "/settings" && url.searchParams.get("saved") === "sign-posts" && url.hash === "#settings-signing");
+    await expect(page.locator("#settings-advanced")).toHaveAttribute("open");
+    await expect(signing.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true })).toHaveCount(0);
+    await expect(signing.getByRole("status")).toContainText(en.settings_saved);
+    await expect(signing.getByRole("status")).toBeInViewport({ ratio: 1 });
     await captureScreenshot(page, { path: testInfo.outputPath(`signing-saved-${width}.png`) }, "e2e-settings-order");
   });
 
-  test(`a rejected signing save opens its section with feedback in view at width ${width}`, async ({}, testInfo) => {
+  test(`a rejected signing save opens its section with feedback in view at width ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
-    await page.goto("/settings");
+    await page.setExtraHTTPHeaders(clientHeaders(width === 1280 ? "10.26.63.6" : "10.26.63.7"));
+    const email = `settings_signing_rejected_${width}@example.com`;
+    await useMember(page, email, "/settings");
+    await installSeededSigningKey(page, email);
     await page.locator("#settings-advanced > summary").click();
     const signing = page.locator("#settings-signing");
-    await signing.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true }).check();
+    await signing.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true }).uncheck();
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const rejectUnsigned = async (route: Route) => {
@@ -212,7 +211,7 @@ for (const width of [1280, 390]) {
       await captureScreenshot(page, { path: testInfo.outputPath(`signing-rejected-${width}.png`) }, "e2e-settings-order");
       await page.reload();
       await page.locator("#settings-advanced > summary").click();
-      await expect(signing.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true })).not.toBeChecked();
+      await expect(signing.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true })).toBeChecked();
     } finally {
       release();
       await page.unroute("**/settings.data*", rejectUnsigned);

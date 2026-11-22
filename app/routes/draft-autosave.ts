@@ -128,7 +128,7 @@ export async function action({ request }: Route.ActionArgs) {
       // publication still checks readability and the editor still offers unlinking.
       // The new web copy retains AI review metadata, without granting the API client access to it.
       if (copy.ok) await tx.update(drafts).set({ altOf: row.altOf,
-        clientId: row.clientId ?? (row.via === "api" ? `token:${row.tokenId ?? "deleted"}` : null),
+        clientId: row.clientId ?? (row.via === "api" ? `token:${row.tokenId ?? "deleted"}` : row.clientKey !== null ? "client:unknown" : null),
         clientName: row.clientName, clientUri: row.clientUri,
         clientUpdatedAt: row.clientUpdatedAt ?? (row.via === "api" ? row.updatedAt : null),
       }).where(eq(drafts.id, copy.id));

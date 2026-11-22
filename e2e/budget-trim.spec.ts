@@ -3,7 +3,7 @@ import { routeModule } from "./support/module-route";
 import { test } from "./editor-fixture";
 import { LANG_LABELS } from "../app/lib/languages";
 import { clientHeaders, enMessages, messageTitleField, openUserMenu, uiMessages, useMember, waitForClientRoute, waitForFormReady } from "./helpers";
-import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { acceptSignedWrite, installSeededSigningKey } from "./signing-helper";
 
 for (const locale of ["ja", "en", "fr"] as const) test(`public and member shells retain their labels after hydration and language selection in ${locale}`, async ({ browser }) => {
   const context = await browser.newContext({ locale: "en-US" });
@@ -64,14 +64,7 @@ for (const locale of ["ja", "en", "fr"] as const) test(`public and member shells
 test("signature approval preloads authentication, preserves writing after a failed load and retries before the confirming click", async ({ page }) => {
   await page.setExtraHTTPHeaders(clientHeaders("10.31.4.3"));
   await useMember(page, "trim_auth@example.com", "/settings");
-  await enableSigningAuthenticator(page);
-  await addSettingsPasskey(page);
-  await expect(page.getByText(enMessages.settings_passkeys_added, { exact: true })).toBeVisible();
-  await page.locator("#settings-advanced > summary").click();
-  await page.getByRole("checkbox", { name: enMessages.settings_sign_posts_label, exact: true }).check();
-  await page.locator('form:has(input[name="intent"][value="sign-posts"])').getByRole("button", { name: enMessages.save_changes, exact: true }).click();
-  await acceptSignedWrite(page);
-  await expect(page).toHaveURL(url => url.pathname === "/settings" && url.searchParams.get("saved") === "sign-posts");
+  await installSeededSigningKey(page, "trim_auth@example.com");
 
   let imports = 0;
   let failImport = true;

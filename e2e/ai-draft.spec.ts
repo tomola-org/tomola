@@ -2,10 +2,11 @@ import { aiDraftMember } from "./member-fixtures";
 import { saveEditorDraft } from "./draft-autosave-helper";
 import { waitForClientRoute, enMessages } from "./helpers";
 import fs from "node:fs";
+import path from "node:path";
 import { expect, type BrowserContext, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { captureScreenshot, formatMessage, openPostSettings, openReplyMore, useMember, clientHeaders, enMessages as en, messageTitleField as titleField, waitForFormReady, state } from "./helpers";
-import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { acceptSignedWrite, installSeededSigningKey } from "./signing-helper";
 
 // Each case owns its draft and resets the shared editor in beforeEach.
 // Default ordering permits a retry of the annotated case without rerunning its siblings.
@@ -421,18 +422,9 @@ test("a deleted draft cannot silently become a new one and keeps input plus the 
 });
 
 test("imported text is reviewed and signed only when the member chooses to publish", async () => {
-  await enableSigningAuthenticator(page);
-  await page.goto("/settings");
-  await addSettingsPasskey(page);
-  await expect(page.getByText(en.settings_passkeys_added, { exact: true })).toBeVisible();
-  async function preference(enabled: boolean) {
-    if (!(await page.locator("#settings-advanced").evaluate(element => (element as HTMLDetailsElement).open))) await page.locator("#settings-advanced > summary").click();
-    await page.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true }).setChecked(enabled);
-    await page.locator('form', { has: page.locator('input[name="intent"][value="sign-posts"]') }).getByRole("button", { name: en.save_changes, exact: true }).click();
-    await acceptSignedWrite(page);
-    await expect(page).toHaveURL(url => url.pathname === "/settings" && url.searchParams.get("saved") === "sign-posts" && url.hash === "#settings-signing");
-  }
-  await preference(true);
+  await useMember(page, "ai_import_signed@example.com", "/settings");
+  await installSeededSigningKey(page, "ai_import_signed@example.com");
+  await page.evaluate(() => localStorage.setItem("tomola.openInAi", JSON.stringify({ provider: "chatgpt" })));
   try {
     await page.goto("/t/new");
     await waitForFormReady(page.locator('form[method="post"]').first());
@@ -455,10 +447,7 @@ test("imported text is reviewed and signed only when the member chooses to publi
     expect(await (await context.request.get(`${posted}.md`, { maxRetries: 1 })).text()).toContain(combined);
     await context.request.post(posted, { form: { intent: "delete", entryId: posted.split("/").at(-1)!, confirm: "1" }, headers: { Origin: state().baseURL } });
   } finally {
-    await page.goto("/settings");
-    await waitForClientRoute(page);
-    await preference(false);
-    // This passkey belongs only to the disposable member; teardown removes the temporary database.
+    await useMember(page, aiDraftMember(test.info().repeatEachIndex).email);
   }
 });
 
@@ -532,3 +521,78 @@ test("unavailable browser storage still permits a choice and reuses it on the sa
   expect(await linkedDraft()).toBe(path);
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
+
+for (const scenario of ["editor", "preview", "native", "expired"] as const) {
+  test(`AI draft confirmation publishes from the ${scenario} flow`, async ({ browser }) => {
+    const fixtures = JSON.parse(fs.readFileSync(path.join(state().dir, "draft-confirmations.json"), "utf8"));
+    const { id, body: source, expiredConfirmation } = fixtures[scenario] as { id: number; body: string; expiredConfirmation?: string };
+    const native = scenario === "native";
+    const own = await browser.newContext({ javaScriptEnabled: !native });
+    try {
+      const editor = await own.newPage();
+      const draftPath = `/drafts/${id}`;
+      await useMember(editor, `ai_confirm_${scenario}@example.com`, draftPath);
+      const fields = editor.locator("form", { has: body(editor) });
+      if (!native) await waitForFormReady(fields);
+      const review = editor.getByRole("dialog", { name: en.signing_heading });
+      const accept = review.getByRole("button", { name: en.confirm_publish, exact: true });
+      const publish = editor.getByRole("button", { name: en.draft_publish, exact: true });
+      const preview = editor.getByRole("button", { name: en.preview, exact: true });
+      let text = source;
+      let reviewedConfirmation: string | undefined;
+      if (native) {
+        text += " Kept after native publication was refused.";
+        await body(editor).fill(text);
+        const rejected = editor.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === draftPath);
+        await publish.click();
+        expect((await rejected).status()).toBe(409);
+        await expect(body(editor)).toHaveValue(text);
+        await expect(editor.getByText(en.draft_confirmation_use_preview, { exact: true })).toBeVisible();
+      }
+      if (native || scenario === "preview") {
+        await preview.click();
+        await expect(editor).toHaveURL(new RegExp(`${draftPath}/preview$`));
+        const stamp = editor.locator('input[name="confirmation"]');
+        await expect(stamp).not.toHaveValue("");
+        const publishPreview = editor.getByRole("button", { name: en.draft_preview_publish, exact: true });
+        if (native) await publishPreview.click();
+        else {
+          await waitForFormReady(editor.locator('form:has(input[name="confirmation"])'));
+          const pageConfirmation = await stamp.inputValue();
+          const response = editor.waitForResponse(response => new URL(response.url()).pathname === "/signing" && response.request().postDataJSON()?.intent === "preview");
+          await publishPreview.click();
+          reviewedConfirmation = (await (await response).json()).confirmation;
+          expect(reviewedConfirmation).toEqual(expect.any(String));
+          expect(reviewedConfirmation).not.toBe(pageConfirmation);
+        }
+      } else {
+        if (scenario === "expired") {
+          // Replay a correctly signed stamp whose expiry is in the past.
+          await editor.route("**/signing", async route => {
+            const response = await route.fetch();
+            const result = await response.json();
+            expect(result.confirmation).toEqual(expect.any(String));
+            await route.fulfill({ response, json: { ...result, confirmation: expiredConfirmation } });
+          }, { times: 1 });
+        }
+        await publish.click();
+      }
+      if (!native) {
+        await expect(review.getByText(source, { exact: true })).toBeVisible();
+        const submitted = reviewedConfirmation && editor.waitForRequest(request =>
+          request.method() === "POST" && new URL(request.url()).pathname.replace(/\.data$/, "") === `${draftPath}/preview`);
+        await accept.click();
+        if (submitted) expect(new URLSearchParams((await submitted).postData() ?? "").get("confirmation")).toBe(reviewedConfirmation);
+        if (scenario === "expired") {
+          await expect(editor.getByRole("alert")).toContainText(en.draft_confirmation_retry);
+          await expect(body(editor)).toHaveValue(text);
+          await publish.click();
+          await expect(review.getByText(source, { exact: true })).toBeVisible();
+          await accept.click();
+        }
+      }
+      await expect(editor).toHaveURL(/\/t\/\d+\?posted=/);
+      await expect(editor.locator(".longread").first()).toContainText(text);
+    } finally { await own.close(); }
+  });
+}

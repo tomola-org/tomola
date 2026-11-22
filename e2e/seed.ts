@@ -231,6 +231,8 @@ try {
   await seedConfirmReasons(relatedDb);
   const { seedMembers } = await import("./seed-members");
   await seedMembers(relatedDb, path.dirname(process.env.PGLITE_DATA_DIR!), process.env.BETTER_AUTH_URL!);
+  const { seedDraftConfirmations } = await import("./seed-draft-confirmations");
+  await seedDraftConfirmations(relatedDb, path.dirname(process.env.PGLITE_DATA_DIR!));
   // A charged failure with only input usage, in a separate budget from public translations.
   await relatedDb.insert(llmUsage).values({ engine: "claude", model: "claude-usage-fixture", purpose: "ask", inputTokens: 12, costUsdMicro: 12 });
   const [reauthTarget] = await relatedDb.select({ id: profiles.userId }).from(profiles).where(eq(profiles.handle, "reauth_target"));

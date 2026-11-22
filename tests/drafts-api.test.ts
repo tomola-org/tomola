@@ -223,8 +223,10 @@ describe("POST /api/drafts: creating a draft", () => {
     const created = await post(md("type: topic\ntitle: To approve\nlang: en", "Approved body."));
     const id = created.json.id as number;
     const page = await import("~/routes/draft");
-    const publish = (as: string | undefined, headers: Record<string, string> = {}) =>
-      h.outcome(async () => page.action(await h.signedArgs(h.request(`/drafts/${id}`, { as, form: { intent: "publish", version: "1", title: "To approve", body: "Approved body.", lang: "en" }, headers }), { id: String(id) })));
+    const path = `/drafts/${id}`;
+    const fields = { intent: "publish", version: "1", title: "To approve", body: "Approved body.", lang: "en" };
+    const publish = (as: string | undefined, headers: Record<string, string> = {}, confirmation = "") =>
+      h.outcome(async () => page.action(h.args(h.request(path, { as, form: { ...fields, confirmation }, headers }), { id: String(id) })));
     // A draft Bearer token alone cannot publish without a cookie session.
     expect(await publish(undefined, { authorization: `Bearer ${draftToken}` })).toMatchObject({ status: 302, location: "/login" });
     // Reject a request that is neither a read nor same-origin.
@@ -234,7 +236,9 @@ describe("POST /api/drafts: creating a draft", () => {
     expect((await publish("somchai")).status).toBe(404);
     expect((await h.db.select().from(entries).where(eq(entries.title, "To approve"))).length).toBe(0);
     // The owner publishes through their browser session.
-    const ok = await publish("hana");
+    const { previewSignedWrite } = await import("~/lib/signing.server");
+    const { confirmation } = await previewSignedWrite(h.db, h.ids.hana, path, await h.request(path, { form: fields }).formData());
+    const ok = await publish("hana", {}, confirmation);
     expect(ok.status).toBe(302);
     const [published] = await h.db.select().from(entries).where(eq(entries.title, "To approve"));
     expect(ok.location).toBe(`/t/${published.id}?posted=${published.id}`);

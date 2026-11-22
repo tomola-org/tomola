@@ -1,5 +1,7 @@
 import { expect, type CDPSession, type Page } from "@playwright/test";
-import { enMessages, jaMessages, reverifyWithEmailCode, uiMessages, waitForHydration, type LoginCodeInbox } from "./helpers";
+import fs from "node:fs";
+import path from "node:path";
+import { enMessages, jaMessages, reverifyWithEmailCode, state, uiMessages, waitForHydration, type LoginCodeInbox } from "./helpers";
 
 const authenticators = new WeakMap<Page, { client: CDPSession; authenticatorId: string }>();
 
@@ -15,6 +17,13 @@ export async function enableSigningAuthenticator(page: Page) {
   const current = { client, authenticatorId };
   authenticators.set(page, current);
   return current;
+}
+
+export async function installSeededSigningKey(page: Page, email: string) {
+  const { client, authenticatorId } = await enableSigningAuthenticator(page);
+  const credential = JSON.parse(fs.readFileSync(path.join(state().dir, "members", `${email}.webauthn.json`), "utf8"));
+  await client.send("WebAuthn.addCredential", { authenticatorId, credential });
+  return { client, authenticatorId };
 }
 
 async function reverifyForPasskeyAddition(page: Page, href: string, inbox?: LoginCodeInbox) {

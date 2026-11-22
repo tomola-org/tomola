@@ -6,7 +6,7 @@ import { flushSync } from "react-dom";
 import { Dialog } from "~/components/ui/dialog";
 import { useNavigation, useSubmit } from "react-router";
 import { loadSigningAuthentication } from "~/lib/signing-authentication";
-import { SIGNATURE_ASSERTION_FIELD, SIGNATURE_CHALLENGE_FIELD, type SigningOptions, type SigningPreview } from "~/lib/signing";
+import { DRAFT_CONFIRMATION_FIELD, SIGNATURE_ASSERTION_FIELD, SIGNATURE_CHALLENGE_FIELD, type SigningOptions, type SigningPreview } from "~/lib/signing";
 import { m } from "~/paraglide/messages.js";
 import { readerLoginHref } from "~/lib/public-reading";
 
@@ -103,7 +103,7 @@ export default function SignedFormControls({ signatureRequired, protectUnsaved, 
     element.current?.dispatchEvent(new Event("tomola:village-review-reset"));
     try {
       const preview = await signingRequest({ intent: "preview", pathname: new URL(action, window.location.href).pathname, fields }) as SigningPreview;
-      if (!preview.signatureRequired && !preview.lastEditor?.id) {
+      if (!preview.signatureRequired && !preview.confirmation && !preview.lastEditor?.id) {
         await submit(form, { method: "post", action });
       } else {
         const { default: Review } = await import("./signing-review");
@@ -136,6 +136,7 @@ export default function SignedFormControls({ signatureRequired, protectUnsaved, 
         form.set(SIGNATURE_CHALLENGE_FIELD, options.challenge);
         form.set(SIGNATURE_ASSERTION_FIELD, JSON.stringify(assertion));
       }
+      if (snapshot.preview.confirmation) form.set(DRAFT_CONFIRMATION_FIELD, snapshot.preview.confirmation);
       setPending(null);
       await submit(form, { method: "post", action: snapshot.action });
     } catch (failure) {

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { captureScreenshot, clientHeaders, enMessages as en, state, useMember } from "./helpers";
-import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { installSeededSigningKey } from "./signing-helper";
 
 type Fixture = { topicId: number; slug: string; body: string; chat: string };
 function fixture(name: string): Fixture { return JSON.parse(fs.readFileSync(path.join(state().dir, "account-delete.json"), "utf8"))[name]; }
@@ -82,13 +82,7 @@ test("signed account deletion binds the post choice and uses real passkey confir
   const page = await context.newPage();
   try {
     await useMember(page, "quit_signed_writer@example.com", "/settings");
-    await enableSigningAuthenticator(page);
-    await addSettingsPasskey(page);
-    await expect(page.getByText(en.settings_passkeys_added, { exact: true })).toBeVisible();
-    await page.locator("#settings-advanced summary").first().click();
-    await page.getByRole("checkbox", { name: en.settings_sign_posts_label, exact: true }).check();
-    await page.locator('form', { has: page.locator('input[name="intent"][value="sign-posts"]') }).getByRole("button", { name: en.save_changes, exact: true }).click();
-    await acceptSignedWrite(page);
+    await installSeededSigningKey(page, "quit_signed_writer@example.com");
     await page.goto("/settings/delete-account");
     await page.locator('form[data-ready="true"]').waitFor();
     await page.locator('input[name="confirmation"]').fill("quit_signed_writer");

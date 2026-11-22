@@ -3211,5 +3211,10 @@
   "reauth_for_disconnect_google": "Verify your identity as {who} before disconnecting Google.",
   "login_methods_on": "Passkey-only sign-in is on.",
   "login_methods_off": "Passkey-only sign-in is off.",
-  "login_methods_update_failed": "Could not change your login settings. Reload this page and try again."
+  "login_methods_update_failed": "Could not change your login settings. Reload this page and try again.",
+  "draft_confirmation_retry": "Review the content, then press Publish again.",
+  "draft_confirmation_use_preview": "With JavaScript disabled, open Preview to publish this draft.",
+  "draft_confirmation_reply_javascript": "Enable JavaScript to publish this reply.",
+  "draft_confirmation_reload": "Reload the preview",
+  "settings_signing_closed": "Per-post signing can no longer be enabled."
 }

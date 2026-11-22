@@ -610,12 +610,12 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
 
       <PersistentDetails id="settings-advanced" ref={advanced} open={saved === "sign-posts" || actionData?.intent === "sign-posts"} className="scroll-mt-4 space-y-6">
         <summary className="cursor-pointer text-xl font-semibold"><h2 className="inline">{m.settings_advanced_heading()}</h2></summary>
-        <section id="settings-signing" aria-labelledby="settings-signing-heading" className="scroll-mt-4 space-y-3">
+        {(signPosts || saved === "sign-posts" || actionData?.intent === "sign-posts") && <section id="settings-signing" aria-labelledby="settings-signing-heading" className="scroll-mt-4 space-y-3">
           <h3 id="settings-signing-heading" className="text-lg font-semibold">{m.settings_sign_posts_label()}</h3>
           {signPosts && <p className="ui-help text-muted-foreground">{m.settings_signing_retirement()}</p>}
           {saved === "sign-posts" && <p role="status">{m.settings_saved()}</p>}
-          {actionData?.intent === "sign-posts" && <p role="alert" className="text-destructive">{m.signing_failed()}</p>}
-          <SignedForm signatureRequired method="post" action={withSettingsReturn("/settings#settings-signing", returnTo)} className="space-y-2" key={String(signPosts)}>
+          {actionData?.intent === "sign-posts" && <p role="alert" className="text-destructive">{actionData.error === "signing_closed" ? m.settings_signing_closed() : m.signing_failed()}</p>}
+          {signPosts && <SignedForm signatureRequired method="post" action={withSettingsReturn("/settings#settings-signing", returnTo)} className="space-y-2">
             <input type="hidden" name="intent" value="sign-posts" />
             <Field orientation="horizontal" className="min-w-0 w-auto"><FieldLabel className="flex items-center gap-2">
               <Checkbox name="signPosts" value="1" defaultChecked={signPosts} disabled={passkeys.length === 0} /> {m.settings_sign_posts_label()}
@@ -624,8 +624,8 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
             <FieldDescription className="ui-help text-muted-foreground">{m.settings_sign_posts_limits()}</FieldDescription>
             {passkeys.length === 0 && <p>{m.settings_sign_posts_need_passkey()}</p>}
             <Button type="submit" disabled={passkeys.length === 0} variant="outline">{m.save_changes()}</Button>
-          </SignedForm>
-        </section>
+          </SignedForm>}
+        </section>}
 
         <section id="settings-tokens" aria-labelledby="settings-tokens-heading" className="scroll-mt-4 space-y-3">
           <h3 id="settings-tokens-heading" className="text-lg font-semibold">{m.settings_automation_heading()}</h3>

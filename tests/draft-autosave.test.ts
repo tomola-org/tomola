@@ -301,15 +301,15 @@ it("reads only owned topic previews, marks a preview POST atomically, and clears
 
   const shown = (await load(as)).data;
   const publish = (body = shown.content.body) => h.outcome(() => publishPreview(h.args(h.request(path, {
-    as, form: { intent: "publish", version: String(shown.version), title: shown.content.title!, body, lang: shown.content.lang, signingView: shown.signingView },
+    as, form: { intent: "publish", version: String(shown.version), title: shown.content.title!, body, lang: shown.content.lang, signingView: shown.signingView, confirmation: shown.confirmation! },
   }), params)));
   expect(await publish("A different draft body")).toMatchObject({ status: 409 });
   await updateDraft(h.db, ownerId, made.id, { ...input, body: "A newer server version" }, { expectedVersion: 2 });
-  expect(await publish()).toMatchObject({ status: 409, value: { data: { error: "draft_conflict" } } });
+  expect(await publish()).toMatchObject({ status: 409, value: { data: { error: "confirmation_changed" } } });
   expect(await row()).toMatchObject({ body: "A newer server version", version: 3, previewedAt: marked.previewedAt });
   const latest = (await load(as)).data;
   const published = await h.outcome(() => publishPreview(h.args(h.request(path, {
-    as, form: { intent: "publish", version: String(latest.version), title: latest.content.title!, body: latest.content.body, lang: latest.content.lang, signingView: latest.signingView },
+    as, form: { intent: "publish", version: String(latest.version), title: latest.content.title!, body: latest.content.body, lang: latest.content.lang, signingView: latest.signingView, confirmation: latest.confirmation! },
   }), params)));
   expect(published).toMatchObject({ status: 302, location: expect.stringMatching(/^\/t\/\d+/) });
   expect((await countDraftBadges(h.db, ownerId)).previewedDrafts).toBe(0);

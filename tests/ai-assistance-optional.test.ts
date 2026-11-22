@@ -129,7 +129,11 @@ describe("writing on screen states no ai_assistance", () => {
     // Saving from the draft page (which has no such field) leaves the value alone; a posted aiAssistance is not read.
     expect((await act(created.id, { intent: "save", version: "1", title: "api draft", body: "Edited.", lang: "en", aiAssistance: "none" })).status).toBe(200);
     expect((await getDraft(h.db, h.ids.hana, created.id))?.aiAssistance).toBe("coauthor");
-    expect((await act(created.id, { intent: "publish", version: "2", title: "api draft", body: "Edited.", lang: "en" })).status).toBe(302);
+    const path = `/drafts/${created.id}`;
+    const fields = { intent: "publish", version: "2", title: "api draft", body: "Edited.", lang: "en" };
+    const { previewSignedWrite } = await import("~/lib/signing.server");
+    const { confirmation } = await previewSignedWrite(h.db, h.ids.hana, path, await h.request(path, { form: fields }).formData());
+    expect((await act(created.id, { ...fields, confirmation: confirmation! })).status).toBe(302);
     expect(await stored("api draft")).toMatchObject({ aiAssistance: "coauthor", via: "api", body: "Edited." });
     expect((await act(screenDraft.id, { intent: "publish", version: String(screenDraft.version), title: "screen draft", body: "Draft.", lang: "ja" })).status).toBe(302);
     expect((await stored("screen draft")).aiAssistance).toBeNull();

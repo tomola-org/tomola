@@ -1,7 +1,7 @@
 import { expect } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { useMember, formatMessage, clientHeaders, enMessages, state, waitForFormReady, openPostSettings } from "./helpers";
-import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { acceptSignedWrite, installSeededSigningKey } from "./signing-helper";
 
 const english = "This is a place for people to share their ideas and to learn from each other.";
 const french = "Nous avons une place pour les personnes qui veulent partager leurs idées avec les autres.";
@@ -11,15 +11,7 @@ test("automatic prose language survives language reselection and a real signed p
   const page = await context.newPage();
   try {
     await useMember(page, "language_signer@example.com");
-    await enableSigningAuthenticator(page);
-    await page.goto("/settings");
-    await addSettingsPasskey(page);
-    await expect(page.getByText(enMessages.settings_passkeys_added, { exact: true })).toBeVisible();
-    if (!(await page.locator("#settings-advanced").evaluate(element => (element as HTMLDetailsElement).open))) await page.locator("#settings-advanced > summary").click();
-    await page.getByRole("checkbox", { name: enMessages.settings_sign_posts_label, exact: true }).check();
-    await page.locator('form:has(input[name="intent"][value="sign-posts"])').getByRole("button", { name: enMessages.save_changes, exact: true }).click();
-    await acceptSignedWrite(page);
-    await expect(page).toHaveURL(url => url.pathname === "/settings" && url.searchParams.get("saved") === "sign-posts" && url.hash === "#settings-signing");
+    await installSeededSigningKey(page, "language_signer@example.com");
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/t/new");
     await waitForFormReady(page.locator('form', { has: page.locator('input[name="title"]') }));

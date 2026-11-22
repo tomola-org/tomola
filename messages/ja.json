@@ -2405,5 +2405,10 @@
   "reauth_for_disconnect_google": "Google の連携を解除する前に、{who} さんご本人か確認します。",
   "login_methods_on": "パスキーでだけログインする設定は入です。",
   "login_methods_off": "パスキーでだけログインする設定は切です。",
-  "login_methods_update_failed": "ログインの設定を変更できませんでした。このページを開き直して、もう一度お試しください。"
+  "login_methods_update_failed": "ログインの設定を変更できませんでした。このページを開き直して、もう一度お試しください。",
+  "draft_confirmation_retry": "内容を確かめてから、もう一度［公開］を押してください。",
+  "draft_confirmation_use_preview": "JavaScript が無効な場合は、［プレビュー］を開いて公開してください。",
+  "draft_confirmation_reply_javascript": "この返信を公開するには JavaScript を有効にしてください。",
+  "draft_confirmation_reload": "プレビューを読み込み直す",
+  "settings_signing_closed": "投稿ごとの署名を新しく有効にすることはできません。"
 }

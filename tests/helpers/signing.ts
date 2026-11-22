@@ -16,7 +16,14 @@ export async function signingCredential(db: Db, userId: string, opts: { counterZ
   await db.update(profiles).set({ passkeyEnrolledAt: new Date() }).where(eq(profiles.userId, userId));
   }
   let counter = 0;
-  return { id, publicKey, register(challenge: string, options: { uv?: boolean } = {}): RegistrationResponseJSON {
+  return { id, publicKey, virtualCredential(rpId: string) {
+    return {
+      credentialId: Buffer.from(id, "base64url").toString("base64"),
+      privateKey: pair.privateKey.export({ type: "pkcs8", format: "der" }).toString("base64"),
+      userHandle: Buffer.from(userId).toString("base64"),
+      isResidentCredential: true, rpId, signCount: 0,
+    };
+  }, register(challenge: string, options: { uv?: boolean } = {}): RegistrationResponseJSON {
     const clientDataJSON = Buffer.from(JSON.stringify({ type: "webauthn.create", challenge, origin: "http://localhost:5173", crossOrigin: false }));
     const authData = Buffer.alloc(55);
     createHash("sha256").update("localhost").digest().copy(authData);

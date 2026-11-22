@@ -134,8 +134,17 @@ const postingMemberCondition = (userId: string) => or(
 );
 
 // Caller is in the write transaction. Explicit invalid targets never fall back to the default.
-export async function villageForTopic(db: Tx, userId: string, slug?: unknown, storedId?: string | null): Promise<(PublicVillage & { id: string }) | null> {
-  const profile = await lockVillageProfile(db, userId);
+export function villageForTopic(tx: Tx, userId: string, slug?: unknown, storedId?: string | null) {
+  return resolveTopicVillage(tx, userId, slug, storedId, tx);
+}
+
+export function previewVillageForTopic(db: Db, userId: string, slug?: unknown, storedId?: string | null) {
+  return resolveTopicVillage(db, userId, slug, storedId);
+}
+
+async function resolveTopicVillage(db: Db, userId: string, slug: unknown, storedId: string | null | undefined, tx?: Tx): Promise<(PublicVillage & { id: string }) | null> {
+  const profile = tx ? await lockVillageProfile(tx, userId)
+    : (await db.select({ defaultVillageId: profiles.defaultVillageId, handle: profiles.handle }).from(profiles).where(eq(profiles.userId, userId)))[0];
   if (!profile) return null;
   const explicit = slug !== undefined && slug !== null;
   if (explicit && (typeof slug !== "string" || !slug.trim())) return null;
@@ -143,14 +152,15 @@ export async function villageForTopic(db: Tx, userId: string, slug?: unknown, st
   if (target?.startsWith("@") && target !== `@${profile.handle}`) return null;
   const id = storedId ?? profile.defaultVillageId ?? (await personalVillage(db, userId))?.id;
   if (!explicit && !id) return null;
-  const [village] = await db.select().from(villages).where(and(
+  const query = db.select().from(villages).where(and(
     activePublicPostVillageCondition(),
     explicit ? target!.startsWith("@") ? eq(villages.ownerId, userId) : eq(villages.slug, target!) : eq(villages.id, id!),
     postingMemberCondition(userId),
-  )).for("share");
+  ));
+  const [village] = await (tx ? query.for("share") : query);
   if (!village && !explicit && storedId == null && profile.defaultVillageId !== null) {
-    const reset = await resetPersonalDefault(db, userId);
-    return reset ? villageForTopic(db, userId, undefined, reset) : null;
+    const personalId = tx ? await resetPersonalDefault(tx, userId) : (await personalVillage(db, userId))?.id;
+    return personalId ? resolveTopicVillage(db, userId, undefined, personalId, tx) : null;
   }
   return village ? { ...publicVillage(village), slug: village.kind === "personal" ? `@${profile.handle}` : village.slug, id: village.id } : null;
 }

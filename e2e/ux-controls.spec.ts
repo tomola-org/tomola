@@ -5,7 +5,7 @@ import { test, richEditorTest } from "./editor-fixture";
 import fs from "node:fs";
 import path from "node:path";
 import { clientHeaders, useMember, waitForClientRoute, waitForFormReady, waitForHydration, state, enMessages as m, openReplyMore } from "./helpers";
-import { addSettingsPasskey, acceptSignedWrite, enableSigningAuthenticator } from "./signing-helper";
+import { installSeededSigningKey } from "./signing-helper";
 
 const body = (page: Page) => page.locator('textarea[name="body"]');
 const post = (page: Page, url: string, text: string, lang = "en") => page.request.post(url, { form: { body: text, lang }, headers: { Origin: new URL(page.url()).origin } });
@@ -17,15 +17,8 @@ test.describe("signing failure guidance", () => {
     context = await browser.newContext({ extraHTTPHeaders: clientHeaders("10.31.4.6") });
     const page = await context.newPage();
     await useMember(page, "ux_signer@example.com", "/settings");
-    await page.locator("#settings-advanced > summary").click();
-    if (!await page.getByRole("checkbox", { name: m.settings_sign_posts_label, exact: true }).isChecked()) {
-      await enableSigningAuthenticator(page);
-      await addSettingsPasskey(page);
-      await expect(page.getByText(m.settings_passkeys_added, { exact: true })).toBeVisible();
-      await page.getByRole("checkbox", { name: m.settings_sign_posts_label, exact: true }).check();
-      await page.locator('form:has(input[name="intent"][value="sign-posts"])').getByRole("button", { name: m.save_changes, exact: true }).click();
-      await acceptSignedWrite(page);
-    }
+    await installSeededSigningKey(page, "ux_signer@example.com");
+    if (!(await page.locator("#settings-advanced").evaluate(element => (element as HTMLDetailsElement).open))) await page.locator("#settings-advanced > summary").click();
     await expect(page.getByRole("checkbox", { name: m.settings_sign_posts_label, exact: true })).toBeChecked();
     await page.close();
   });

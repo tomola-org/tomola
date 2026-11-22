@@ -3155,5 +3155,10 @@
   "reauth_for_disconnect_google": "Verifikasi identitas Anda sebagai {who} sebelum memutuskan Google.",
   "login_methods_on": "Masuk hanya dengan kunci akses aktif.",
   "login_methods_off": "Masuk hanya dengan kunci akses nonaktif.",
-  "login_methods_update_failed": "Tidak dapat mengubah pengaturan masuk Anda. Muat ulang halaman ini dan coba lagi."
+  "login_methods_update_failed": "Tidak dapat mengubah pengaturan masuk Anda. Muat ulang halaman ini dan coba lagi.",
+  "draft_confirmation_retry": "Periksa isinya, lalu tekan Terbitkan lagi.",
+  "draft_confirmation_use_preview": "Jika JavaScript dinonaktifkan, buka Pratinjau untuk menerbitkan draf ini.",
+  "draft_confirmation_reply_javascript": "Aktifkan JavaScript untuk menerbitkan balasan ini.",
+  "draft_confirmation_reload": "Muat ulang pratinjau",
+  "settings_signing_closed": "Penandatanganan per kiriman tidak dapat diaktifkan lagi."
 }

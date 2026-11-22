@@ -8,6 +8,15 @@ export function aiDraftMember(repeatEachIndex = 0): SeedMember {
   return { email: `${handle}@example.com`, handle, homeArea: "ja", uiLocale: "en" };
 }
 
+export const SIGNING_MEMBER_FIXTURES = new Set([
+  "signer", "language_signer", "trim_auth", "quit_signed_writer", "ux_signer",
+  "edit_version_topic_signed", "edit_version_reply_signed", "vtarget_signed_review",
+  "draft_autosave_personal_md", "draft_autosave_personal_rich", "lazy_autosave_signing",
+  "zwrite_signing_errors", "ai_import_signed", "ai_confirm_signed",
+  ...[1280, 390].flatMap(width => [`settings_signing_saved_${width}`, `settings_signing_rejected_${width}`]),
+]);
+export const AI_CONFIRMATION_CASES = ["editor", "preview", "native", "expired", "signed"] as const;
+
 export const LONG_SIGNUP_VILLAGE_NAME = `Signup ${"l".repeat(110)}`;
 
 // Independent scenarios own these members; serial steps share only their scenario.
@@ -62,6 +71,9 @@ export const VILLAGE_MEMBER_FIXTURES: readonly SeedMember[] = [
   { email: "villages_suspended@example.com", handle: "villages_suspended", homeArea: "en", uiLocale: "en" },
 ];
 export const MEMBER_FIXTURES: readonly SeedMember[] = [
+  ...[...AI_CONFIRMATION_CASES.map(scenario => `ai_confirm_${scenario}`), "ai_import_signed", "zwrite_signing_errors",
+    ...[1280, 390].flatMap(width => [`settings_signing_saved_${width}`, `settings_signing_rejected_${width}`]),
+  ].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "en" as const, uiLocale: "en" as const })),
   ...["journey", "reminder", "queued", "native", "transport", "intro", "conflict", "review"].map(scenario => ({ email: `preview_${scenario}@example.com`, handle: `preview_${scenario}`, homeArea: "ja" as const, uiLocale: "en" as const })),
   { email: "login_methods_flow@example.com", handle: "login_methods_flow", homeArea: "ja", uiLocale: "ja" },
   { email: "login_methods_images@example.com", handle: "login_methods_images", homeArea: "ja", uiLocale: "ja" },

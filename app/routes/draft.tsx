@@ -20,6 +20,8 @@ import { getDraft } from "~/lib/drafts.server";
 import { parseId } from "~/lib/params.server";
 import { m } from "~/paraglide/messages.js";
 import { signingViewToken } from "~/lib/signing.server";
+import { isDraftConfirmationError } from "~/lib/signing";
+import { isStanceTag } from "~/lib/stances";
 import { SignedForm, SendButton } from "~/components/signed-form";
 import { AiEditorTools } from "~/components/ai-editor-tools";
 import { titleOrNull } from "~/lib/text";
@@ -54,7 +56,7 @@ export function clientAction({ request, serverAction }: Route.ClientActionArgs) 
 
 export function shouldRevalidate({ actionResult, defaultShouldRevalidate }: ShouldRevalidateFunctionArgs) {
   // Keep this editor and its pasted candidate even if the saved draft is now gone.
-  if (actionResult?.previewFailed || actionResult?.error === "draft_conflict" || actionResult?.error === "not_found") return false;
+  if (actionResult?.previewFailed || actionResult?.error === "draft_conflict" || actionResult?.error === "not_found" || isDraftConfirmationError(actionResult?.error)) return false;
   return defaultShouldRevalidate;
 }
 
@@ -74,7 +76,10 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
   const originalDraft = useRef(loaderData.draft);
   const submitted = actionData?.values;
   const [draft, setDraft] = useState(() => {
-    const initial = submitted ? { ...loaderData.draft, title: titleOrNull(submitted.title), body: submitted.body, asksStance: submitted.asksStance } : loaderData.draft;
+    const stanceTag = submitted?.stanceTag;
+    const initial = submitted ? { ...loaderData.draft, title: titleOrNull(submitted.title), body: submitted.body, asksStance: submitted.asksStance,
+      ...(stanceTag === null || isStanceTag(stanceTag) ? { stanceTag } : {}),
+    } : loaderData.draft;
     // Hydrating a nonempty textarea can restore its default over native edits.
     // Adopt those edits before React initializes the field; the guard and
     // autosave still compare with the original server text. Reloads and history
@@ -83,7 +88,7 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
     const earlyBody = body ? prehydrationBody(body, (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type) : undefined;
     return earlyBody !== undefined ? { ...initial, body: earlyBody } : initial;
   });
-  const [requiresReview] = useState(Boolean(draft.clientId || draft.via === "api"));
+  const requiresReview = draft.requiresReview;
   const [version, setVersion] = useState(submitted ? Number(submitted.version) : draft.version);
   const [signingView, setSigningView] = useState(submitted ? submitted.signingView : loaderData.signingView);
   const [resolvedConflict, setResolvedConflict] = useState<typeof actionData>();
@@ -126,6 +131,7 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
     {(savedHere.current && !feedback || feedback?.saved && !feedback.error) && <p role="status" className="text-success-foreground">{feedback?.altRemoved ? m.draft_alt_removed() : m.draft_saved()}</p>}
     {feedback?.previewFailed && <p id="draft-error" role="alert" className="ui-help text-muted-foreground">{m.draft_autosave_failed()}</p>}
     {!feedback?.previewFailed && errorText && !(loaderData.posting && draft.kind === "topic" && isVillageTargetError(error)) && <p id="draft-error" role="alert" className="text-destructive">{errorText}</p>}
+    {error === "confirmation_required" && <noscript><p>{draft.kind === "topic" ? m.draft_confirmation_use_preview() : m.draft_confirmation_reply_javascript()}</p></noscript>}
     {!feedback?.previewFailed && feedback?.latest && <div className="space-y-2 rounded border p-3">
       <a href={`/drafts/${draft.id}`} target="_blank" rel="noreferrer noopener" className="underline">{m.ai_write_latest()}</a>
       <details><summary>{m.ai_write_latest()}</summary>

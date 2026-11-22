@@ -3159,5 +3159,10 @@
   "reauth_for_disconnect_google": "ยืนยันว่าคุณคือ {who} ก่อนยกเลิกการเชื่อมต่อบัญชี Google",
   "login_methods_on": "เปิดการเข้าสู่ระบบด้วยพาสคีย์เท่านั้นอยู่",
   "login_methods_off": "ปิดการเข้าสู่ระบบด้วยพาสคีย์เท่านั้นอยู่",
-  "login_methods_update_failed": "เปลี่ยนการตั้งค่าการเข้าสู่ระบบไม่ได้ โปรดโหลดหน้านี้ใหม่แล้วลองอีกครั้ง"
+  "login_methods_update_failed": "เปลี่ยนการตั้งค่าการเข้าสู่ระบบไม่ได้ โปรดโหลดหน้านี้ใหม่แล้วลองอีกครั้ง",
+  "draft_confirmation_retry": "ตรวจสอบเนื้อหาแล้วกดเผยแพร่อีกครั้ง",
+  "draft_confirmation_use_preview": "หากปิด JavaScript ให้เปิดหน้าตัวอย่างเพื่อเผยแพร่ฉบับร่างนี้",
+  "draft_confirmation_reply_javascript": "เปิด JavaScript เพื่อเผยแพร่ข้อความตอบกลับนี้",
+  "draft_confirmation_reload": "โหลดหน้าตัวอย่างใหม่",
+  "settings_signing_closed": "ไม่สามารถเปิดใช้การลงลายเซ็นรายโพสต์ได้อีกแล้ว"
 }

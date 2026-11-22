@@ -21,10 +21,11 @@ import { checkBodyBudget } from "~/lib/markdown.server";
 import { getViewer } from "~/lib/roles.server";
 import { m } from "~/paraglide/messages.js";
 import { villagesEnabled } from "~/lib/villages-enabled.server";
-import { lockVillageProfile, villageForTopic, type PublicVillage } from "~/lib/villages.server";
-import { SIGNATURE_ASSERTION_FIELD, SIGNATURE_CHALLENGE_FIELD, SIGNING_VIEW_FIELD, type SigningContent, type SigningOperation, type SigningOptions, type SigningPreview } from "./signing";
+import { lockVillageProfile, previewVillageForTopic, villageForTopic, villageSlug, type PublicVillage } from "~/lib/villages.server";
+import { DRAFT_CONFIRMATION_FIELD, needsDraftConfirmation, SIGNATURE_ASSERTION_FIELD, SIGNATURE_CHALLENGE_FIELD, SIGNING_VIEW_FIELD, type SigningContent, type SigningOperation, type SigningOptions, type SigningPreview } from "./signing";
 
 export const SIGNING_TTL_MS = 2 * 60 * 1000;
+const DRAFT_CONFIRMATION_TTL_MS = 10 * 60 * 1000;
 export class SigningError extends Error {
   constructor(readonly code: string, readonly status = 403, readonly village?: string) { super(code); }
 }
@@ -57,7 +58,7 @@ export function canonicalSigningJson(value: unknown): string {
 export function signingFormHash(form: FormData): string {
   const pairs: [string, string][] = [];
   for (const [key, value] of form.entries()) {
-    if (key === SIGNATURE_ASSERTION_FIELD || key === SIGNATURE_CHALLENGE_FIELD) continue;
+    if (key === SIGNATURE_ASSERTION_FIELD || key === SIGNATURE_CHALLENGE_FIELD || (key === DRAFT_CONFIRMATION_FIELD && form.get("intent") === "publish")) continue;
     if (typeof value !== "string") throw new SigningError("invalid_payload", 400);
     pairs.push([key, normalizeNewlines(value)]);
   }
@@ -90,7 +91,7 @@ function readView(form: FormData, userId: string, kind: Viewed["kind"], id: numb
   return view;
 }
 
-export function assertDraftPreviewPublication(form: FormData, userId: string, draft: { id: number; version: number; kind: string; title: string | null; body: string; lang: string; asksStance: boolean }) {
+function assertDraftPreviewPublication(form: FormData, userId: string, draft: { id: number; version: number; kind: string; title: string | null; body: string; lang: string; asksStance: boolean }) {
   const view = readView(form, userId, "draft", draft.id);
   const raw = readEntryForm(form);
   if (draft.kind !== "topic" || view?.version !== String(draft.version) || formString(form, "version") !== view.version
@@ -103,6 +104,95 @@ export function assertDraftPreviewPublication(form: FormData, userId: string, dr
 type Intent = { preview: SigningPreview; payload: string; payloadHash: string; formHash: string };
 const contentOf = (row: { title: string | null; body: string; lang: string }): SigningContent => ({ title: titleOrNull(row.title), body: row.body, lang: row.lang });
 const publicTitle = (title: string | null) => title?.trim() || null;
+
+type DraftRow = typeof drafts.$inferSelect;
+type FormInput = ReturnType<typeof readEntryForm>;
+type DraftPublicationInput = Omit<FormInput, "title" | "altOf"> & { title: string | null };
+
+function lockPublicationDraft(tx: Tx, userId: string, id: number) {
+  return tx.select().from(drafts).where(and(eq(drafts.id, id), eq(drafts.authorId, userId))).for("update");
+}
+
+async function assertDraftPreviewForm(db: Db, form: FormData, userId: string, draft: DraftRow, raw: FormInput) {
+  assertDraftPreviewPublication(form, userId, draft);
+  if (villagesEnabled()) {
+    const village = await villageSlug(db, draft.villageId);
+    if (raw.villageExplicit !== Boolean(village) || (raw.village ?? "") !== (village ?? "")) throw new SigningError("draft_conflict", 409);
+  }
+}
+
+async function draftPublication(db: Db, draft: DraftRow, raw: DraftPublicationInput, { tx, confirm = false }: { tx?: Tx; confirm?: boolean } = {}) {
+  const lang = confirm && raw.lang === "other" ? (await resolvePostLanguage(raw.body, raw.lang, raw.lang)).lang : raw.lang;
+  const content = { title: draft.kind === "topic" ? publicTitle(raw.title) : null, body: raw.body, lang };
+  let stanceTag: string | null = draft.stanceTag;
+  if (draft.kind === "reply" && draft.threadId !== null) {
+    const [topic] = await db.select({ asksStance: entries.asksStance }).from(entries).where(eq(entries.id, draft.threadId));
+    if (topic?.asksStance) stanceTag = raw.stanceTag;
+  }
+  const slug = raw.villageExplicit === false ? undefined : raw.village;
+  const stored = raw.villageExplicit === false || raw.village === undefined ? draft.villageId : null;
+  const destination = villagesEnabled() && draft.kind === "topic"
+    ? await (tx ? villageForTopic(tx, draft.authorId, slug, stored) : previewVillageForTopic(db, draft.authorId, slug, stored))
+    : undefined;
+  if (destination === null) throw new SigningError("village_required", 400);
+  const villageId = destination?.id;
+  const target = { draftId: draft.id, threadId: draft.threadId, parentId: draft.parentId, altOf: draft.altOf, ...(villageId ? { villageId } : {}) };
+  const input = { ...content, asksStance: draft.kind === "topic" ? raw.asksStance : draft.asksStance, stanceTag, aiAssistance: draft.aiAssistance, via: draft.via, ...(destination ? { village: destination.slug } : {}) };
+  const village: PublicVillage | undefined = destination && {
+    slug: destination.slug, kind: destination.kind, name: destination.name, description: destination.description, language: destination.language,
+  };
+  return { content, target, input, village, baseVersion: draft.version };
+}
+
+type DraftPublication = Awaited<ReturnType<typeof draftPublication>>;
+
+function assertDraftVillageDisplay(publication: DraftPublication, raw: Pick<FormInput, "villageDisplayed">) {
+  const slug = publication.village?.slug;
+  if (slug && (raw.villageDisplayed ?? "").trim().toLowerCase() !== slug) throw new SigningError("village_changed", 409, slug);
+}
+
+function confirmationHash(actor: string, { target, input, baseVersion }: DraftPublication): string {
+  return sha256(canonicalSigningJson({
+    v: 1, actor, operation: "publish-draft",
+    target: { ...target, villageId: target.villageId ?? null },
+    baseVersion,
+    input: { ...input, village: input.village ?? null },
+  }));
+}
+
+function confirmationMac(userId: string, hash: string, expiresAt: string) {
+  return createHmac("sha256", authSecret()).update(`confirm:v1|${userId}|${hash}|${expiresAt}`).digest("base64url");
+}
+
+function draftConfirmation(userId: string, publication: DraftPublication, now = Date.now()): string {
+  const expiresAt = String(now + DRAFT_CONFIRMATION_TTL_MS);
+  return `${expiresAt}.${confirmationMac(userId, confirmationHash(userId, publication), expiresAt)}`;
+}
+
+function assertDraftConfirmation(userId: string, token: string, publication: DraftPublication, now: Date) {
+  const parts = /^([0-9]{1,15})\.([A-Za-z0-9_-]{43})$/.exec(token);
+  if (!parts || !timingSafeEqual(Buffer.from(parts[2]), Buffer.from(confirmationMac(userId, confirmationHash(userId, publication), parts[1])))) {
+    throw new SigningError("confirmation_changed", 409);
+  }
+  if (Number(parts[1]) <= now.getTime()) throw new SigningError("confirmation_expired", 409);
+}
+
+export async function confirmationForDraftPreview(db: Db, draft: DraftRow, posting: { selected: string; explicit: boolean } | null, now?: number) {
+  const raw: DraftPublicationInput = {
+    title: draft.title === null ? null : normalizeNewlines(draft.title), body: normalizeNewlines(draft.body),
+    lang: draft.lang, asksStance: draft.asksStance, stanceTag: draft.stanceTag,
+    ...(posting ? { village: posting.explicit ? posting.selected : "", villageExplicit: posting.explicit, villageDisplayed: posting.selected } : {}),
+  };
+  try {
+    const publication = await draftPublication(db, draft, raw, { confirm: true });
+    assertDraftVillageDisplay(publication, raw);
+    return draftConfirmation(draft.authorId, publication, now);
+  } catch (error) {
+    // The preview can still display an unavailable posting destination.
+    if (!(error instanceof SigningError) || (error.code !== "village_required" && error.code !== "village_changed")) throw error;
+    return undefined;
+  }
+}
 function routeOperation(path: string, form: FormData): { operation: SigningOperation; id: number | null } {
   const intent = formString(form, "intent");
   if (path === "/t/new" && intent !== "draft") return { operation: "create-topic", id: null };
@@ -140,7 +230,11 @@ export function signingPreferenceValue(form: FormData): boolean {
   return value === "1";
 }
 
-async function loadIntent(tx: Tx, userId: string, pathname: string, form: FormData): Promise<Intent> {
+function assertSigningPreferenceOpen(signPosts: boolean, requested: boolean) {
+  if (!signPosts && requested) throw new SigningError("signing_closed", 409);
+}
+
+async function loadIntent(tx: Tx, userId: string, pathname: string, form: FormData, mode?: "review" | "publication"): Promise<Intent> {
   const { operation, id } = routeOperation(pathname, form);
   if (villagesEnabled() && (operation === "create-topic" || operation === "publish-draft")) await lockVillageProfile(tx, userId);
   if (id !== null && (!Number.isSafeInteger(id) || id < 1)) throw new SigningError("invalid_target", 400);
@@ -155,6 +249,7 @@ async function loadIntent(tx: Tx, userId: string, pathname: string, form: FormDa
   let lastEditor: SigningPreview["lastEditor"] = null;
   let baseVersion: string | number | boolean | null = null;
   let village: PublicVillage | undefined;
+  let confirmation: string | undefined;
   const target: SigningPreview["target"] = { threadId: null, parentId: null, entryId: null, draftId: null, altOf: null };
   if (operation === "create-topic" || operation === "create-reply") {
     const parentId = operation === "create-reply" ? readReplyParent(form) : undefined;
@@ -177,35 +272,25 @@ async function loadIntent(tx: Tx, userId: string, pathname: string, form: FormDa
       input.village = destination.slug;
     }
   } else if (operation === "publish-draft") {
-    const [draft] = await tx.select().from(drafts).where(and(eq(drafts.id, id!), eq(drafts.authorId, userId))).for("update");
+    const [draft] = await lockPublicationDraft(tx, userId, id!);
     if (!draft) throw new SigningError("not_found", 404);
-    if (pathname.endsWith("/preview")) assertDraftPreviewPublication(form, userId, draft);
-    target.draftId = draft.id;
-    target.threadId = draft.threadId;
-    target.parentId = draft.parentId;
-    target.altOf = draft.altOf;
-    baseVersion = draft.version;
+    if (pathname.endsWith("/preview")) {
+      if (mode === "publication") await assertDraftPreviewForm(tx, form, userId, draft, raw);
+      else assertDraftPreviewPublication(form, userId, draft);
+    }
+    const confirm = mode === "review" && !profile.signPosts && needsDraftConfirmation(draft);
+    if (confirm && Number(formString(form, "version")) !== draft.version) throw new SigningError("draft_conflict", 409);
+    const publication = await draftPublication(tx, draft, raw, { tx, confirm });
+    assertDraftVillageDisplay(publication, raw);
+    Object.assign(target, publication.target);
+    baseVersion = publication.baseVersion;
     current = contentOf(draft);
     viewed = readView(form, userId, "draft", draft.id);
-    content = { title: draft.kind === "topic" ? publicTitle(raw.title) : null, body: raw.body, lang: raw.lang };
-    let stanceTag = draft.stanceTag;
-    if (draft.kind === "reply" && draft.threadId !== null) {
-      const [topic] = await tx.select({ asksStance: entries.asksStance }).from(entries).where(eq(entries.id, draft.threadId));
-      if (topic?.asksStance) stanceTag = raw.stanceTag;
-    }
-    input = { ...content, kind: draft.kind, asksStance: draft.kind === "topic" ? raw.asksStance : draft.asksStance, stanceTag, aiAssistance: draft.aiAssistance, via: draft.via };
-    if (villagesEnabled() && draft.kind === "topic") {
-      const destination = await villageForTopic(tx, userId, raw.villageExplicit === false ? undefined : raw.village, raw.villageExplicit === false || !form.has("village") ? draft.villageId : null);
-      if (!destination) throw new SigningError("village_required", 400);
-      if ((raw.villageDisplayed ?? "").trim().toLowerCase() !== destination.slug) throw new SigningError("village_changed", 409, destination.slug ?? undefined);
-      target.villageId = destination.id;
-      const { id: _id, ...publicDestination } = destination;
-      village = publicDestination;
-      input.village = destination.slug;
-    }
-    // The MCP extension owns these columns. Read them when present without introducing duplicate editor metadata.
-    const metadata = draft as unknown as { clientId?: string | null; clientName?: string | null; clientUri?: string | null; clientUpdatedAt?: Date | null };
-    lastEditor = { id: metadata.clientId ?? (draft.via === "api" ? `token:${draft.tokenId ?? "deleted"}` : null), name: metadata.clientName ?? null, uri: metadata.clientUri ?? null, at: (metadata.clientUpdatedAt ?? (draft.via === "api" ? draft.updatedAt : null))?.toISOString() ?? null };
+    content = publication.content;
+    input = { ...publication.input, kind: draft.kind };
+    village = publication.village;
+    if (confirm) confirmation = draftConfirmation(userId, publication);
+    lastEditor = { id: draft.clientId ?? (draft.via === "api" ? `token:${draft.tokenId ?? "deleted"}` : null), name: draft.clientName, uri: draft.clientUri, at: (draft.clientUpdatedAt ?? (draft.via === "api" ? draft.updatedAt : null))?.toISOString() ?? null };
   } else if (operation === "edit-topic" || operation === "edit-reply") {
     await lockReferenceTopics(tx, { entryId: id!, body: raw.body });
     const [entry] = await tx.select().from(entries).where(eq(entries.id, id!)).for("no key update");
@@ -250,6 +335,7 @@ async function loadIntent(tx: Tx, userId: string, pathname: string, form: FormDa
     input = { handle: content.body };
   } else if (operation === "change-signing-preference") {
     const signPosts = signingPreferenceValue(form);
+    assertSigningPreferenceOpen(profile.signPosts, signPosts);
     baseVersion = profile.signPosts;
     const display = (value: boolean): SigningContent => ({ title: null, body: `${m.settings_sign_posts_label()}: ${value ? m.settings_sign_posts_on() : m.settings_sign_posts_off()}`, lang: null });
     current = display(profile.signPosts);
@@ -296,11 +382,11 @@ async function loadIntent(tx: Tx, userId: string, pathname: string, form: FormDa
   const payload = canonicalSigningJson({ version: 1, actor: userId, operation, pathname, target, baseVersion, input, formHash });
   const payloadHash = sha256(payload);
   const keys = await tx.select({ id: passkey.id }).from(passkey).where(eq(passkey.userId, userId));
-  return { payload, payloadHash, formHash, preview: { operation, payloadHash, content, language, viewed: viewed ? { title: viewed.title, body: viewed.body, lang: viewed.lang } : null, current, target, lastEditor, targetContext, enrolled: keys.length > 0, signatureRequired: signatureRequired(operation, profile), ...(village ? { village } : {}) } };
+  return { payload, payloadHash, formHash, preview: { operation, payloadHash, content, language, viewed: viewed ? { title: viewed.title, body: viewed.body, lang: viewed.lang } : null, current, target, lastEditor, targetContext, enrolled: keys.length > 0, signatureRequired: signatureRequired(operation, profile), ...(village ? { village } : {}), ...(confirmation ? { confirmation } : {}) } };
 }
 
 export async function previewSignedWrite(db: Db, userId: string, pathname: string, form: FormData): Promise<SigningPreview> {
-  return db.transaction(async tx => { await lockSigningMember(tx, userId); return (await loadIntent(tx, userId, pathname, form)).preview; });
+  return db.transaction(async tx => { await lockSigningMember(tx, userId); return (await loadIntent(tx, userId, pathname, form, "review")).preview; });
 }
 
 export function boundChallenge(payloadHash: string): string {
@@ -371,16 +457,61 @@ async function prepareSignedEntryRender<T>(db: Db, userId: string, request: Requ
   }
   return run();
 }
+type ApprovedEntry = { input: Record<string, unknown>; target: Pick<SigningPreview["target"], "parentId" | "altOf" | "threadId" | "villageId"> };
+
+function assertPublishedEntry(entry: typeof entries.$inferSelect, approved: ApprovedEntry) {
+  for (const field of ["title", "body", "lang", "asksStance", "aiAssistance", "stanceTag"] as const) {
+    if (field in approved.input && approved.input[field] !== entry[field]) throw new SigningError("published_content_changed", 409);
+  }
+  if (entry.parentId !== approved.target.parentId || entry.altOf !== approved.target.altOf || (entry.kind === "reply" && entry.threadId !== approved.target.threadId)) throw new SigningError("published_target_changed", 409);
+  if (villagesEnabled() && "villageId" in approved.target && entry.villageId !== approved.target.villageId) throw new SigningError("published_target_changed", 409);
+}
+
+async function publishUnsignedDraft<T extends MutationResult>(
+  tx: Tx, userId: string, id: number, fromPreview: boolean, form: FormData, mutate: (tx: Tx) => Promise<T>, now?: Date,
+): Promise<T> {
+  if (villagesEnabled()) await lockVillageProfile(tx, userId);
+  const [draft] = await lockPublicationDraft(tx, userId, id);
+  if (!draft) throw new SigningError("not_found", 404);
+  const raw = readEntryForm(form);
+  let publication: DraftPublication | undefined;
+  if (needsDraftConfirmation(draft)) {
+    const token = formString(form, DRAFT_CONFIRMATION_FIELD);
+    if (!token) throw new SigningError("confirmation_required", 409);
+    if (Number(formString(form, "version")) !== draft.version) throw new SigningError("confirmation_changed", 409);
+    try { publication = await draftPublication(tx, draft, raw, { tx, confirm: true }); }
+    catch (error) {
+      if (error instanceof SigningError && error.code === "village_required") throw new SigningError("confirmation_changed", 409);
+      throw error;
+    }
+    assertDraftConfirmation(userId, token, publication, now ?? new Date());
+    assertDraftVillageDisplay(publication, raw);
+  }
+  if (fromPreview) await assertDraftPreviewForm(tx, form, userId, draft, raw);
+  const result = await mutate(tx);
+  if (publication && result.ok) {
+    const [entry] = result.id === undefined ? [] : await tx.select().from(entries).where(eq(entries.id, result.id));
+    if (!entry || entry.authorId !== userId || entry.kind !== draft.kind) throw new SigningError("published_target_changed", 409);
+    assertPublishedEntry(entry, publication);
+  }
+  return result;
+}
+
 async function signedWriteInTransaction<T extends MutationResult>(db: Db, userId: string, request: Request, form: FormData, mutate: (tx: Tx) => Promise<T>, opts: { now?: Date }): Promise<T> {
   return db.transaction(async tx => {
     await lockSigningMember(tx, userId);
     // React Router's hydrated submissions use the route's .data transport URL.
     const transportPath = new URL(request.url).pathname;
     const pathname = transportPath === "/_.data" ? "/" : transportPath.endsWith(".data") ? transportPath.slice(0, -5) : transportPath;
-    const { operation } = routeOperation(pathname, form);
+    const { operation, id } = routeOperation(pathname, form);
     const [profile] = await tx.select({ signPosts: profiles.signPosts, passkeyOnly: profiles.passkeyOnly }).from(profiles).where(eq(profiles.userId, userId));
     if (!profile) throw new SigningError("not_a_member");
-    if (!signatureRequired(operation, profile)) return mutate(tx);
+    if (operation === "change-signing-preference" && !profile.signPosts) assertSigningPreferenceOpen(false, signingPreferenceValue(form));
+    if (!signatureRequired(operation, profile)) {
+      return operation === "publish-draft"
+        ? publishUnsignedDraft(tx, userId, id!, pathname.endsWith("/preview"), form, mutate, opts.now)
+        : mutate(tx);
+    }
     const challenge = formString(form, SIGNATURE_CHALLENGE_FIELD);
     const assertionText = formString(form, SIGNATURE_ASSERTION_FIELD);
     if (!challenge || !assertionText) throw new SigningError("signature_required");
@@ -390,7 +521,7 @@ async function signedWriteInTransaction<T extends MutationResult>(db: Db, userId
     const now = opts.now ?? new Date();
     if (!issued || issued.usedAt) throw new SigningError("challenge_used_or_unknown");
     if (issued.expiresAt <= now) throw new SigningError("challenge_expired");
-    const intent = await loadIntent(tx, userId, pathname, form);
+    const intent = await loadIntent(tx, userId, pathname, form, "publication");
     if (intent.payloadHash !== issued.payloadHash || intent.formHash !== issued.formHash || intent.preview.operation !== issued.operation) throw new SigningError("approval_changed", 409);
     const key = await verifySignedAssertion(tx, userId, challenge, assertion);
     await tx.update(signingChallenges).set({ usedAt: now }).where(eq(signingChallenges.challenge, challenge));
@@ -398,13 +529,9 @@ async function signedWriteInTransaction<T extends MutationResult>(db: Db, userId
     if (result.ok && intent.preview.operation !== "remove-passkey" && intent.preview.operation !== "delete-account") {
       const entryId = intent.preview.target.entryId ?? result.id ?? null;
       const [entry] = entryId === null ? [] : await tx.select().from(entries).where(eq(entries.id, entryId));
-      const approved = JSON.parse(issued.payload) as { input: Record<string, unknown>; target: SigningPreview["target"] };
+      const approved = JSON.parse(issued.payload) as ApprovedEntry;
       if (entry) {
-        for (const field of ["title", "body", "lang", "asksStance", "aiAssistance", "stanceTag"] as const) {
-          if (field in approved.input && approved.input[field] !== entry[field]) throw new SigningError("published_content_changed", 409);
-        }
-        if (entry.parentId !== approved.target.parentId || entry.altOf !== approved.target.altOf || (entry.kind === "reply" && entry.threadId !== approved.target.threadId)) throw new SigningError("published_target_changed", 409);
-        if (villagesEnabled() && "villageId" in approved.target && entry.villageId !== approved.target.villageId) throw new SigningError("published_target_changed", 409);
+        assertPublishedEntry(entry, approved);
       } else if (intent.preview.operation === "change-handle") {
         const [updated] = await tx.select({ handle: profiles.handle }).from(profiles).where(eq(profiles.userId, userId));
         if (updated?.handle !== approved.input.handle) throw new SigningError("published_content_changed", 409);
