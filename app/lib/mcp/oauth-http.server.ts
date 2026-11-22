@@ -9,6 +9,7 @@ import { MCP_ACCESS_TOKEN_SECONDS, lineMark, revokedLineId } from "./line.server
 import { isCredentialSessionFresh } from "~/lib/auth/credential-session.server";
 import { stripAccessTokenAuthorizationScheme } from "better-auth/oauth2";
 import { MetadataFetchBusy, withPreparedMetadata } from "./cimd.server";
+import { AUTHORIZE_PATH, scopeWithOfflineAccess } from "./authorization-scopes.server";
 
 // Consume bounded machine bodies once. Reconstruct the request so provider parsing has no unchecked stream.
 export async function boundedOAuthRequest(request: Request): Promise<Request | null> {
@@ -87,7 +88,6 @@ export async function handleOAuthHttp(request: Request, db: Db, auth: McpAuth, b
   return processOAuthHttp(bounded, db, auth, baseURL, auth.handler);
 }
 
-const AUTHORIZE_PATH = "/api/auth/oauth2/authorize";
 const noStore = { "Cache-Control": "no-store" };
 const wantsHtml = (request: Request) => (request.headers.get("accept") ?? "").includes("text/html");
 
@@ -124,6 +124,14 @@ async function processOAuthHttp(bounded: Request, db: Db, auth: McpAuth, baseURL
     const checked = await freshAuthorization(request, auth);
     if (!(checked instanceof Request)) return humanError(request, checked.error) ?? checked.response;
     request = checked;
+    const url = new URL(request.url);
+    if (!url.searchParams.has("sig")) {
+      const scope = await scopeWithOfflineAccess(db, url.searchParams);
+      if (scope !== undefined) {
+        url.searchParams.set("scope", scope);
+        request = new Request(url, { method: request.method, headers: request.headers, redirect: request.redirect, signal: request.signal });
+      }
+    }
   }
   const revocation = new URL(request.url).pathname === "/api/auth/oauth2/revoke";
   const form = revocation ? await bounded.clone().formData() : null;

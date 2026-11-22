@@ -11,6 +11,7 @@ import { getDb, type Tx } from "~/lib/db/client.server";
 import { assertSameOrigin } from "~/lib/http/csrf.server";
 import { getWriter } from "~/lib/members.server";
 import { authorizationRedirect, consentRequestValid, loadConsentRequest } from "~/lib/mcp/consent.server";
+import { AUTHORIZE_PATH, scopeWithOfflineAccess } from "~/lib/mcp/authorization-scopes.server";
 import { AuthorizationExpired } from "~/components/mcp-expired";
 import { m } from "~/paraglide/messages.js";
 import { GuestHeader } from "~/components/guest-header";
@@ -26,9 +27,17 @@ async function loaderImplementation({ request }: Route.LoaderArgs) {
   if (!(await consentRequestValid(auth, query))) return { expired: true as const, signedIn };
   const consent = await loadConsentRequest(await getDb(), auth, query);
   if (!signedIn) throw redirect(`/mcp/login?${query}`);
-  const { profile } = await requireMember(request);
+  const { db, profile } = await requireMember(request);
   // A login older than 24 hours is checked before the allow button, not after it: the person confirms their address first and then allows once (the address is filled in).
   if (!(await getCredentialSessionFresh(request))) throw redirect(reauthenticationUrl(`/mcp/consent?${query}`));
+  const params = new URLSearchParams(consent.query);
+  const scope = await scopeWithOfflineAccess(db, params);
+  if (scope !== undefined) {
+    // The provider verified the entire query. Start a fresh authorization without its signature and continuation fields.
+    for (const name of ["sig", "exp", "ba_iat", "ba_param", "ba_pl"]) params.delete(name);
+    params.set("scope", scope);
+    throw redirect(`${AUTHORIZE_PATH}?${params}`, { status: 303, headers: { "Cache-Control": "private, no-store" } });
+  }
   return { ...consent, who: `@${profile.handle}` };
 }
 export async function action({ request }: Route.ActionArgs) {

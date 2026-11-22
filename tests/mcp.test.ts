@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { Client as LegacyClient } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport as LegacyTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { DrizzleQueryError, eq, inArray } from "drizzle-orm";
+import { DrizzleQueryError, eq, inArray, like } from "drizzle-orm";
 import * as search from "~/lib/search.server";
 import * as clientDrafts from "~/lib/mcp/drafts.server";
 import * as rates from "~/lib/rate-limit.server";
@@ -67,6 +67,9 @@ const cimdJwtKey = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
 const cimdJwk = { ...cimdJwtKey.publicKey.export({ format: "jwk" }), kid: "cimd-fixture-key", alg: "ES256", use: "sig" };
 const cimdJwtCacheHeaders = { "Cache-Control": "no-cache", ETag: '"cimd-fixture"' };
 let cimdConditionalFetches = 0;
+const cachedCimdId = "https://cacheable-client.example.net/metadata.json";
+const revalidatedCimdId = "https://revalidated-client.example.net/metadata.json";
+const firstCimdFetches = new Map<string, number>();
 const a: McpClientIdentity = { key: "oauth:client-a", id: "client-a", name: "A", uri: "https://a.example.org", tokenId: null };
 const b: McpClientIdentity = { key: "oauth:client-b", id: "client-b", name: "B", uri: "https://b.example.org", tokenId: null };
 
@@ -102,8 +105,12 @@ beforeAll(async () => {
       }
       return Response.json({ client_id: cimdJwtId, client_name: "Signed fixture", application_type: "native", redirect_uris: [`${base}/callback`], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "private_key_jwt", jwks_uri: cimdJwksUri, scope: "read draft offline_access" }, { headers: cimdJwtCacheHeaders });
     }
-    expect(String(input)).toBe(cimdId);
-    return Response.json({ client_id: cimdId, client_name: "A self-reported name", client_uri: "https://clients.example.net", application_type: "native", redirect_uris: [`${base}/callback`], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none", scope: "read draft offline_access" });
+    const id = String(input);
+    expect([cimdId, cachedCimdId, revalidatedCimdId]).toContain(id);
+    if (id !== cimdId) firstCimdFetches.set(id, (firstCimdFetches.get(id) ?? 0) + 1);
+    const headers = id === revalidatedCimdId ? cimdJwtCacheHeaders : id === cachedCimdId ? { "Cache-Control": "max-age=60" } : undefined;
+    if (id === revalidatedCimdId && new Headers(init?.headers).get("if-none-match") === cimdJwtCacheHeaders.ETag) return new Response(null, { status: 304, headers });
+    return Response.json({ client_id: id, client_name: "A self-reported name", client_uri: new URL(id).origin, application_type: "native", redirect_uris: [`${base}/callback`], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none", scope: "read draft offline_access" }, { headers });
   } });
   saved = { __tomolaDb: globals.__tomolaDb, __tomolaAuth: globals.__tomolaAuth };
   globals.__tomolaDb = Promise.resolve(db); globals.__tomolaAuth = Promise.resolve(auth);
@@ -124,9 +131,9 @@ async function register(metadata: object = {}) {
   expect(response.status, await response.clone().text()).toBe(201);
   return (await response.json()).client_id as string;
 }
-async function authorize(clientId: string, credentials: Record<string, string> = {}) {
+async function authorize(clientId: string, credentials: Record<string, string> = {}, scope = "read draft offline_access") {
   const verifier = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij";
-  const params = new URLSearchParams({ client_id: clientId, redirect_uri: `${base}/callback`, response_type: "code", scope: "read draft offline_access", code_challenge_method: "S256", code_challenge: createHash("sha256").update(verifier).digest("base64url"), state: "fixture-state", resource: `${base}/mcp` });
+  const params = new URLSearchParams({ client_id: clientId, redirect_uri: `${base}/callback`, response_type: "code", scope, code_challenge_method: "S256", code_challenge: createHash("sha256").update(verifier).digest("base64url"), state: "fixture-state", resource: `${base}/mcp` });
   const response = await fetch(`${base}/api/auth/oauth2/authorize?${params}`, { headers: { cookie }, redirect: "manual" });
   expect(response.status, await response.clone().text()).toBe(302);
   const consentUrl = new URL(response.headers.get("location")!, base);
@@ -134,6 +141,7 @@ async function authorize(clientId: string, credentials: Record<string, string> =
   const query = consentUrl.searchParams.toString();
   const request = await loadConsentRequest(db, auth, query);
   expect(request.clientId).toBe(clientId);
+  expect(request.scopes).toEqual(["read", "draft", "offline_access"]);
   expect(request.redirectOrigin).toBe(new URL(base).origin);
   expect(request.registration).toBe(clientId === cimdId || clientId === cimdJwtId ? "cimd" : "dcr");
   const consentHeaders = new Headers({ cookie, origin: base });
@@ -953,6 +961,125 @@ describe("connecting an AI tool", () => {
   const authorizeQuery = (clientId: string, extra: Record<string, string> = {}) => new URLSearchParams({ client_id: clientId, redirect_uri: `${base}/callback`, response_type: "code", scope: "read draft offline_access", code_challenge_method: "S256", code_challenge: createHash("sha256").update("c".repeat(64)).digest("base64url"), state: "connect-flow", resource: `${base}/mcp`, ...extra });
   const startAuthorize = (clientId: string, extra: Record<string, string> = {}, headers: Record<string, string> = {}) => fetch(`${base}/api/auth/oauth2/authorize?${authorizeQuery(clientId, extra)}`, { headers: { cookie, ...headers }, redirect: "manual" });
   const thrown = async (run: () => Promise<unknown>) => { try { await run(); } catch (error) { return error as Response; } throw new Error("expected a redirect"); };
+  const consentPage = (url: URL) => consentLoader({ request: new Request(url, { headers: { cookie } }) } as never);
+  const approveConsent = (url: URL, scopes: string[]) => thrown(() => consentAction({
+    request: new Request(url, { method: "POST", headers: { cookie, origin: base }, body: new URLSearchParams([
+      ["accept", "yes"], ["oauth_query", url.searchParams.toString()], ...scopes.map(scope => ["scope", scope]),
+    ]) }),
+  } as never));
+  const exchangeCode = async (clientId: string, response: Response) => {
+    const callback = new URL(response.headers.get("location")!, base);
+    expect(callback.pathname).toBe("/callback");
+    expect(callback.searchParams.get("state")).toBe("connect-flow");
+    const code = callback.searchParams.get("code");
+    expect(code).toBeTruthy();
+    const token = await formPost("/api/auth/oauth2/token", { grant_type: "authorization_code", client_id: clientId, redirect_uri: `${base}/callback`, code: code!, code_verifier: "c".repeat(64), resource: `${base}/mcp` });
+    expect(token.status, await token.clone().text()).toBe(200);
+    return token.json();
+  };
+
+  it.each([
+    { loginFirst: false, id: cachedCimdId, fetches: 1 },
+    { loginFirst: true, id: revalidatedCimdId, fetches: 3 },
+  ])("restarts first CIMD authorization once at consent (login required: $loginFirst)", async ({ loginFirst, id, fetches }) => {
+    if (!loginFirst) await relogin();
+    expect(await db.select().from(oauthClient).where(eq(oauthClient.clientId, id))).toEqual([]);
+    const countCodes = () => db.$count(verification, like(verification.value, `{"type":"authorization_code",%"client_id":"${id}"%`));
+    const initial = await startAuthorize(id, { scope: "read draft" }, loginFirst ? { cookie: "" } : {});
+    expect(initial.status, await initial.clone().text()).toBe(302);
+    const first = new URL(initial.headers.get("location")!, base);
+    expect(first.pathname).toBe(loginFirst ? "/mcp/login" : "/mcp/consent");
+    expect(first.searchParams.get("scope")).toBe("read draft");
+    expect(await consentRequestValid(auth, first.searchParams.toString())).toBe(true);
+    expect(firstCimdFetches.get(id)).toBe(1);
+    const [registered] = await db.select().from(oauthClient).where(eq(oauthClient.clientId, id));
+    if (loginFirst) await relogin();
+    const beforeConsent = loginFirst ? new URL((await thrown(() => loginLoader({ request: new Request(first, { headers: { cookie } }) } as never))).headers.get("location")!, base) : first;
+    expect(beforeConsent.pathname).toBe("/mcp/consent");
+    expect(beforeConsent.searchParams.get("scope")).toBe("read draft");
+    expect(await consentRequestValid(auth, beforeConsent.searchParams.toString())).toBe(true);
+    const fetchesBeforeRestart = firstCimdFetches.get(id)!;
+    const tampered = new URL(beforeConsent);
+    tampered.searchParams.set("unverified", "https://untrusted.example/");
+    expect(await consentPage(tampered)).toMatchObject({ expired: true });
+
+    const restart = await thrown(() => consentPage(beforeConsent));
+    expect(restart.status).toBe(303);
+    const next = restart.headers.get("location")!;
+    expect(next).toMatch(/^\/api\/auth\/oauth2\/authorize\?/);
+    expect([...new URL(next, base).searchParams].sort()).toEqual([...authorizeQuery(id)].sort());
+    expect(firstCimdFetches.get(id)).toBe(fetchesBeforeRestart);
+    const restarted = await fetch(`${base}${next}`, { headers: { cookie }, redirect: "manual" });
+    const consent = new URL(restarted.headers.get("location")!, base);
+    expect(consent.pathname).toBe("/mcp/consent");
+    expect(await consentPage(consent)).toMatchObject({ clientId: id, registration: "cimd", scopes: ["read", "draft", "offline_access"] });
+    expect(firstCimdFetches.get(id)).toBe(fetches);
+    expect(fetches - fetchesBeforeRestart).toBe(loginFirst ? 1 : 0);
+    expect(await db.select({ id: oauthClient.id }).from(oauthClient).where(eq(oauthClient.clientId, id))).toEqual([{ id: registered.id }]);
+    expect(await db.select().from(oauthConsent).where(eq(oauthConsent.clientId, id))).toEqual([]);
+    expect(await countCodes()).toBe(0);
+    const issued = await approveConsent(consent, ["read", "draft"]);
+    expect(issued).toBeInstanceOf(Response);
+    expect(new URL(issued.headers.get("location")!, base).pathname).toBe("/callback");
+    expect(await countCodes()).toBe(1);
+    expect(await exchangeCode(id, issued)).toMatchObject({ refresh_token: expect.any(String) });
+  });
+
+  it("preserves a signed request and the original consent submission", async () => {
+    await relogin();
+    const clientId = await register();
+    const query = authorizeQuery(clientId, { scope: "read draft" });
+    const response = await auth.handler(new Request(`${base}/api/auth/oauth2/authorize?${query}`, { headers: { cookie } }));
+    const original = new URL(response.headers.get("location")!, base);
+    expect(original.pathname).toBe("/mcp/consent");
+    expect(await consentRequestValid(auth, original.searchParams.toString())).toBe(true);
+    const forwarded = await fetch(`${base}/api/auth/oauth2/authorize?${original.searchParams}`, { headers: { cookie }, redirect: "manual" });
+    const consent = new URL(forwarded.headers.get("location")!, base);
+    expect(consent.searchParams.get("scope")).toBe("read draft");
+    expect(await exchangeCode(clientId, await approveConsent(original, ["read", "draft"]))).not.toHaveProperty("refresh_token");
+    const quiet = await startAuthorize(clientId, { scope: "read draft", prompt: "none" });
+    expect(await exchangeCode(clientId, quiet)).not.toHaveProperty("refresh_token");
+    const renewed = await startAuthorize(clientId, { scope: "read draft" });
+    const renewedConsent = new URL(renewed.headers.get("location")!, base);
+    expect(renewedConsent.pathname).toBe("/mcp/consent");
+    expect(renewedConsent.searchParams.get("scope")).toBe("read draft offline_access");
+  });
+
+  it.each(["no refresh grant", "no offline scope"])("keeps resource scopes alone with %s", async reason => {
+    await relogin();
+    const clientId = await register(reason === "no refresh grant" ? { grant_types: ["authorization_code"] } : {});
+    if (reason === "no offline scope") {
+      // Registrations currently default to the server's full scope set. Legacy rows may be narrower.
+      await db.update(oauthClient).set({ scopes: ["read", "draft"] }).where(eq(oauthClient.clientId, clientId));
+    }
+    const response = await startAuthorize(clientId, { scope: "read draft" });
+    const consent = new URL(response.headers.get("location")!, base);
+    expect(consent.pathname).toBe("/mcp/consent");
+    expect(await consentPage(consent)).toMatchObject({ clientId, scopes: ["read", "draft"] });
+    expect(await exchangeCode(clientId, await approveConsent(consent, ["read", "draft"]))).not.toHaveProperty("refresh_token");
+  });
+
+  it("keeps scope defaults, non-GET behavior and local invalid-client errors", async () => {
+    await relogin();
+    const clientId = await register();
+    await db.update(oauthClient).set({ scopes: ["read", "draft"] }).where(eq(oauthClient.clientId, clientId));
+    const query = authorizeQuery(clientId);
+    query.delete("scope");
+    const authorizeUrl = `${base}/api/auth/oauth2/authorize`;
+    const response = await fetch(`${authorizeUrl}?${query}`, { headers: { cookie }, redirect: "manual" });
+    expect(new URL(response.headers.get("location")!, base).searchParams.get("scope")).toBe("read draft");
+    expect((await formPost("/api/auth/oauth2/authorize", Object.fromEntries(query))).status).toBe(404);
+    await db.update(oauthClient).set({ scopes: null }).where(eq(oauthClient.clientId, clientId));
+    expect(new URL((await startAuthorize(clientId, { scope: "read draft" })).headers.get("location")!, base).searchParams.get("scope")).toBe("read draft offline_access");
+    await db.update(oauthClient).set({ disabled: true }).where(eq(oauthClient.clientId, clientId));
+    for (const [id, error] of [[clientId, "client_disabled"], ["missing-fixture-client", "invalid_client"]]) {
+      const refused = await startAuthorize(id, { scope: "read draft" });
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toEqual({ error });
+      const browser = await startAuthorize(id, { scope: "read draft" }, { accept: "text/html" });
+      expect(browser.headers.get("location")).toBe(`/mcp/error?error=${error}`);
+    }
+  });
 
   it("lets a client that registers without an application type use a loopback http redirect, and nothing else over http", async () => {
     const registerPlain = (uri: string) => fetch(`${base}/api/auth/oauth2/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "Gemini-like", redirect_uris: [uri], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none", scope: "read draft offline_access" }) });
@@ -993,7 +1120,7 @@ describe("connecting an AI tool", () => {
     expect(response.status).toBe(302);
     const consentUrl = new URL(response.headers.get("location")!, base);
     expect(consentUrl.pathname).toBe("/mcp/consent");
-    expect(await consentLoader({ request: new Request(consentUrl, { headers: { cookie } }) } as never)).toMatchObject({ clientId, scopes: ["read", "draft"] });
+    expect(await consentLoader({ request: new Request(consentUrl, { headers: { cookie } }) } as never)).toMatchObject({ clientId, scopes: ["read", "draft", "offline_access"] });
     const unsupported = await startAuthorize(clientId, { scope: `${scope} media`, prompt: "consent" });
     expect(unsupported.status).toBe(400);
     expect(await unsupported.json()).toMatchObject({ error: "invalid_scope" });
@@ -1002,7 +1129,7 @@ describe("connecting an AI tool", () => {
   it("issues 15-minute access tokens, and survives a refresh token used twice within 30 seconds but not after", async () => {
     await relogin();
     const clientId = await register();
-    const first = await authorize(clientId) as { access_token: string; refresh_token: string; expires_in?: number };
+    const first = await authorize(clientId, {}, "read draft") as { access_token: string; refresh_token: string; expires_in?: number };
     expect(first.expires_in).toBe(900);
     const refresh = (token: string) => formPost("/api/auth/oauth2/token", { grant_type: "refresh_token", client_id: clientId, refresh_token: token });
     const second = await refresh(first.refresh_token);
@@ -1100,7 +1227,7 @@ describe("connecting an AI tool", () => {
     const [grant] = await db.select().from(oauthConsent).where(eq(oauthConsent.clientId, clientId));
     expect([...grant.scopes].sort()).toEqual(["offline_access", "read"]);
     // The grant is checked the way a client sees it: a refresh token comes with the code.
-    const plain = await register();
+    const plain = await register({ grant_types: ["authorization_code"] });
     const plainUrl = new URL((await startAuthorize(plain, { prompt: "consent", scope: "read" })).headers.get("location")!, base);
     await thrown(() => consentAction({ request: new Request(plainUrl, { method: "POST", headers: { cookie, origin: base }, body: new URLSearchParams({ accept: "yes", scope: "read", oauth_query: plainUrl.searchParams.toString() }) }) } as never));
     const [narrow] = await db.select().from(oauthConsent).where(eq(oauthConsent.clientId, plain));

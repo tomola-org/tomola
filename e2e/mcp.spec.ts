@@ -26,7 +26,7 @@ test("OAuth consent, draft publication, post and village review, and immediate r
     return (await response.json()).client_id as string;
   };
   const authorizeUrl = (clientId: string) => {
-    const parameters = new URLSearchParams({ client_id: clientId, redirect_uri: loopback.redirectURI, response_type: "code", scope: "read draft offline_access", state: "browser-fixture", code_challenge_method: "S256", code_challenge: createHash("sha256").update(verifier).digest("base64url"), resource: `${baseURL}/mcp` });
+    const parameters = new URLSearchParams({ client_id: clientId, redirect_uri: loopback.redirectURI, response_type: "code", scope: "read draft", state: "browser-fixture", code_challenge_method: "S256", code_challenge: createHash("sha256").update(verifier).digest("base64url"), resource: `${baseURL}/mcp` });
     return `${baseURL}/api/auth/oauth2/authorize?${parameters}`;
   };
   const start = async (target: Page, clientId: string) => {
@@ -40,7 +40,9 @@ test("OAuth consent, draft publication, post and village review, and immediate r
     expect(callback.searchParams.get("state")).toBe("browser-fixture");
     const response = await request.post(`${baseURL}/api/auth/oauth2/token`, { form: { grant_type: "authorization_code", client_id: clientId, redirect_uri: loopback.redirectURI, code: callback.searchParams.get("code")!, code_verifier: verifier, resource: `${baseURL}/mcp` } });
     expect(response.status(), await response.text()).toBe(200);
-    return (await response.json()).access_token as string;
+    const token = await response.json();
+    expect(token.refresh_token).toEqual(expect.any(String));
+    return token.access_token as string;
   };
   const call = (request: APIRequestContext, token: string, name: string, arguments_: object = {}) => request.post(`${baseURL}/mcp`, {
     headers: { authorization: `Bearer ${token}`, accept: "application/json, text/event-stream", "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": name },
