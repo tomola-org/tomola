@@ -32,7 +32,6 @@ describe("source language evidence", () => {
   it.each([
     [greek, "el"],
     [italian, "it"],
-    ["Este es un ejemplo de nuestra comunidad y de los temas que son importantes para todos los que están aquí.", "es"],
     ["Este é um exemplo da nossa comunidade e dos temas que são importantes para todos os que estão aqui.", "pt"],
     ["Սա հայերեն գրված երկար նախադասություն է մեր համայնքի մասին։", "hy"],
     ["ეს არის ქართული ტექსტი ჩვენი საზოგადოების შესახებ.", "ka"],
@@ -73,6 +72,21 @@ describe("source language evidence", () => {
     expect(translationSystemPrompt("other", "en")).toContain("the language of the source text");
     expect(detectCopy(greek, greek, "other", "en")).toMatchObject({ copy: true, reason: "identical" });
   });
+});
+
+it.each([
+  ["id", "Kami ingin membuat tempat untuk orang yang mau berbagi gagasan dan belajar dari satu sama lain."],
+  ["es", "Este es un ejemplo de nuestra comunidad y de los temas que son importantes para todos los que están aquí."],
+] as const)("stores a detected %s original before the site opens the language", async (lang, body) => {
+  vi.stubEnv("ENABLED_LANGS", "ja,en");
+  const db = await createTestDb();
+  await addMember(db, "source_writer", "source_writer");
+  const decision = await resolvePostLanguage(body, undefined, "en");
+  const created = await createTopic(db, "source_writer", { ...decision, title: "A language example", body });
+  if (!created.ok) throw new Error(created.error);
+  expect((await db.select().from(entries).where(eq(entries.id, created.id)))[0]).toMatchObject({ lang, langCode: null, langSource: "detected" });
+  const titles = await db.select().from(jobs).where(eq(jobs.kind, "translate_title"));
+  expect(titles.map(job => (job.payload as { lang: string }).lang).sort()).toEqual(["en", "ja"]);
 });
 
 async function fixture(langSource: "detected" | "default" | "checked" | "explicit" | null = "default", code: string | null = "el", confident = true) {

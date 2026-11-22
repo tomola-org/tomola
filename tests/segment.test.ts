@@ -29,6 +29,17 @@ describe("segmentSentences", () => {
     for (const p of segmentSentences(body, "en")) expect(body.slice(p.start, p.end)).not.toMatch(/\n/);
   });
 
+  it.each([
+    { lang: "id", sentences: ["Kami sudah sampai.", "Apa yang perlu dibawa?", "Mari kita mulai!"], next: "Catatan tambahan" },
+    { lang: "es", sentences: ["Llegamos ayer.", "¿Cómo está el tiempo?", "¡Qué buena noticia!"], next: "Otra nota" },
+  ])("splits $lang at sentence and paragraph boundaries with source offsets", ({ lang, sentences, next }) => {
+    const body = `  ${sentences.join(" ")}\n\n${next}  `;
+    const parts = segmentSentences(body, lang);
+    expect(parts.map(({ text }) => text)).toEqual([...sentences, next]);
+    expect(parts.map(({ idx }) => idx)).toEqual([0, 1, 2, 3]);
+    for (const { start, end, text } of parts) expect(body.slice(start, end)).toBe(text);
+  });
+
   it("splits Thai at punctuation, and keeps the ICU result for a line that has any", () => {
     // Lines with punctuation retain ICU segmentation; do not split them at internal whitespace.
     const body = "วันนี้อากาศดีมาก. เราไปเดินเล่น ที่สวนสาธารณะ\n\nThis is english. ประโยคสุดท้าย";

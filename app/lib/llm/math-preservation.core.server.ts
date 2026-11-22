@@ -1,6 +1,6 @@
 import type { Lang } from "../languages";
 
-const decimalCommaLanguages: ReadonlySet<string> = new Set(["fr", "de", "vi"] satisfies Lang[]);
+const decimalCommaLanguages: ReadonlySet<string> = new Set(["fr", "de", "vi", "id", "es"] satisfies Lang[]);
 const textCommand = /^\\(?:text|textrm|textit|textbf|textsf|mbox)\s*\{$/;
 const texTokens = /\\[A-Za-z]+\s*\{|\\[A-Za-z]+|\\[\s\S]|%[^\n]*|[{}]/g;
 

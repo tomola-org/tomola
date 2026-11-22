@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { detectLang } from "~/lib/lang-detect.core.server";
+import { detectLang, detectSourceLanguage } from "~/lib/lang-detect.core.server";
 import { applyPastedFrontmatter } from "~/lib/entry-form.server";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -13,6 +13,8 @@ const sentences = {
   ko: "우리는 서로 다른 생각을 가진 사람들과 함께 이야기하고 배우는 공간을 만들고 있습니다.",
   th: "เราต้องการสร้างพื้นที่สำหรับทุกคนเพื่อแบ่งปันความคิดและเรียนรู้จากกันและกัน",
   vi: "Chúng tôi muốn tạo một nơi để mọi người chia sẻ ý tưởng và học hỏi từ nhau.",
+  id: "Kami ingin membuat tempat untuk orang yang mau berbagi gagasan dan belajar dari satu sama lain.",
+  es: "Este es un ejemplo de nuestra comunidad y de los temas que son importantes para todos los que están aquí.",
 } as const;
 
 describe("prose language detection", () => {
@@ -58,6 +60,33 @@ describe("prose language detection", () => {
   ])("handles a short text %s conservatively", async (text, lang) => expect((await detectLang(text))).toBe(lang));
   it("keeps an English sentence with a French name in English", async () => {
     expect((await detectLang("We are here to discuss the work of François with our friends and their colleagues."))).toBe("en");
+  });
+  it.each([
+    [sentences.id, "id"],
+    ["Kami sedang membina tempat untuk semua orang yang mahu berkongsi pendapat dan belajar daripada satu sama lain.", "id"],
+    [sentences.es, "es"],
+    ["We are discussing yang, dan, di and ke with Ada and Dan, and we will share our findings with them.", "en"],
+    ["The labels are yang, untuk, dengan, and karena. We will discuss their use with our colleagues.", "en"],
+  ] as const)("agrees on the language of %s on both surfaces", (body, lang) => {
+    expect(detectLang(body)).toBe(lang);
+    expect(detectSourceLanguage(body)).toEqual({ lang, langCode: null });
+  });
+  it.each([
+    ["Este é um exemplo da nossa comunidade e dos temas que são importantes para todos os que estão aqui.", "pt"],
+    ["Questo è un esempio della nostra lingua e della nostra comunità, con tutti gli amici che sono qui per parlare del nostro lavoro.", "it"],
+  ] as const)("keeps %s outside the supported language set", (body, code) => {
+    expect(detectLang(body)).toBeNull();
+    expect(detectSourceLanguage(body)).toEqual({ lang: "other", langCode: code });
+  });
+  it.each([
+    "Saya tidak tahu.",
+    "¿Cómo estás hoy?",
+    "Yang yang yang yang yang yang.",
+    "Kami ingin berbicara dengan mereka. We are here to work with them.",
+    "Los amigos están en la casa. Os amigos estão na casa.",
+  ])("leaves short or mixed prose inconclusive: %s", body => {
+    expect(detectLang(body)).toBeNull();
+    expect(detectSourceLanguage(body)).toBeNull();
   });
   it.each(["", "12345", "Jean François Müller Nguyễn", "RTX1300 ABC2500 XYZ700", "山川水土木日月", "我们我們", "the de der", "the the the", "@the @and @with @from", "`the cat is here and it is at home`", "$$the cat is here and it is at home$$"])('does not guess from "%s"', async text => {
     expect((await detectLang(text))).toBeNull();

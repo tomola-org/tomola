@@ -172,7 +172,7 @@ it.each([
   expect(checkStructure(inline(source), inline(translated), { to }).flags).toContain(qualityFlag);
 });
 
-it.each(["fr", "de", "vi"])("accepts decimal comma conventions in %s", to => {
+it.each(["fr", "de", "vi", "id", "es"])("accepts decimal comma conventions in %s", to => {
   expect(checkStructure("値は " + inline(String.raw`3.4\times10^{-7}`) + "。", "Valeur " + inline(String.raw`3,4\times10^{-7}`) + ".", { from: "ja", to }).ok).toBe(true);
   expect(checkStructure(inline("f(2.0,3.0)"), inline("f(2{,}0,3{,}0)"), { to }).ok).toBe(true);
 });

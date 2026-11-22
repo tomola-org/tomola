@@ -9,7 +9,6 @@ const simplified = new Set(pairs.map(pair => pair[0]).filter(ch => !pairs.some(p
 const traditional = new Set(pairs.map(pair => pair[1]).filter(ch => !pairs.some(pair => pair[0] === ch)));
 const otherWords = {
   it: new Set("il lo gli le un una uno di del della delle degli da dal in nel nella con su per tra fra è sono era essere ha hanno che chi non si ma come questo questa questi queste io tu noi voi loro mio mia nostro anche più perché quando dove tutto molto alla alle al ai dei mi ci ed".split(" ")),
-  es: new Set("el la los las un una unos unas de del en con por para sin es son era ser ha han que quien no se pero como este esta estos estas yo tú nosotros vosotros ellos ellas mi mis nuestro también más porque cuando donde todo muy al hay está están sus su y".split(" ")),
   pt: new Set("o a os as um uma uns umas de do da dos das em no na nos nas com por para sem é são era ser tem têm que quem não se mas como este esta estes estas eu tu nós vós eles elas meu minha nosso também mais porque quando onde tudo muito ao aos pelo pela e seu sua".split(" ")),
 };
 const otherScripts: [RegExp, string | null][] = [
@@ -24,6 +23,8 @@ const words = {
   en: new Set("the a an of to in on for with from by at is are was were be been being have has had do does did will would can could should may might must this that these those it its we you they he she and or but not as if so our their your".split(" ")),
   fr: new Set("le la les un une des du de au aux à en dans sur pour par avec sans est sont était être été avoir a ont avait ce cette ces il elle ils elles nous vous on et ou mais ne pas que qui se son sa ses leur leurs notre votre comme si quand".split(" ")),
   de: new Set("der die das ein eine einer eines den dem des zu zum zur von mit auf für aus bei nach über unter ist sind war waren sein hat haben hatte wird werden kann können muss nicht und oder aber als wenn dass ich du er sie es wir ihr mein dein sich im am".split(" ")),
+  id: new Set("yang dan di ke dari untuk dengan ini itu tidak adalah akan pada dalam juga atau kami kita mereka saya sudah bisa ada oleh karena sebagai tetapi kalau agar tanpa telah belum masih hanya semua banyak sangat seperti setelah sebelum ketika dapat kamu anda kepada tentang lebih tersebut bahwa pernah saja pun".split(" ")),
+  es: new Set("el la los las un una unos unas de del en con por para sin es son era ser ha han que quien no se pero como este esta estos estas yo tú nosotros vosotros ellos ellas mi mis nuestro también más porque cuando donde todo muy al hay está están sus su y".split(" ")),
 };
 
 export type LanguageDecision = { source: "explicit" | "detected" | "default"; detected: SourceLang | null; langCode?: string | null };
@@ -76,12 +77,26 @@ function detect(body: string, hint?: string | null, extended = false): string | 
   if (count(/[ăđơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]/u) >= 2) return "vi";
   const tokens = text.match(/\p{L}+/gu) ?? [];
   const candidates: Record<string, Set<string>> = extended ? { ...words, ...otherWords } : words;
-  const scores = Object.keys(candidates).map(lang => {
-    const hits = tokens.filter(word => candidates[lang].has(word)).length;
+  const scores = Object.entries(candidates).flatMap(([lang, vocabulary]) => {
+    const matches = tokens.filter(word => vocabulary.has(word));
+    // Short overlaps and repeated names such as Ada or Dan are weak evidence.
+    // The same vocabulary also covers Malay.
+    if (lang === "id" && new Set(matches.filter(word => word.length >= 4)).size < 3) return [];
+    const hits = matches.length;
     const bonus = lang === "fr" ? count(extended ? /[œ]/u : /[éèâêôçàùœ]/u) + (text.match(/\b(?:l|d|qu|n)'/g) ?? []).length : lang === "de" ? count(/[äöüß]/u) : 0;
-    return { lang, hits, score: hits + bonus };
+    return [{ lang, hits, score: hits + bonus }];
   }).sort((a, b) => b.score - a.score);
-  return scores[0].hits >= 3 && scores[0].score >= 2 * scores[1].score ? scores[0].lang : null;
+  const [best, runnerUp] = scores;
+  if (best.hits < 3 || best.score < 2 * runnerUp.score) return null;
+  // Even on surfaces that only return supported languages, shared words in
+  // Portuguese or Italian must not pass as Spanish at the margin.
+  if (best.lang === "es") {
+    const rivals = extended ? [runnerUp.score] : [runnerUp.score, ...Object.values(otherWords).map(vocabulary =>
+      tokens.filter(word => vocabulary.has(word)).length,
+    )];
+    if (best.score <= 2 * Math.max(...rivals)) return null;
+  }
+  return best.lang;
 }
 
 // Other translation surfaces retain their existing language selection rules.
