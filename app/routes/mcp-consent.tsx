@@ -2,7 +2,7 @@ import { withMarkdownRead } from "~/lib/markdown-budget.server";
 import { Field, FieldLabel } from "~/components/ui/field";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Button } from "~/components/ui/button";
-import { data, Form, redirect } from "react-router";
+import { data, Form, redirect, redirectDocument } from "react-router";
 import { bindAuthToDatabase, getAuth } from "~/lib/auth/auth.server";
 import { eq } from "drizzle-orm";
 import { oauthClient } from "~/lib/db/schema";
@@ -36,7 +36,8 @@ async function loaderImplementation({ request }: Route.LoaderArgs) {
     // The provider verified the entire query. Start a fresh authorization without its signature and continuation fields.
     for (const name of ["sig", "exp", "ba_iat", "ba_param", "ba_pl"]) params.delete(name);
     params.set("scope", scope);
-    throw redirect(`${AUTHORIZE_PATH}?${params}`, { status: 303, headers: { "Cache-Control": "private, no-store" } });
+    // A document load: the authorization endpoint is not a route that a client-side navigation can fetch data from.
+    throw redirectDocument(`${AUTHORIZE_PATH}?${params}`, { status: 303, headers: { "Cache-Control": "private, no-store" } });
   }
   return { ...consent, who: `@${profile.handle}` };
 }

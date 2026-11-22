@@ -1005,6 +1005,7 @@ describe("connecting an AI tool", () => {
 
     const restart = await thrown(() => consentPage(beforeConsent));
     expect(restart.status).toBe(303);
+    expect(restart.headers.get("X-Remix-Reload-Document")).toBe("true");
     const next = restart.headers.get("location")!;
     expect(next).toMatch(/^\/api\/auth\/oauth2\/authorize\?/);
     expect([...new URL(next, base).searchParams].sort()).toEqual([...authorizeQuery(id)].sort());
