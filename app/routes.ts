@@ -176,6 +176,7 @@ export default [
       route("settings/media", "routes/settings-media.tsx"),
       route("drafts", "routes/drafts.tsx"),
       route("invites/new", "routes/invites-new.tsx"),
+      route("admin/connection", "routes/admin-connection.tsx"),
       route("admin/usage", "routes/admin-usage.tsx"),
       route("admin/metrics", "routes/admin-metrics.tsx"),
       route("admin/ai-question-reports", "routes/admin-ai-question-reports.tsx"),

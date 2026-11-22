@@ -1,7 +1,7 @@
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
-import { waitForClientRoute, captureScreenshot, useMember, formatMessage, clientHeaders, enMessages, jaMessages, openAdminMenu, openUserMenu, openPlaces, closePlaces, state  } from "./helpers";
+import { waitForClientRoute, captureScreenshot, useMember, uiMessages, formatMessage, clientHeaders, enMessages, jaMessages, openAdminMenu, openUserMenu, openPlaces, closePlaces, state  } from "./helpers";
 
 const operatorHandle = "navigation_operator_long_12345";
 const memberHandle = "navigation_member_long_1234567";
@@ -80,7 +80,7 @@ async function geometry(page: Page, width: number, height: number) {
   expect(box.y + box.height).toBeLessThanOrEqual(height);
 }
 
-test("compact member navigation preserves badges, role links, filters, keyboard and readable no-JS pages", async ({ browser }) => {
+test("compact member navigation preserves badges, role links, filters, keyboard and readable no-JS pages", async ({ browser, request: guest }) => {
   test.setTimeout(420_000);
   const contexts = await Promise.all(["10.19.0.1", "10.19.0.2", "10.19.0.3"].map(ip => browser.newContext({ extraHTTPHeaders: clientHeaders(ip) })));
   const [operator, member, moderator] = await Promise.all(contexts.map(context => context.newPage()));
@@ -146,7 +146,7 @@ test("compact member navigation preserves badges, role links, filters, keyboard 
           if (role !== "member") {
             const admin = await openAdminMenu(page);
             const group = size.width < 640 ? admin.locator("[data-mobile-admin]") : admin;
-            expect(await group.getByRole("menuitem").evaluateAll(links => links.map(link => link.getAttribute("href")))).toEqual(["/mod", "/admin/translations", ...(role === "operator" ? ["/admin/invitations", "/admin/roles", "/admin/usage", "/admin/metrics", "/admin/observation"] : [])]);
+            expect(await group.getByRole("menuitem").evaluateAll(links => links.map(link => link.getAttribute("href")))).toEqual(["/mod", "/admin/translations", ...(role === "operator" ? ["/admin/invitations", "/admin/roles", "/admin/usage", "/admin/metrics", "/admin/observation", "/admin/connection"] : [])]);
           } else await expect(header.locator('a[href="/mod"]')).toHaveCount(0);
           await openUserMenu(page);
           await menu.getByRole("menuitem", { name: messages.nav_settings, exact: true }).click();
@@ -160,6 +160,14 @@ test("compact member navigation preserves badges, role links, filters, keyboard 
         }
       }
     }
+
+    const diagnostics = (await operator.goto("/admin/connection"))!;
+    expect(diagnostics.status()).toBe(200);
+    expect(diagnostics.headers()["cache-control"]).toBe("private, no-store");
+    expect(diagnostics.headers()["x-robots-tag"]).toBe("noindex");
+    await expect(operator.getByRole("heading", { name: (await uiMessages(operator)).nav_connection })).toBeVisible();
+    expect((await member.request.get("/admin/connection", { maxRedirects: 0 })).status()).toBe(404);
+    expect((await guest.get("/admin/connection", { maxRedirects: 0 })).status()).toBe(404);
 
     await member.setViewportSize({ width: 390, height: 844 });
     await member.goto("/settings?from=menu");

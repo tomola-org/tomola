@@ -231,7 +231,7 @@ visible through a growing `currentTickSeconds` and an unchanged
 making legitimate long jobs return 503. Neither heartbeat nor tick timing
 proves that a provider or email service is succeeding. Both `/readyz` and
 `/healthz` bypass app access logs.
-`/healthz` remains a process-only check for Docker HEALTHCHECK and Caddy, so
+`/healthz` remains a process-only check for Docker HEALTHCHECK, so
 an unavailable database does not itself cause a container restart.
 
 **Node image updates:** changing `NODE_VERSION` without a matching
@@ -309,6 +309,8 @@ and most RSS comes from memory outside JS.
 The supplied setup exposes only Caddy; the app and database ports are not published. With one Caddy in front, set `TRUSTED_PROXY_HOPS=1`. If you add a CDN or another proxy in front, check that the sources Caddy trusts and the actual number of hops agree. Publishing the app port directly creates a path on which forwarding headers can be forged.
 
 Make the host name, `BETTER_AUTH_URL` and the forwarded Host agree. Match the request body limit of the app (`MAX_REQUEST_BODY_BYTES`) with Caddy's limit.
+
+When an ingress tunnel such as Cloudflare Tunnel forwards to Caddy, put only the tunnel connector and Caddy on a dedicated network. Limit Caddy's `trusted_proxies` to that network's subnet and attach the app to a separate network with Caddy. Set `TRUSTED_PROXY_HOPS=2` for the tunnel connector and Caddy. Open **Connection diagnostics** from the operator menu at `/admin/connection` to confirm that the app sees your client address, the expected forwarding chain, HTTPS and the public host.
 
 ## 4. Models, budget and glossary
 
@@ -391,6 +393,8 @@ data. Losing or changing the authentication secret or host affects links and
 passkeys.
 
 ## 6. Updating and rollback
+
+While the app container is being replaced, Caddy can retry connection failures for up to the configured `lb_try_duration` (30 seconds in the supplied Caddyfile). Once connected, a failed POST returns an error to the client.
 
 During maintenance, AI-client reads over MCP and OAuth token refreshes are
 also unavailable for a few minutes because those operations use POST.

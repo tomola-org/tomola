@@ -133,6 +133,42 @@ describe("member-only routes reject visitors who are not logged in", () => {
   });
 });
 
+describe("operator connection diagnostics", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("returns 404 to a member outside the operator list", async () => {
+    vi.stubEnv("OPERATOR_EMAILS", "hana@example.com");
+    const { loader } = await import("~/routes/admin-connection");
+    const req = await request("/admin/connection", { as: "somchai" });
+    expect(await outcome(() => loader(args(req)))).toMatchObject({ status: 404 });
+  });
+
+  it("reports how the current request was interpreted and prevents caching and indexing", async () => {
+    vi.stubEnv("OPERATOR_EMAILS", "hana@example.com");
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "2");
+    const { loader } = await import("~/routes/admin-connection");
+    const session = await request("/admin/connection", { as: "hana" });
+    const req = new Request("https://forum.example.org/admin/connection", { headers: session.headers });
+    req.headers.set("X-Forwarded-For", "198.51.100.7, 192.0.2.2");
+    const result = await loader(args(req));
+    expect(result.data).toMatchObject({
+      address: "198.51.100.7", forwardedCount: 2, hops: 2, protocol: "https:", host: "forum.example.org", shortChain: false,
+    });
+    const headers = new Headers(result.init?.headers);
+    expect(headers.get("Cache-Control")).toBe("private, no-store");
+    expect(headers.get("X-Robots-Tag")).toBe("noindex");
+  });
+
+  it("flags a forwarding chain that is too short to select a client address", async () => {
+    vi.stubEnv("OPERATOR_EMAILS", "hana@example.com");
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "2");
+    const { loader } = await import("~/routes/admin-connection");
+    const req = await request("/admin/connection", { as: "hana" });
+    req.headers.set("X-Forwarded-For", "192.0.2.2");
+    expect((await loader(args(req))).data).toMatchObject({ address: null, forwardedCount: 1, shortChain: true });
+  });
+});
+
 describe("POST /preview", () => {
   it("returns the publication language for automatic, explicit and pasted-language previews", async () => {
     const { action } = await import("~/routes/preview");

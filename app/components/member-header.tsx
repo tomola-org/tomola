@@ -37,6 +37,7 @@ export function MemberHeader({ data, sideNavigation = false, whyLink = false }: 
       <DropdownMenuItem render={<Link to="/admin/usage" />}>{labels.nav_usage}</DropdownMenuItem>
       <DropdownMenuItem render={<Link to="/admin/metrics" />}>{labels.nav_metrics}</DropdownMenuItem>
       <DropdownMenuItem render={<Link to="/admin/observation" />}>{labels.nav_observation}</DropdownMenuItem>
+      <DropdownMenuItem render={<Link to="/admin/connection" />}>{labels.nav_connection}</DropdownMenuItem>
     </>}
   </>;
   return (

@@ -105,12 +105,16 @@ function warnForwardedIgnored(): void {
   console.warn("[client-ip] X-Forwarded-For is present but TRUSTED_PROXY_HOPS is 0, so it is ignored. Behind a reverse proxy, set TRUSTED_PROXY_HOPS to the number of proxies, or every visitor shares the proxy's address in the per-IP limits.");
 }
 
+export function forwardedForEntries(headers: Headers): string[] {
+  return (headers.get("x-forwarded-for") ?? "").split(",").map(value => value.trim()).filter(Boolean);
+}
+
 export function clientAddress(source: Request | Headers, opts: { hops?: number } = {}): string | null {
   const headers = source instanceof Headers ? source : source.headers;
   const hops = opts.hops ?? trustedProxyHops();
   if (hops === 0 && opts.hops === undefined && headers.has("x-forwarded-for")) warnForwardedIgnored();
   if (hops > 0) {
-    const forwarded = (headers.get("x-forwarded-for") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const forwarded = forwardedForEntries(headers);
     if (forwarded.length >= hops) {
       const ip = normalizeIp(forwarded[forwarded.length - hops]);
       if (ip !== null) return ip;

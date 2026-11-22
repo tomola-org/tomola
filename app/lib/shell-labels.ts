@@ -10,6 +10,7 @@ export const SHELL_LABEL_KEYS = [
   "login_title",
   "nav_admin",
   "nav_all_villages",
+  "nav_connection",
   "nav_drafts",
   "nav_following",
   "nav_glossary",
