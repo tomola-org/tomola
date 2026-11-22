@@ -305,7 +305,7 @@ it("reads only owned topic previews, marks a preview POST atomically, and clears
   }), params)));
   expect(await publish("A different draft body")).toMatchObject({ status: 409 });
   await updateDraft(h.db, ownerId, made.id, { ...input, body: "A newer server version" }, { expectedVersion: 2 });
-  expect(await publish()).toMatchObject({ status: 409, value: { data: { error: "confirmation_changed" } } });
+  expect(await publish()).toMatchObject({ status: 409, value: { data: { error: "draft_conflict" } } });
   expect(await row()).toMatchObject({ body: "A newer server version", version: 3, previewedAt: marked.previewedAt });
   const latest = (await load(as)).data;
   const published = await h.outcome(() => publishPreview(h.args(h.request(path, {

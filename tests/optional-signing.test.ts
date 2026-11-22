@@ -125,7 +125,28 @@ it("keeps last-client metadata after an MCP client updates its own draft", async
   expect(preview).toMatchObject({ signatureRequired: false, lastEditor: { id: client.id, name: client.name }, content: { body: "Last updated by MCP" } });
 });
 
-it("applies the moderator's own preference to corrections and retains the moderation action", async () => {
+it("records an unsigned moderation correction when only the author signs", async () => {
+  const moderator = "unsigned_mod";
+  const moderatorId = await h.signIn(moderator);
+  const voterId = await h.signIn("unsigned_mod_voter");
+  await h.db.insert(roles).values({ userId: moderatorId, role: "moderator", lang: "ja" });
+  const topic = await createTopic(h.db, h.ids.hana, { title: "Locked question", body: "Typoo", lang: "ja", asksStance: true });
+  if (!topic.ok) throw new Error(topic.error);
+  expect(await setStance(h.db, voterId, { questionId: topic.id, position: "agree", expectedVersion: 0 })).toMatchObject({ ok: true });
+  await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, h.ids.hana));
+  try {
+    const { loader, action } = await import("~/routes/topic-edit");
+    const params = { id: String(topic.id) }; const path = `/t/${topic.id}/edit`;
+    const loaded = await loader(h.args(h.request(path, { as: moderator }), params));
+    expect(loaded).toMatchObject({ fix: true, signPosts: false });
+    const post = h.request(path, { as: moderator, form: { title: "Locked question", body: "Typo", sourceHash: loaded.sourceHash!, note: "Corrected the spelling" } });
+    expect(await h.outcome(() => action(h.args(post, params)))).toMatchObject({ status: 302 });
+    expect(await h.db.select().from(moderationActions).where(eq(moderationActions.targetEntryId, topic.id))).toHaveLength(1);
+    expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.entryId, topic.id))).toHaveLength(0);
+  } finally { await h.db.update(profiles).set({ signPosts: false }).where(eq(profiles.userId, h.ids.hana)); }
+});
+
+it("records a signed moderation correction when only the moderator signs", async () => {
   await h.signIn("moriko"); await h.signIn("voter");
   await h.db.insert(roles).values({ userId: h.ids.moriko, role: "moderator", lang: "ja" });
   const topic = await createTopic(h.db, h.ids.hana, { title: "Locked question", body: "Typoo", lang: "ja", asksStance: true });

@@ -555,8 +555,21 @@ for (const scenario of ["editor", "preview", "native", "expired"] as const) {
         const stamp = editor.locator('input[name="confirmation"]');
         await expect(stamp).not.toHaveValue("");
         const publishPreview = editor.getByRole("button", { name: en.draft_preview_publish, exact: true });
-        if (native) await publishPreview.click();
-        else {
+        if (native) {
+          const other = await own.newPage();
+          await other.goto(draftPath);
+          text += " Updated in another tab.";
+          await body(other).fill(text);
+          await other.getByRole("button", { name: en.preview, exact: true }).click();
+          await expect(other).toHaveURL(new RegExp(`${draftPath}/preview$`));
+          const rejected = editor.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === `${draftPath}/preview`);
+          await publishPreview.click();
+          expect((await rejected).status()).toBe(409);
+          await expect(editor.getByRole("alert")).toContainText(en.draft_preview_conflict);
+          await expect(publishPreview).toBeDisabled();
+          await editor.goto(`${draftPath}/preview`);
+          await publishPreview.click();
+        } else {
           await waitForFormReady(editor.locator('form:has(input[name="confirmation"])'));
           const pageConfirmation = await stamp.inputValue();
           const response = editor.waitForResponse(response => new URL(response.url()).pathname === "/signing" && response.request().postDataJSON()?.intent === "preview");

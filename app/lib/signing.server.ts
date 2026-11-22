@@ -474,6 +474,7 @@ async function publishUnsignedDraft<T extends MutationResult>(
   const [draft] = await lockPublicationDraft(tx, userId, id);
   if (!draft) throw new SigningError("not_found", 404);
   const raw = readEntryForm(form);
+  if (fromPreview) await assertDraftPreviewForm(tx, form, userId, draft, raw);
   let publication: DraftPublication | undefined;
   if (needsDraftConfirmation(draft)) {
     const token = formString(form, DRAFT_CONFIRMATION_FIELD);
@@ -487,7 +488,6 @@ async function publishUnsignedDraft<T extends MutationResult>(
     assertDraftConfirmation(userId, token, publication, now ?? new Date());
     assertDraftVillageDisplay(publication, raw);
   }
-  if (fromPreview) await assertDraftPreviewForm(tx, form, userId, draft, raw);
   const result = await mutate(tx);
   if (publication && result.ok) {
     const [entry] = result.id === undefined ? [] : await tx.select().from(entries).where(eq(entries.id, result.id));
