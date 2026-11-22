@@ -2,7 +2,7 @@ import { addSettingsPasskey } from "./signing-helper";
 import { saveEditorDraft } from "./draft-autosave-helper";
 import { expect } from "@playwright/test";
 import { test } from "./editor-fixture";
-import { useMember, clientHeaders, enMessages, jaMessages, loginCodeFor, logSize, mailFor, state, waitForClientRoute, messageTitleField as titleField, waitForFormReady } from "./helpers";
+import { useMember, clientHeaders, enMessages, jaMessages, loginCodeFor, logSize, mailFor, messagePattern, state, waitForClientRoute, messageTitleField as titleField, waitForFormReady } from "./helpers";
 
 test("a member without passkeys publishes browser drafts and exports unsigned posts", async ({ browser }) => {
   const context = await browser.newContext({ extraHTTPHeaders: clientHeaders("10.17.1.1") });
@@ -111,7 +111,8 @@ test("passkey-only sign-in rejects a pending email code and accepts a verified p
     const beforeNotice = logSize();
     await emailPage.getByRole("button", { name: m.login_submit, exact: true }).click();
     await expect(emailPage.getByText(m.login_sent.replace("{email}", email), { exact: true })).toBeVisible();
-    const notice = await mailFor(email, beforeNotice);
+    // The notice that passkey-only sign-in was turned on is sent by a background job and can arrive after this point.
+    const notice = await mailFor(email, beforeNotice, new RegExp(`^${messagePattern(m.mail_magic_link_subject).source}$`));
     expect(notice.text.trim()).toBe(m.mail_passkey_only_login);
     await expect(codeField).toBeVisible();
 
