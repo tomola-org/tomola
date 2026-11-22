@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { test, expect, openUserMenu, state, useMember, watchCsp } from "./helpers";
 import { enMessages, waitForClientRoute } from "../e2e/helpers";
 import { beforeHydration } from "../e2e/support/prehydration";
+import { loginMethodReauthenticationPath } from "../app/lib/reauth";
 
 const enabled = process.env.E2E_GOOGLE_LOGIN === "1";
 
@@ -59,6 +60,8 @@ test("Google navigation sends no invitation Referer and cancellation preserves e
   expect(authorization!.searchParams.get("code_challenge_method")).toBe("S256");
   expect(authorization!.searchParams.has("nonce")).toBe(false);
   expect(authorization!.searchParams.has("login_hint")).toBe(false);
+  expect(authorization!.searchParams.has("prompt")).toBe(false);
+  expect(authorization!.searchParams.has("max_age")).toBe(false);
   await page.goto(`${state().baseURL}/api/auth/callback/google?error=access_denied&state=${authorization!.searchParams.get("state")}`);
   await expect(page.getByRole("alert")).toContainText(enMessages.google_failed);
   await expect(page).toHaveURL(/\/invite\?google=1&error=access_denied$/);
@@ -185,6 +188,37 @@ test("settings retain Google and adjacent control positions across hydration", a
   }
   expect(csp.violations).toEqual([]); expect(csp.pageErrors).toEqual([]);
   expect(csp.hydrationWarnings).toEqual([]);
+});
+
+test("only explicit Google reauthentication requests fresh authentication", async ({ page }) => {
+  test.skip(!enabled);
+  const start = async () => {
+    const blocked = page.waitForEvent("requestfailed", request => new URL(request.url()).hostname === "accounts.google.com");
+    await page.getByRole("button", { name: enMessages.google_continue, exact: true }).click();
+    const attempted = await blocked;
+    expect(attempted.failure()?.errorText).toContain("ERR_NAME_NOT_RESOLVED");
+    await page.waitForURL(url => url.protocol === "chrome-error:");
+    return new URL(attempted.url()).searchParams;
+  };
+  await page.goto("/login");
+  const ordinary = await start();
+  expect(ordinary.has("max_age")).toBe(false);
+  expect(ordinary.has("prompt")).toBe(false);
+
+  await useMember(page, "google_reauthentication@example.com");
+  const next = "/settings#settings-passkeys";
+  const reauth = loginMethodReauthenticationPath(next, "remove-passkey", "remaining");
+  await page.goto(reauth);
+  await expect(page.getByText(enMessages.reauth_for_remove_passkey.replace("{who}", "@google_reauthentication"), { exact: true })).toBeVisible();
+  const explicit = await start();
+  expect(explicit.get("max_age")).toBe("0");
+  expect(explicit.has("prompt")).toBe(false);
+  await page.goto(`${state().baseURL}/api/auth/callback/google?error=google_reauth&error_description=provider-detail&state=${explicit.get("state")}`);
+  await expect(page).toHaveURL(url => url.searchParams.get("error") === "google_reauth" && !url.searchParams.has("error_description"));
+  await expect(page.getByRole("heading", { name: enMessages.reauth_title, exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveText(enMessages.google_failed);
+  await expect(page.getByRole("button", { name: enMessages.google_continue, exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: enMessages.reauth_submit, exact: true })).toBeVisible();
 });
 
 test("settings show connection date and allow disconnecting while retaining email login", async ({ page }) => {

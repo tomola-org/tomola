@@ -5,6 +5,7 @@ export default [
   route("login", "routes/login.tsx"),
   route("logout", "routes/logout.tsx"),
   route("auth/confirm", "routes/auth-confirm.tsx"),
+  route("auth/recover-passkeys", "routes/auth-recover-passkeys.tsx"),
   route("invite/:token?", "routes/invite.tsx"),
   route("onboarding", "routes/onboarding.tsx"),
   route("navigation-header", "routes/navigation-header.ts"),

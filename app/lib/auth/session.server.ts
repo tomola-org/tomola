@@ -20,6 +20,7 @@ export type SessionUser = { id: string; email: string; name: string };
 // Creation time of the session that authenticated each request, for the
 // credential-freshness check below (kept out of SessionUser so it is never serialized).
 const sessionCreatedAt = new WeakMap<Request, unknown>();
+const sessionIds = new WeakMap<Request, string>();
 
 async function getSessionUserImplementation(request: Request): Promise<SessionUser | null> {
   const auth = await getAuth();
@@ -28,6 +29,7 @@ async function getSessionUserImplementation(request: Request): Promise<SessionUs
   collectSessionCookies(headers);
   if (!session || isDeletedIdentity(session.user.id, session.user.email)) return null;
   sessionCreatedAt.set(request, session.session?.createdAt);
+  if (session.session?.id) sessionIds.set(request, session.session.id);
   return { id: session.user.id, email: session.user.email, name: session.user.name };
 }
 
@@ -180,3 +182,8 @@ export const getRequestViewer = perRequest(async request => {
   const { user } = await requireMember(request);
   return { userId: user.id, scope: await getMemberScope(request) };
 }, viewer => viewer.userId);
+
+export async function loginManagementSession(request: Request): Promise<string | undefined> {
+  await getSessionUser(request);
+  return sessionIds.get(request);
+}

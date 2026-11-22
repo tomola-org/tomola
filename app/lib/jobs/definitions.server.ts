@@ -50,7 +50,7 @@ export const jobDefinitions = {
   [SEND_DIGEST_JOB]: { schema: dated, priority: 0 },
   [SEND_MEMBER_DIGEST_JOB]: { schema: dated.extend({ userId: z.string().min(1) }), priority: 0 },
   [SEND_PASSKEY_NOTICE_JOB]: {
-    schema: z.object({ userId: z.string(), action: z.enum(["added", "removed", "recovery"]), name: z.string(), at: z.string().datetime() }),
+    schema: z.object({ userId: z.string(), action: z.enum(["added", "removed", "recovery", "google_connected", "google_disconnected", "passkey_only_enabled", "passkey_only_disabled"]), name: z.string(), at: z.string().datetime(), recoveryId: z.number().int().positive().optional() }),
     priority: 0,
   },
   cleanup_jobs: { schema: dated, priority: DEFAULT_JOB_PRIORITY },

@@ -502,6 +502,7 @@ export const profiles = pgTable(
     colorScheme: text("color_scheme"),
     // Optional passkey confirmation for named writes; preference changes always require a signature.
     signPosts: boolean("sign_posts").notNull().default(false),
+    passkeyOnly: boolean("passkey_only").notNull().default(false),
     residenceCountry: text("residence_country"),
     adultConfirmedAt: timestamp("adult_confirmed_at", { withTimezone: true }),
     trialConsentVersion: integer("trial_consent_version"),
@@ -1000,7 +1001,16 @@ export const passkeyRecoveries = pgTable("passkey_recoveries", {
   userId: text("user_id").notNull().references(() => user.id),
   operatorId: text("operator_id").notNull().references(() => user.id),
   note: text("note").notNull(),
+  identityVerification: text("identity_verification"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+});
+
+export const passkeyRecoveryPermits = pgTable("passkey_recovery_permits", {
+  userId: text("user_id").primaryKey().references(() => user.id, { onDelete: "cascade" }),
+  recoveryId: bigint("recovery_id", { mode: "number" }).notNull().references(() => passkeyRecoveries.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull().unique(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
 });
 

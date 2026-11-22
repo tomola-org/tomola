@@ -5,10 +5,11 @@ import { m } from "~/paraglide/messages.js";
 
 // Server data keeps the first render stable. CSS selects the standalone note
 // before scripts run; neither variant loads Google scripts, fonts or images.
-export function GoogleLogin({ browser, next, link = false }: { browser: { blocked: boolean; url: string }; next?: string; link?: boolean }) {
+export function GoogleLogin({ browser, next, link = false, reauth = false }: { browser: { blocked: boolean; url: string }; next?: string; link?: boolean; reauth?: boolean }) {
   return <div className="google-login">
     {!browser.blocked && <Form method="post" reloadDocument className="google-login-form space-y-2">
       <input type="hidden" name="intent" value={link ? "google-link" : "google-login"} />
+      {reauth && <input type="hidden" name="reauth" value="1" />}
       {next && <input type="hidden" name="next" value={next} />}
       <Button type="submit" variant="outline">{link ? m.google_connect() : m.google_continue()}</Button>
     </Form>}

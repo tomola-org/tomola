@@ -1,84 +1,206 @@
-import { beforeAll, afterAll, describe, expect, it } from "vitest";
+import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
+import type { Tx } from "~/lib/db/client.server";
 import { eq } from "drizzle-orm";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
 import { signingCredential } from "./helpers/signing";
-import { passkeyRegistrationOptions, verifyPasskeyRegistration, recoverPasskeys, removeOwnPasskey } from "~/lib/auth/passkeys.server";
-import { passkey, profiles, session, signingChallenges, user, jobs } from "~/lib/db/schema";
+import { finishPasskeyRecovery, passkeyRegistrationOptions, recoveryRegistrationOptions, recoverPasskeys, removeOwnPasskey, setPasskeyOnly, verifyPasskeyRegistration } from "~/lib/auth/passkeys.server";
+import { jobs, passkey, passkeyRecoveries, passkeyRecoveryPermits, profiles, session, signingChallenges, verification } from "~/lib/db/schema";
 import { isAllowedAuthEndpoint } from "~/lib/auth/endpoints.server";
+import { getAuth, issuePasskeySession } from "~/lib/auth/auth.server";
+import { recoveryToken } from "~/lib/auth/passkey-recovery-token.server";
+import { lockSigningMember } from "~/lib/signing.server";
+import { hashMagicLinkToken } from "~/lib/auth/plugins";
+import { createMemoryMailbox } from "~/lib/mail/transports.server";
+import { createMailer } from "~/lib/mail/mail.server";
+import { createPasskeyHandlers } from "~/lib/jobs/passkey-jobs.server";
+import { runDueJobs } from "~/lib/jobs/queue.server";
+import { SEND_PASSKEY_NOTICE_JOB } from "~/lib/jobs/mail-kinds";
+
+vi.mock("~/paraglide/messages.js", async () => ({ m: (await import("./helpers/messages-json")).jsonMessages() }));
+
 let h: RouteHarness;
-beforeAll(async () => { h = await setupRouteHarness(); await h.signIn("hana"); await h.signIn("kim"); await h.signIn("boss", { email: "boss@example.com" }); });
+beforeAll(async () => { h = await setupRouteHarness(); });
 afterAll(() => h.restore());
+const member = async (handle: string) => {
+  const userId = await h.signIn(handle);
+  const [current] = await h.db.select().from(session).where(eq(session.userId, userId));
+  return { userId, sessionId: current.id };
+};
+const usePasskeyProof = (sessionId: string) => h.db.update(session).set({ loginMethod: "passkey", reauthenticationMethod: "passkey", reauthenticatedAt: new Date() }).where(eq(session.id, sessionId));
+const remove = (userId: string, id: string, sessionId: string) => h.db.transaction(async tx => {
+  await lockSigningMember(tx, userId);
+  return removeOwnPasskey(tx, userId, id, sessionId);
+});
+const notices = async (userId: string) => (await h.db.select().from(jobs).where(eq(jobs.kind, SEND_PASSKEY_NOTICE_JOB))).map(row => row.payload as { userId: string; action: string }).filter(payload => payload.userId === userId).map(payload => payload.action);
+
 describe("passkey lifecycle barriers", () => {
-  it("closes both Better Auth HTTP registration paths", () => {
+  it("closes Better Auth registration and internal session issuance over HTTP", () => {
     expect(isAllowedAuthEndpoint(new Request("http://localhost:5173/api/auth/passkey/generate-register-options"))).toBe(false);
     expect(isAllowedAuthEndpoint(new Request("http://localhost:5173/api/auth/passkey/verify-registration", { method: "POST" }))).toBe(false);
+    expect(isAllowedAuthEndpoint(new Request("http://localhost:5173/api/auth/tomola/passkey-session", { method: "POST" }))).toBe(false);
   });
+
   it("requires user verification for first enrollment and offers hybrid-capable options", async () => {
-    const options = await passkeyRegistrationOptions(h.db, h.ids.kim, "First key");
-    expect(options.needsProof).toBe(false);
+    const { userId, sessionId } = await member("first_key");
+    const options = await passkeyRegistrationOptions(h.db, userId, sessionId, "First key");
     if (options.needsProof) throw new Error("Expected registration");
     expect(options.options.authenticatorSelection).toMatchObject({ residentKey: "required", userVerification: "required" });
     expect(options.options.authenticatorSelection?.authenticatorAttachment).toBeUndefined();
   });
-  it("requires an existing UV assertion before issuing additional-key creation options", async () => {
-    const key = await signingCredential(h.db, h.ids.hana);
-    const options = await passkeyRegistrationOptions(h.db, h.ids.hana, "Additional key");
-    expect(options.needsProof).toBe(true);
-    if (!options.needsProof) throw new Error("Expected proof");
-    expect(options.options.userVerification).toBe("required");
-    await expect(passkeyRegistrationOptions(h.db, h.ids.hana, "Additional key", { challenge: options.challenge, assertion: key.assert(options.options.challenge, { uv: false }) })).rejects.toMatchObject({ status: 403 });
-    const created = await passkeyRegistrationOptions(h.db, h.ids.hana, "Additional key", { challenge: options.challenge, assertion: key.assert(options.options.challenge) });
-    expect(created.needsProof).toBe(false);
-    await expect(passkeyRegistrationOptions(h.db, h.ids.hana, "Additional key", { challenge: options.challenge, assertion: key.assert(options.options.challenge) })).rejects.toMatchObject({ status: 403 });
-    expect((await h.db.select().from(signingChallenges).where(eq(signingChallenges.challenge, options.challenge)))[0].usedAt).not.toBeNull();
-  });
-  it("cannot delete the last passkey or treat a previously enrolled account as new", async () => {
-    const keys = await h.db.select().from(passkey).where(eq(passkey.userId, h.ids.hana));
-    await expect(removeOwnPasskey(h.db, h.ids.hana, keys[0].id)).rejects.toMatchObject({ status: 409 });
-    await h.db.delete(passkey).where(eq(passkey.userId, h.ids.hana));
-    await expect(passkeyRegistrationOptions(h.db, h.ids.hana, "Bypass key")).rejects.toMatchObject({ status: 409 });
-  });
-  it("requires an operator, an identity-check explanation, and revokes every session on recovery", async () => {
-    await expect(recoverPasskeys(h.db, { id: h.ids.kim, email: "kim@example.com" }, h.ids.hana, "Verified outside email" )).rejects.toMatchObject({ status: 403 });
-    const previous = process.env.OPERATOR_EMAILS; process.env.OPERATOR_EMAILS = "boss@example.com";
-    try {
-      await expect(recoverPasskeys(h.db, { id: h.ids.kim, email: "boss@example.com" }, h.ids.hana, "Forged operator email" )).rejects.toMatchObject({ status: 403 });
-      await expect(recoverPasskeys(h.db, { id: h.ids.boss, email: "boss@example.com" }, h.ids.hana, "short")).rejects.toMatchObject({ status: 400 });
-      const recovery = await recoverPasskeys(h.db, { id: h.ids.boss, email: "boss@example.com" }, h.ids.hana, "Verified identity independently");
-      expect(recovery.expiresAt.getTime() - Date.now()).toBeGreaterThan(29 * 60 * 1000);
-      expect(await h.db.select().from(session).where(eq(session.userId, h.ids.hana))).toHaveLength(0);
-      expect((await passkeyRegistrationOptions(h.db, h.ids.hana, "Recovered key")).needsProof).toBe(false);
-      expect((await h.db.select().from(profiles).where(eq(profiles.userId, h.ids.hana)))[0].passkeyEnrolledAt).not.toBeNull();
-      expect((await h.db.select().from(jobs).where(eq(jobs.kind, "send_passkey_notice")))).toHaveLength(1);
-      await h.db.update(profiles).set({ passkeyRecoveryUntil: new Date(Date.now() - 1) }).where(eq(profiles.userId, h.ids.hana));
-      await expect(passkeyRegistrationOptions(h.db, h.ids.hana, "Expired recovery")).rejects.toMatchObject({ status: 409 });
-    } finally { process.env.OPERATOR_EMAILS = previous; }
-  });
-  it("serializes successful first registrations, then enrolls an additional key only after existing-key UV proof", async () => {
-    await h.signIn("enrollment_race");
-    const userId = h.ids.enrollment_race;
-    const first = await passkeyRegistrationOptions(h.db, userId, "First");
-    const second = await passkeyRegistrationOptions(h.db, userId, "Racing first");
-    if (first.needsProof || second.needsProof) throw new Error("Unexpected enrolled account");
-    const key1 = await signingCredential(h.db, userId, { enroll: false });
-    const key2 = await signingCredential(h.db, userId, { enroll: false });
-    const results = await Promise.allSettled([
-      verifyPasskeyRegistration(h.db, userId, first.challenge, key1.register(first.options.challenge)),
-      verifyPasskeyRegistration(h.db, userId, second.challenge, key2.register(second.options.challenge)),
-    ]);
-    expect(results.filter(r => r.status === "fulfilled")).toHaveLength(1);
-    expect(results.filter(r => r.status === "rejected")).toHaveLength(1);
-    const keys = await h.db.select().from(passkey).where(eq(passkey.userId, userId));
-    expect(keys).toHaveLength(1);
-    const existing = keys[0].credentialID === key1.id ? key1 : key2;
-    const proof = await passkeyRegistrationOptions(h.db, userId, "Additional");
-    if (!proof.needsProof) throw new Error("Expected existing-key proof");
-    const approved = await passkeyRegistrationOptions(h.db, userId, "Additional", { challenge: proof.challenge, assertion: existing.assert(proof.options.challenge) });
-    if (approved.needsProof) throw new Error("Expected registration options");
+
+  it("requires fresh passkey verification and an existing UV assertion for protected enrollment", async () => {
+    const { userId, sessionId } = await member("protected_add");
+    const key = await signingCredential(h.db, userId);
+    await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, userId));
+    await expect(passkeyRegistrationOptions(h.db, userId, sessionId, "Additional")).rejects.toMatchObject({ code: "SESSION_NOT_FRESH" });
+    await usePasskeyProof(sessionId);
+    const proof = await passkeyRegistrationOptions(h.db, userId, sessionId, "Additional");
+    if (!proof.needsProof) throw new Error("Expected proof");
+    expect(proof.options.userVerification).toBe("required");
+    const submit = (uv = true) => passkeyRegistrationOptions(h.db, userId, sessionId, "Additional", { challenge: proof.challenge, assertion: key.assert(proof.options.challenge, { uv }) });
+    await expect(submit(false)).rejects.toMatchObject({ status: 403 });
+    const approved = await submit();
+    if (approved.needsProof) throw new Error("Expected registration");
+    await expect(submit()).rejects.toMatchObject({ status: 403 });
     const additional = await signingCredential(h.db, userId, { enroll: false });
-    expect(await verifyPasskeyRegistration(h.db, userId, approved.challenge, additional.register(approved.options.challenge))).toMatchObject({ ok: true });
-    expect(await h.db.select().from(passkey).where(eq(passkey.userId, userId))).toHaveLength(2);
-    expect((await h.db.select().from(jobs).where(eq(jobs.kind, "send_passkey_notice"))).some(j => (j.payload as { userId?: string; action?: string }).userId === userId && (j.payload as { action?: string }).action === "added")).toBe(true);
+    expect(await verifyPasskeyRegistration(h.db, userId, sessionId, approved.challenge, additional.register(approved.options.challenge))).toMatchObject({ ok: true });
+    expect(await notices(userId)).toEqual(["added"]);
   });
 
+  it("keeps the last protected key and requires operator recovery if a protected member loses all keys", async () => {
+    const { userId, sessionId } = await member("protected_last");
+    const key = await signingCredential(h.db, userId);
+    await h.db.update(profiles).set({ passkeyOnly: true }).where(eq(profiles.userId, userId));
+    await usePasskeyProof(sessionId);
+    await expect(remove(userId, key.id, sessionId)).rejects.toMatchObject({ code: "last_passkey" });
+    await h.db.delete(passkey).where(eq(passkey.userId, userId));
+    await expect(passkeyRegistrationOptions(h.db, userId, sessionId, "New key")).rejects.toMatchObject({ code: "operator_recovery_required" });
+  });
+
+  it.each(["email_link", "email_code"])("allows removing the last unprotected key after reauthentication with %s", async method => {
+    const { userId, sessionId } = await member(`unprotected_${method}`);
+    const key = await signingCredential(h.db, userId);
+    await usePasskeyProof(sessionId);
+    await expect(remove(userId, key.id, sessionId)).rejects.toMatchObject({ code: "remaining_login_required" });
+    await h.db.update(session).set({ reauthenticationMethod: method, reauthenticatedAt: new Date(Date.now() - 601_000) }).where(eq(session.id, sessionId));
+    await expect(remove(userId, key.id, sessionId)).rejects.toMatchObject({ code: "remaining_login_required" });
+    await h.db.update(session).set({ reauthenticatedAt: new Date() }).where(eq(session.id, sessionId));
+    expect(await remove(userId, key.id, sessionId)).toEqual({ ok: true });
+    expect((await passkeyRegistrationOptions(h.db, userId, sessionId, "Replacement")).needsProof).toBe(false);
+    expect(await notices(userId)).toEqual(["removed"]);
+  });
+
+  it("serializes first registrations and lets ordinary members add another passkey without existing-key proof", async () => {
+    const { userId, sessionId } = await member("enrollment_race");
+    const attempts = await Promise.all(["First", "Racing first"].map(async name => ({
+      options: await passkeyRegistrationOptions(h.db, userId, sessionId, name), key: await signingCredential(h.db, userId, { enroll: false }),
+    })));
+    const results = await Promise.allSettled(attempts.map(({ options, key }) => verifyPasskeyRegistration(h.db, userId, sessionId, options.challenge, key.register(options.options.challenge))));
+    expect(results.map(result => result.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect((await passkeyRegistrationOptions(h.db, userId, sessionId, "Additional")).needsProof).toBe(false);
+    expect(await notices(userId)).toEqual(["added"]);
+  });
+
+  it("rotates the current session and clears other sessions and outstanding email credentials when enabled", async () => {
+    const { userId, sessionId } = await member("login_only");
+    const auth = await getAuth();
+    const adapter = (await auth.$context).internalAdapter;
+    await adapter.createSession(userId);
+    const pending = await h.issueLink("login_only@example.com");
+    const key = await signingCredential(h.db, userId);
+    const rotate = (tx: Tx, at: Date) => issuePasskeySession(auth, tx, userId, at);
+    await expect(setPasskeyOnly(h.db, userId, sessionId, true, rotate)).rejects.toMatchObject({ code: "SESSION_NOT_FRESH" });
+    await usePasskeyProof(sessionId);
+    await expect(setPasskeyOnly(h.db, userId, sessionId, true, rotate)).rejects.toMatchObject({ code: "passkey_backup_required" });
+    await h.db.update(passkey).set({ backedUp: true }).where(eq(passkey.id, key.id));
+    const headers = await setPasskeyOnly(h.db, userId, sessionId, true, rotate);
+    expect(headers?.getSetCookie().some(cookie => cookie.includes("session_token="))).toBe(true);
+    const rows = await h.db.select().from(session).where(eq(session.userId, userId));
+    expect(rows).toMatchObject([{ loginMethod: "passkey", reauthenticationMethod: "passkey" }]);
+    expect(rows[0].id).not.toBe(sessionId);
+    expect((await h.db.select().from(verification)).filter(row => row.identifier.endsWith(`:${hashMagicLinkToken(pending)}`))).toEqual([]);
+    await expect(adapter.createSession(userId)).rejects.toMatchObject({ statusCode: 401 });
+    await expect(setPasskeyOnly(h.db, userId, sessionId, false, rotate)).rejects.toMatchObject({ code: "SESSION_NOT_FRESH" });
+    await setPasskeyOnly(h.db, userId, rows[0].id, false, rotate);
+    expect((await notices(userId)).sort()).toEqual(["passkey_only_disabled", "passkey_only_enabled"]);
+  });
+
+  it("invalidates earlier recovery work and commits the replacement key, permit and passkey session together", async () => {
+    const { userId, sessionId } = await member("recoverable");
+    const other = await member("ordinary_recovery");
+    const boss = await member("recovery_operator");
+    const operator = { id: boss.userId, email: "recovery_operator@example.com" };
+    const key = await signingCredential(h.db, userId);
+    const pending = await passkeyRegistrationOptions(h.db, userId, sessionId, "Pending");
+    await h.db.update(profiles).set({ passkeyOnly: true }).where(eq(profiles.userId, userId));
+    const previous = process.env.OPERATOR_EMAILS;
+    process.env.OPERATOR_EMAILS = operator.email;
+    try {
+      const run = (id: string, evidence = "Verified by a call to the known number") => recoverPasskeys(h.db, operator, id, "All passkeys were lost", evidence);
+      await expect(run(other.userId)).rejects.toMatchObject({ code: "recovery_not_available" });
+      await expect(run(userId, "")).rejects.toMatchObject({ code: "recovery_verification_required" });
+      await expect(recoverPasskeys(h.db, { ...operator, id: other.userId }, userId, "All passkeys were lost", "Forged operator")).rejects.toMatchObject({ code: "operator_required" });
+      await run(userId);
+      const [older] = await h.db.select().from(passkeyRecoveries).where(eq(passkeyRecoveries.userId, userId));
+      const oldToken = recoveryToken(userId, older.id);
+      const oldOptions = await recoveryRegistrationOptions(h.db, oldToken);
+      const recovery = await run(userId);
+      const [current] = (await h.db.select().from(passkeyRecoveries).where(eq(passkeyRecoveries.userId, userId))).filter(row => row.id !== older.id);
+      expect(current.identityVerification).toBe("Verified by a call to the known number");
+      const token = recoveryToken(userId, current.id);
+      const mailbox = createMemoryMailbox();
+      const handlers = createPasskeyHandlers(() => createMailer(mailbox.transport, "tomola <no-reply@example.org>"));
+      await runDueJobs(h.db, handlers);
+      const recoveryMail = mailbox.sent.filter(mail => mail.text.includes("/auth/recover-passkeys"));
+      expect(recoveryMail).toHaveLength(1);
+      expect(recoveryMail[0].subject).toBe("tomola のログインの設定が変わりました");
+      expect(recoveryMail[0].text).toContain(`/auth/recover-passkeys#${token}`);
+      expect(recoveryMail[0].text).not.toContain(oldToken);
+      await expect(recoveryRegistrationOptions(h.db, oldToken)).rejects.toMatchObject({ code: "invalid_recovery_permit" });
+      await expect(recoveryRegistrationOptions(h.db, token, recovery.expiresAt)).rejects.toMatchObject({ code: "invalid_recovery_permit" });
+      expect(await h.db.select().from(session).where(eq(session.userId, userId))).toEqual([]);
+      expect(await h.db.select().from(passkey).where(eq(passkey.id, key.id))).toEqual([]);
+      for (const challenge of [pending.challenge, oldOptions.challenge]) expect((await h.db.select().from(signingChallenges).where(eq(signingChallenges.challenge, challenge)))[0].usedAt).not.toBeNull();
+      const options = await recoveryRegistrationOptions(h.db, token);
+      const replacement = await signingCredential(h.db, userId, { enroll: false });
+      const registration = replacement.register(options.options.challenge);
+      await expect(finishPasskeyRecovery(h.db, token, options.challenge, replacement.register(options.options.challenge, { uv: false }), async () => { throw new Error("Session must not be issued"); })).rejects.toMatchObject({ code: "invalid_registration" });
+      await expect(finishPasskeyRecovery(h.db, token, options.challenge, registration, async () => { throw new Error("Session failed"); })).rejects.toThrow("Session failed");
+      expect(await h.db.select().from(passkey).where(eq(passkey.userId, userId))).toEqual([]);
+      expect(await h.db.select().from(session).where(eq(session.userId, userId))).toEqual([]);
+      expect(await h.db.select().from(passkeyRecoveryPermits).where(eq(passkeyRecoveryPermits.userId, userId))).toHaveLength(1);
+      expect(await h.db.select().from(passkeyRecoveries).where(eq(passkeyRecoveries.id, current.id))).toMatchObject([{ completedAt: null }]);
+      const auth = await getAuth();
+      const headers = await finishPasskeyRecovery(h.db, token, options.challenge, registration, (tx, id, at, credentialId) => issuePasskeySession(auth, tx, id, at, credentialId));
+      expect(headers.getSetCookie().some(cookie => cookie.includes("session_token="))).toBe(true);
+      expect(await h.db.select().from(session).where(eq(session.userId, userId))).toMatchObject([{ loginMethod: "passkey", reauthenticationMethod: "passkey" }]);
+      expect(await h.db.select().from(profiles).where(eq(profiles.userId, userId))).toMatchObject([{ passkeyOnly: true }]);
+      expect(await h.db.select().from(passkeyRecoveries).where(eq(passkeyRecoveries.id, current.id))).toMatchObject([{ completedAt: expect.any(Date) }]);
+      expect(await h.db.select().from(passkeyRecoveries).where(eq(passkeyRecoveries.id, older.id))).toMatchObject([{ completedAt: null }]);
+      await expect(recoveryRegistrationOptions(h.db, token)).rejects.toMatchObject({ code: "invalid_recovery_permit" });
+    } finally { if (previous === undefined) delete process.env.OPERATOR_EMAILS; else process.env.OPERATOR_EMAILS = previous; }
+  });
+
+  it("warns without mailing when the current recovery permit hash mismatches", async () => {
+    const { userId } = await member("recovery_bad_hash");
+    const boss = await member("recovery_hash_operator");
+    const operator = { id: boss.userId, email: "recovery_hash_operator@example.com" };
+    const previous = process.env.OPERATOR_EMAILS;
+    process.env.OPERATOR_EMAILS = operator.email;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await h.db.update(profiles).set({ passkeyOnly: true }).where(eq(profiles.userId, userId));
+      await recoverPasskeys(h.db, operator, userId, "All passkeys were lost", "Verified by a call to the known number");
+      const [permit] = await h.db.update(passkeyRecoveryPermits).set({ tokenHash: "incorrect-fixture-hash" }).where(eq(passkeyRecoveryPermits.userId, userId)).returning();
+      const mailbox = createMemoryMailbox();
+      await runDueJobs(h.db, createPasskeyHandlers(() => createMailer(mailbox.transport, "tomola <no-reply@example.org>")));
+      expect(mailbox.sent.filter(mail => mail.to === "recovery_bad_hash@example.com")).toEqual([]);
+      expect(warn.mock.calls).toContainEqual(["[passkey-recovery] active permit hash does not match the delivery job"]);
+      expect(warn.mock.calls.flat().join(" ")).not.toContain(permit.tokenHash);
+    } finally {
+      warn.mockRestore();
+      if (previous === undefined) delete process.env.OPERATOR_EMAILS;
+      else process.env.OPERATOR_EMAILS = previous;
+    }
+  });
 });

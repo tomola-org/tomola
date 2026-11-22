@@ -553,7 +553,7 @@ test("the glossary opens for every member under the CSP, and the YAML download i
   expectClean(bossCsp, mikaCsp);
 });
 
-test("an optional passkey logs in under CSP and the last key cannot be removed", async () => {
+test("an optional passkey logs in under CSP and removing the last key requires email reauthentication", async () => {
   const { client: cdp, authenticatorId } = await enableSigningAuthenticator(boss);
   await boss.goto("/settings");
   await boss.getByRole("button", { name: enMessages.settings_passkeys_add, exact: true }).click();
@@ -567,7 +567,9 @@ test("an optional passkey logs in under CSP and the last key cannot be removed",
   await expect(boss.locator('[data-member-menu-trigger][title="@boss"]')).toBeVisible();
   expect(mailCount()).toBe(mailsBefore);
   await boss.goto("/settings");
-  await expect(boss.getByRole("button", { name: enMessages.settings_passkeys_remove, exact: true })).toBeDisabled();
+  await boss.getByRole("link", { name: enMessages.settings_passkeys_remove, exact: true }).click();
+  await expect(boss.getByRole("heading", { name: enMessages.reauth_title, exact: true })).toBeVisible();
+  await expect(boss.getByRole("button", { name: enMessages.reauth_submit, exact: true })).toBeVisible();
   expectClean(bossCsp);
 });
 

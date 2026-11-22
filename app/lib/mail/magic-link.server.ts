@@ -27,3 +27,8 @@ export function magicLinkMail(input: { to: string; url: string; code: string; lo
     ? { to: input.to, locale: input.locale, subject: m.mail_invite_subject({}, options), text: m.mail_invite_body(values, options) }
     : { to: input.to, locale: input.locale, subject: m.mail_magic_link_subject({}, options), text: m.mail_magic_link_body(values, options) };
 }
+
+export function passkeyOnlyLoginMail(to: string, locale: Locale): MailMessage {
+  const options = { locale };
+  return { to, locale, subject: m.mail_magic_link_subject({}, options), text: m.mail_passkey_only_login({}, options) };
+}

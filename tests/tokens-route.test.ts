@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { signOpenInAiToken, verifyOpenInAiToken } from "~/lib/open-in-ai.server";
 import { authenticateToken, createApiToken, listApiTokens, MAX_ACTIVE_TOKENS } from "~/lib/tokens.server";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
+import { eq } from "drizzle-orm";
+import { apiTokens, oauthClient, oauthConsent } from "~/lib/db/schema";
 
 let h: RouteHarness;
 beforeAll(async () => {
@@ -103,4 +105,18 @@ describe("settings: invalidate the Open in AI links", () => {
     expect((await h.outcome(() => action(h.args(h.request("/settings", { as: "hana", form: { intent: "revoke-ai-links" }, headers: { origin: "https://evil.example" } }))))).status).toBe(403);
     expect(await h.outcome(() => action(h.args(h.request("/settings", { form: { intent: "revoke-ai-links" } }))))).toMatchObject({ status: 302, location: "/login" });
   });
+});
+
+it("counts only the member's active credentials before enabling passkey-only login", async () => {
+  const userId = await h.signIn("credential_counts");
+  const { loader } = await import("~/routes/settings");
+  const remaining = async () => (await loader(h.args(h.request("/settings", { as: "credential_counts" })))).login.remaining;
+  expect(await remaining()).toEqual({ tokens: 0, connections: 0 });
+  for (const name of ["active", "also active", "revoked", "expired"]) await createApiToken(h.db, userId, { name, kind: "draft" });
+  await h.db.update(apiTokens).set({ revokedAt: new Date() }).where(eq(apiTokens.name, "revoked"));
+  await h.db.update(apiTokens).set({ expiresAt: new Date(0) }).where(eq(apiTokens.name, "expired"));
+  const clientId = "credential-counts-client";
+  await h.db.insert(oauthClient).values({ id: clientId, clientId, redirectUris: ["https://client.example/callback"] });
+  await h.db.insert(oauthConsent).values({ id: "credential-counts-grant", clientId, userId, scopes: ["read"], createdAt: new Date(), updatedAt: new Date() });
+  expect(await remaining()).toEqual({ tokens: 2, connections: 1 });
 });

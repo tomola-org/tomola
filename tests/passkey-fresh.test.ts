@@ -39,14 +39,15 @@ it("tells the layout and settings loaders whether the session is fresh, and send
   expect(fresh.html).not.toContain(reauth);
   expect(await settingsLoader(h.args(h.request("/settings", { as: "pf_member" })))).toMatchObject({ credentialFresh: true });
 
-  await h.db.update(session).set({ createdAt: new Date(Date.now() - CREDENTIAL_FRESH_MS - 60_000) }).where(eq(session.userId, h.ids.pf_member));
+  await h.db.update(session).set({ reauthenticatedAt: new Date(Date.now() - 11 * 60_000) }).where(eq(session.userId, h.ids.pf_member));
   const stale = await renderPrompt();
-  expect(stale.data.credentialFresh).toBe(false);
+  expect(stale.data.credentialFresh).toBe(true);
+  expect(stale.data.passkeyEnrollmentFresh).toBe(false);
   expect(stale.html).toContain(reauth);
   expect(stale.html).toContain(messageMarkup(m.passkey_prompt_register()));
-  expect(await settingsLoader(h.args(h.request("/settings", { as: "pf_member" })))).toMatchObject({ credentialFresh: false });
+  expect(await settingsLoader(h.args(h.request("/settings", { as: "pf_member" })))).toMatchObject({ credentialFresh: true, login: { fresh: false } });
 
-  // The server check is unchanged: an older session still cannot start a registration.
+  // The short confirmation window expires while the ordinary credential session remains fresh.
   const refused = await enrollAction(h.args(new Request("http://localhost:5173/passkeys", {
     method: "POST", headers: { origin: "http://localhost:5173", "content-type": "application/json", cookie: h.request("/", { as: "pf_member" }).headers.get("cookie")! }, body: JSON.stringify({ intent: "options", name: "laptop" }),
   })));

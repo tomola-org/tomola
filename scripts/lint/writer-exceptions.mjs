@@ -11,6 +11,7 @@ export const WRITER_EXCEPTIONS = {
       "api.auth.ts": "the Better Auth handler: only explicit passkey/OAuth endpoints pass; each authenticates its own credential",
       "api.drafts.ts": "token-authenticated; handleDraftCreate calls getWriter (checked in this file)",
       "auth-confirm.tsx": "before login: uses the magic link token",
+      "auth-recover-passkeys.tsx": "before login: a one-time permit authorizes registration with user verification",
       "follow.ts": "follows or unfollows a topic for the member's own notifications: not posting (a suspended member may still unfollow)",
       "home.tsx": "updates the member’s own home reading preference",
       "invite.tsx": "before login: sends the login link for an invitation",

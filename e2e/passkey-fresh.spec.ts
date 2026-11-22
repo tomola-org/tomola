@@ -81,7 +81,7 @@ test("an older session adds a passkey from settings after re-verifying by email"
       await add.scrollIntoViewIfNeeded();
       await captureScreenshot(page, { fullPage: false }, `passkey-settings-before-${width}`);
     }
-    await expect(add).toHaveAttribute("href", "/login?reauth=1&next=%2Fsettings%3Fpasskey%3Dcontinue-settings%23settings-passkeys");
+    await expect(add).toHaveAttribute("href", "/login?reauth=1&next=%2Fsettings%3Fpasskey%3Dcontinue-settings%23settings-passkeys&purpose=add-passkey");
     await expect(page.locator("#settings-passkeys").getByRole("button", { name: m.settings_passkeys_add, exact: true })).toHaveCount(0);
     await add.click();
     await reverify(page, email);

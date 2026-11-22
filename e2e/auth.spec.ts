@@ -228,7 +228,7 @@ test("an unregistered address is told so, an invited one gets the code screen, a
       }).toPass({ timeout: 60_000 });
     };
     // This scenario owns its unconsumed invitation; other suites use their own members.
-    // Keep pat's requests to the one in the first test, away from the per-email limit of 5 per 15 minutes.
+    // Keep these requests off pat's address because the per-email/IP limit is 5 per 15 minutes.
     await ask("stranger@example.com", enMessages.login_not_registered);
     await expect(p.getByLabel(enMessages.login_email, { exact: true })).toHaveValue("stranger@example.com");
     await expect(p.getByRole("heading", { name: enMessages.login_code_heading, exact: true })).toHaveCount(0);
@@ -245,9 +245,9 @@ test("authentication routing blocks unused sign-in and serves passkey options", 
   expect((await site.get("/api/auth/passkey/generate-authenticate-options")).status()).toBe(200);
 });
 
-test("a member adds a passkey, logs in with it, and retains the last key (Chromium's virtual authenticator)", async () => {
-  // Use the member still signed in from the first test: login was within one day, so passkey registration is allowed. Do not request more email here
-  // because the per-email limit is 5 per 15 minutes.
+test("a member signs in with a passkey and confirms its removal by email link", async () => {
+  // Use the member still signed in with a recent email login from the earlier tests.
+  // Do not request more email from the shared browser IP because the per-email/IP limit is 5 per 15 minutes.
   await page.goto("/");
   await expect(page.locator('[data-member-menu-trigger][title="@pat"]')).toBeVisible();
 
@@ -261,7 +261,7 @@ test("a member adds a passkey, logs in with it, and retains the last key (Chromi
   // Check the authenticator credential count to determine whether registration succeeded and avoid duplicate retries.
   await expect(async () => {
     await page.goto("/settings");
-    await expect(page.getByRole("heading", { name: enMessages.settings_passkeys_heading })).toBeVisible();
+    await expect(page.getByRole("heading", { name: enMessages.settings_passkeys_heading, exact: true })).toBeVisible();
     if ((await cdp.send("WebAuthn.getCredentials", { authenticatorId })).credentials.length === 0) {
       await page.getByLabel(/^Name \(optional/).fill("e2e key");
       await page.getByRole("button", { name: enMessages.settings_passkeys_add }).click();
@@ -284,13 +284,28 @@ test("a member adds a passkey, logs in with it, and retains the last key (Chromi
   }).toPass({ timeout: 60_000 });
   await expect(page).toHaveURL(/\/settings\?return-check=1$/);
   expect((await context.cookies()).some(cookie => cookie.name === hostCookieName("tomola.reading-return"))).toBe(false);
-  expect(mails(mailsBefore)).not.toContain("[mail]");
+  expect(mails(mailsBefore)).not.toContain(`subject=${enMessages.mail_magic_link_subject}\n`);
   // Sessions retain neither IP addresses nor user agents; the DB lives in the server. Here verify only that login persists.
   await page.goto("/settings");
   await expect(page.getByRole("listitem").filter({ hasText: "e2e key" })).toBeVisible();
 
-  // A member must retain one key; losing every key requires operator recovery.
-  await expect(page.getByRole("listitem").filter({ hasText: "e2e key" }).getByRole("button", { name: enMessages.settings_passkeys_remove })).toBeDisabled();
+  const keys = page.locator("#settings-passkeys");
+  const removeName = { name: enMessages.settings_passkeys_remove, exact: true };
+  await keys.getByRole("link", removeName).click();
+  await expect(page.getByText(enMessages.reauth_for_remove_passkey.replace("{who}", "@pat"), { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: enMessages.login_passkey, exact: true })).toHaveCount(0);
+  await page.setExtraHTTPHeaders(clientHeaders("10.1.0.31"));
+  try {
+    await confirmMagicLink(page, await requestMagicLink(page, "pat@example.com"));
+  } finally {
+    await page.setExtraHTTPHeaders(clientHeaders("10.1.0.1"));
+  }
+  await expect(page).toHaveURL(/\/settings#settings-passkeys$/);
+  await waitForClientRoute(page);
+  page.once("dialog", dialog => dialog.accept());
+  await keys.getByRole("button", removeName).click();
+  await expect(keys.getByText(enMessages.settings_passkeys_removed, { exact: true })).toBeVisible();
+  await expect(keys.getByText(enMessages.settings_passkeys_none, { exact: true })).toBeVisible();
 
   await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
   await cdp.send("WebAuthn.disable");

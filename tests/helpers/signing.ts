@@ -16,11 +16,11 @@ export async function signingCredential(db: Db, userId: string, opts: { counterZ
   await db.update(profiles).set({ passkeyEnrolledAt: new Date() }).where(eq(profiles.userId, userId));
   }
   let counter = 0;
-  return { id, publicKey, register(challenge: string): RegistrationResponseJSON {
+  return { id, publicKey, register(challenge: string, options: { uv?: boolean } = {}): RegistrationResponseJSON {
     const clientDataJSON = Buffer.from(JSON.stringify({ type: "webauthn.create", challenge, origin: "http://localhost:5173", crossOrigin: false }));
     const authData = Buffer.alloc(55);
     createHash("sha256").update("localhost").digest().copy(authData);
-    authData[32] = 0x45;
+    authData[32] = options.uv === false ? 0x41 : 0x45;
     authData.writeUInt16BE(32, 53);
     const bytes = Buffer.concat([authData, Buffer.from(id, "base64url"), publicKey]);
     const attestationObject = Buffer.concat([Buffer.from("a363666d74646e6f6e656761747453746d74a0686175746844617461", "hex"), Buffer.from([0x58, bytes.length]), bytes]);

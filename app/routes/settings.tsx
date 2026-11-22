@@ -30,13 +30,13 @@ import { LocaleSwitcher } from "~/components/locale-switcher";
 import { OpenInAiSettings } from "~/components/open-in-ai-settings";
 import { PasskeySettings } from "~/components/passkey-settings";
 import { PasskeyPrompt } from "~/components/passkey-prompt";
-import { getAuth } from "~/lib/auth/auth.server";
+import { bindAuthToDatabase, getAuth, issuePasskeySession } from "~/lib/auth/auth.server";
 import { googleLoginConfig } from "~/lib/auth/google-config.server";
 import { googleBrowserFromRequest } from "~/lib/auth/google-browser";
 import { GoogleLogin } from "~/components/google-login";
-import { reauthenticationPath } from "~/lib/reauth";
+import { loginMethodReauthenticationPath } from "~/lib/reauth";
 import { isAPIError } from "better-auth/api";
-import { getCredentialSessionFresh, requireMember, requireWriter } from "~/lib/auth/session.server";
+import { getCredentialSessionFresh, loginManagementSession, requireMember, requireWriter } from "~/lib/auth/session.server";
 import { getWriter } from "~/lib/members.server";
 import { formString } from "~/lib/entry-form.server";
 import { assertSameOrigin } from "~/lib/http/csrf.server";
@@ -47,10 +47,14 @@ import { revokeOpenInAiLinks } from "~/lib/open-in-ai.server";
 import { EMAIL_PREFS } from "~/lib/notifications";
 import { changeHandle, changeHomeArea, nextHandleChangeAt, nextHomeAreaChangeAt, setEmailPref, updatePreferences } from "~/lib/profiles.server";
 import { HOME_AREA_CHANGE_DAYS } from "~/lib/profile-settings";
-import { removeOwnPasskey } from "~/lib/auth/passkeys.server";
-import { SigningFailureResponse, signingPreferenceValue, withSignedWrite } from "~/lib/signing.server";
-import { and, eq } from "drizzle-orm";
-import { account, entries, profiles } from "~/lib/db/schema";
+import { enqueuePasskeyNotice, removeOwnPasskey, setPasskeyOnly } from "~/lib/auth/passkeys.server";
+import { lockSigningMember, SigningError, SigningFailureResponse, signingPreferenceValue, withSignedWrite } from "~/lib/signing.server";
+import { hasBackupPasskeys, protectedLogin } from "~/lib/auth/login-method.server";
+import { loginReauthentication, requireLoginReauthentication } from "~/lib/auth/login-reauthentication.server";
+import { revokeAllCredentials } from "~/lib/auth/revoke-credentials.server";
+import { LoginMethodSettings } from "~/components/login-method-settings";
+import { and, eq, gt, isNull, or } from "drizzle-orm";
+import { account, apiTokens, entries, oauthConsent, profiles } from "~/lib/db/schema";
 import { visibleIntroduction } from "~/lib/member-pages.server";
 import { SignedForm } from "~/components/signed-form";
 import { villagesEnabled } from "~/lib/villages-enabled.server";
@@ -82,6 +86,22 @@ async function loaderImplementation({ request }: Route.LoaderArgs) {
   const passkeys = (await auth.api.listPasskeys({ headers: request.headers }))
     .map((p) => ({ id: p.id, name: p.name ?? null, createdAt: p.createdAt ? new Date(p.createdAt).toISOString() : null, backedUp: p.backedUp }))
     .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+  const current = await loginReauthentication(db, user.id, await loginManagementSession(request));
+  const now = new Date();
+  const [tokens, connections] = profile.passkeyOnly ? [0, 0] : await Promise.all([
+    db.$count(apiTokens, and(eq(apiTokens.userId, user.id), isNull(apiTokens.revokedAt), or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, now)))),
+    db.$count(oauthConsent, eq(oauthConsent.userId, user.id)),
+  ]);
+  const login = {
+    fresh: !!current,
+    passkeyFresh: current?.reauthenticationMethod === "passkey",
+    remainingFresh: !!current && current.reauthenticationMethod !== "passkey",
+    protected: protectedLogin(profile),
+    needsRecovery: protectedLogin(profile) && !passkeys.length && profile.passkeyEnrolledAt !== null,
+    passkeyOnly: profile.passkeyOnly,
+    canEnable: hasBackupPasskeys(passkeys),
+    remaining: { tokens, connections },
+  };
   const next = nextHomeAreaChangeAt(profile);
   const nextHandle = nextHandleChangeAt(profile);
   const saved = new URL(request.url).searchParams.get("saved");
@@ -109,7 +129,7 @@ async function loaderImplementation({ request }: Route.LoaderArgs) {
     saved: saved === "display-name" || saved === "preferences" || saved === "ai-links" || saved === "passkey-removed" || saved === "email" || saved === "handle" || saved === "sign-posts" || saved === "sessions" ? saved : null,
     ...(webPushEnabled() ? { push: { publicKey: pushConfig()!.publicKey } } : {}),
     emailPref: profile.emailPref,
-    passkeys,
+    passkeys, login,
     ...(googleLoginConfig() ? { google: {
       browser: googleBrowserFromRequest(request),
       accounts: (await db.select({ id: account.id, createdAt: account.createdAt }).from(account).where(and(eq(account.userId, user.id), eq(account.providerId, "google")))).map(row => ({ id: row.id, date: dateOf(row.createdAt) })),
@@ -131,10 +151,21 @@ export async function action(args: { request: Request }) {
   const retained = args.request.clone();
   try { return await settingsAction(args); }
   catch (error) {
-    if (!(error instanceof SigningFailureResponse)) throw error;
+    if (!(error instanceof SigningFailureResponse || error instanceof SigningError)) throw error;
     const form = await retained.formData();
     const intent = formString(form, "intent");
     if (intent === "display-name") return data({ intent, error: error.code, displayName: formString(form, "displayName"), displayNameLatin: formString(form, "displayNameLatin") } as const, { status: error.status, headers: { "Cache-Control": "private, no-store" } });
+    const returnTo = settingsReturnFromRequest(retained);
+    if (intent === "delete-passkey" && (error.code === "SESSION_NOT_FRESH" || error.code === "remaining_login_required")) {
+      throw redirect(loginMethodReauthenticationPath(withSettingsReturn("/settings#settings-passkeys", returnTo), "remove-passkey", error.code === "remaining_login_required" ? "remaining" : undefined));
+    }
+    if (intent === "passkey-only" || intent === "revoke-login-credentials") {
+      if (error.code === "SESSION_NOT_FRESH") {
+        const purpose = intent === "revoke-login-credentials" ? "revoke-all" : formString(form, "enabled") === "1" ? "enable-passkey-only" : "disable-passkey-only";
+        throw redirect(loginMethodReauthenticationPath(withSettingsReturn("/settings#settings-login-methods", returnTo), purpose, intent === "passkey-only" ? "passkey" : undefined));
+      }
+      return data({ intent, error: error.code } as const, { status: error.status, headers: { "Cache-Control": "private, no-store" } });
+    }
     if (intent !== "handle" && intent !== "delete-passkey") throw error;
     return data({ intent, error: error.code, date: null, handleValue: formString(form, "handle") } as const, { status: error.status, headers: { "Cache-Control": "private, no-store" } });
   }
@@ -155,16 +186,40 @@ async function settingsAction({ request }: { request: Request }) {
         headers.set("Referrer-Policy", "no-referrer"); headers.set("Cache-Control", "no-store");
         return redirect(response.url, { headers });
       }
-      const [linked] = await db.select({ id: account.id }).from(account).where(and(eq(account.id, formString(form, "accountId")), eq(account.userId, user.id), eq(account.providerId, "google")));
-      if (!linked) throw new Response("Not found", { status: 404 });
-      await auth.api.unlinkAccount({ request, headers: request.headers, asResponse: false, body: { accountId: linked.id } });
+      const sessionId = await loginManagementSession(request);
+      await db.transaction(async tx => {
+        await lockSigningMember(tx, user.id);
+        await requireLoginReauthentication(tx, user.id, sessionId);
+        const [linked] = await tx.select({ id: account.id }).from(account).where(and(eq(account.id, formString(form, "accountId")), eq(account.userId, user.id), eq(account.providerId, "google")));
+        if (!linked) throw new Response("Not found", { status: 404 });
+        await bindAuthToDatabase(auth, tx).api.unlinkAccount({ request, headers: request.headers, asResponse: false, body: { accountId: linked.id } });
+        await enqueuePasskeyNotice(tx, user.id, "google_disconnected", "", new Date());
+      });
     } catch (error) {
-      if (isAPIError(error) && error.body?.code === "SESSION_NOT_FRESH") throw redirect(reauthenticationPath("/settings#settings-google"));
+      if ((isAPIError(error) && error.body?.code === "SESSION_NOT_FRESH") || (error instanceof SigningError && error.code === "SESSION_NOT_FRESH")) {
+        throw redirect(loginMethodReauthenticationPath("/settings#settings-google", intent === "google-link" ? "connect-google" : "disconnect-google"));
+      }
       throw error;
     }
     throw redirect("/settings#settings-google");
   }
   const returnTo = settingsReturnFromRequest(request);
+  if (intent === "passkey-only") {
+    const value = formString(form, "enabled");
+    if (value !== "1" && value !== "0") throw data("Bad request", { status: 400 });
+    const auth = await getAuth();
+    const headers = await setPasskeyOnly(db, user.id, await loginManagementSession(request), value === "1", (tx, at) => issuePasskeySession(auth, tx, user.id, at));
+    throw redirect(withSettingsReturn("/settings#settings-login-methods", returnTo), { status: 303, headers: headers ?? undefined });
+  }
+  if (intent === "revoke-login-credentials") {
+    const sessionId = await loginManagementSession(request);
+    await db.transaction(async tx => {
+      await lockSigningMember(tx, user.id);
+      await requireLoginReauthentication(tx, user.id, sessionId);
+      if (!(await revokeAllCredentials(tx, user.id)).ok) throw new SigningError("not_a_member");
+    });
+    throw redirect("/login", 303);
+  }
   if (formString(form, "intent") === "sign-posts") {
     try {
       await withSignedWrite(db, user.id, request, form, async tx => {
@@ -186,9 +241,10 @@ async function settingsAction({ request }: { request: Request }) {
     await (await getAuth()).api.revokeOtherSessions({ request, headers: request.headers });
     throw redirect(withSettingsReturn("/settings?saved=sessions#settings-sessions", returnTo));
   }
-  // Delete only the member's own passkeys after a signed approval; the final credential cannot be removed.
+  // Use the signing flow for members whose login changes require a key assertion.
   if (formString(form, "intent") === "delete-passkey") {
-    const res = await withSignedWrite(db, user.id, request, form, tx => removeOwnPasskey(tx, user.id, formString(form, "passkeyId")));
+    const sessionId = await loginManagementSession(request);
+    const res = await withSignedWrite(db, user.id, request, form, tx => removeOwnPasskey(tx, user.id, formString(form, "passkeyId"), sessionId));
     if (!res.ok) throw data("Not found", { status: 404 });
     throw redirect(withSettingsReturn("/settings?saved=passkey-removed#settings-passkeys", returnTo));
   }
@@ -514,15 +570,17 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
       <section id="settings-login" aria-labelledby="settings-login-heading" className="scroll-mt-4 space-y-8">
         <h2 id="settings-login-heading" className="text-xl font-semibold">{m.settings_login_heading()}</h2>
         {actionData?.intent === "delete-passkey" && <p role="alert" className="text-destructive">{m.signing_failed()}</p>}
-        <PasskeySettings passkeys={passkeys} fresh={loaderData.credentialFresh} saved={saved === "passkey-removed" ? saved : null} returnTo={returnTo} />
+        <PasskeySettings passkeys={passkeys} login={loaderData.login} saved={saved === "passkey-removed" ? saved : null} returnTo={returnTo} />
+        <LoginMethodSettings login={loaderData.login} returnTo={returnTo}
+          error={actionData?.intent === "passkey-only" || actionData?.intent === "revoke-login-credentials" ? actionData.error : undefined} />
         {loaderData.google && <section id="settings-google" aria-labelledby="settings-google-heading" className="scroll-mt-4 space-y-3">
           <h3 id="settings-google-heading" className="text-lg font-semibold">{m.google_settings_heading()}</h3>
-          <p className="ui-help text-muted-foreground">{m.google_settings_help()}</p>
+          {!loaderData.login.protected && <p className="ui-help text-muted-foreground">{m.google_settings_help()}</p>}
           {loaderData.google.failed && <p role="alert">{m.google_failed()}</p>}
           {loaderData.google.accounts.length ? loaderData.google.accounts.map(linked => <div key={linked.id} className="space-y-2">
             <p>{m.google_connected({ date: linked.date })}</p>
-            {loaderData.credentialFresh ? <Form method="post" reloadDocument><input type="hidden" name="intent" value="google-unlink" /><input type="hidden" name="accountId" value={linked.id} /><Button variant="outline" type="submit">{m.google_disconnect()}</Button></Form> : <Link to={reauthenticationPath("/settings#settings-google")} className="underline">{m.google_verify()}</Link>}
-          </div>) : <><p>{m.google_not_connected()}</p>{loaderData.credentialFresh ? <GoogleLogin browser={loaderData.google.browser} link /> : <Link to={reauthenticationPath("/settings#settings-google")} className="underline">{m.google_verify()}</Link>}</>}
+            {loaderData.login.fresh ? <Form method="post" reloadDocument><input type="hidden" name="intent" value="google-unlink" /><input type="hidden" name="accountId" value={linked.id} /><Button variant="outline" type="submit">{m.google_disconnect()}</Button></Form> : <Link to={loginMethodReauthenticationPath("/settings#settings-google", "disconnect-google")} className="underline">{m.google_verify()}</Link>}
+          </div>) : <><p>{m.google_not_connected()}</p>{loaderData.login.fresh ? <GoogleLogin browser={loaderData.google.browser} link /> : <Link to={loginMethodReauthenticationPath("/settings#settings-google", "connect-google")} className="underline">{m.google_verify()}</Link>}</>}
         </section>}
 
         <section id="settings-sessions" aria-labelledby="settings-sessions-heading" className="scroll-mt-4 space-y-3">
@@ -554,6 +612,7 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
         <summary className="cursor-pointer text-xl font-semibold"><h2 className="inline">{m.settings_advanced_heading()}</h2></summary>
         <section id="settings-signing" aria-labelledby="settings-signing-heading" className="scroll-mt-4 space-y-3">
           <h3 id="settings-signing-heading" className="text-lg font-semibold">{m.settings_sign_posts_label()}</h3>
+          {signPosts && <p className="ui-help text-muted-foreground">{m.settings_signing_retirement()}</p>}
           {saved === "sign-posts" && <p role="status">{m.settings_saved()}</p>}
           {actionData?.intent === "sign-posts" && <p role="alert" className="text-destructive">{m.signing_failed()}</p>}
           <SignedForm signatureRequired method="post" action={withSettingsReturn("/settings#settings-signing", returnTo)} className="space-y-2" key={String(signPosts)}>

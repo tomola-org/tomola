@@ -8,7 +8,7 @@ import { seedMembers } from "../e2e/seed-members";
 import { PROD_MEMBERS } from "./member-fixtures";
 import { seedEarlyActions } from "../e2e/seed-early-actions";
 import { account, user } from "../app/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const db = await getDb();
@@ -17,8 +17,11 @@ await seedEarlyActions(db, process.env.E2E_SEED_DIR!);
 await seedArticleReading(db, process.env.E2E_SEED_DIR!);
 if (process.env.E2E_MOTION_FIXTURES === "1") await (await import("./seed-motion-figures")).seedMotionFigures(db, process.env.E2E_SEED_DIR!);
 if (process.env.E2E_GOOGLE_LOGIN === "1") {
-  const [member] = await db.select({ id: user.id }).from(user).where(eq(user.email, "google_disconnect@example.com"));
-  await db.insert(account).values({ id: randomUUID(), userId: member.id, providerId: "google", accountId: "browser-fixture-subject" });
+  const members = await db.select({ id: user.id, email: user.email }).from(user)
+    .where(inArray(user.email, ["google_reauthentication@example.com", "google_disconnect@example.com"]));
+  await db.insert(account).values(members.map(member => ({
+    id: randomUUID(), userId: member.id, providerId: "google", accountId: member.email.split("@")[0],
+  })));
 }
 for (const email of process.argv.slice(2)) {
   const { token } = await createInvitation(db, { email });

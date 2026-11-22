@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 import { isAPIError } from "better-auth/api";
 import { inArray, eq } from "drizzle-orm";
 import { redirect, redirectDocument } from "react-router";
-import { getDb } from "~/lib/db/client.server";
-import { verification } from "~/lib/db/schema";
+import { getDb, type Db } from "~/lib/db/client.server";
+import { user, verification } from "~/lib/db/schema";
 import { getProfile, rememberUiLocale } from "~/lib/profiles.server";
 import { enabledLangs } from "~/lib/enabled-langs.server";
 import { negotiateUiLocale } from "~/lib/http/locale.server";
-import { getAuth } from "./auth.server";
+import { bindAuthToDatabase, getAuth } from "./auth.server";
 import { browserBindingIdentifier, matchesMagicLinkBrowser } from "./magic-link-browser.server";
 import { magicLinkNextIdentifier, readMagicLinkNext } from "./magic-link-next.server";
 import { loginCodeIdentifier, loginCodeLinkIdentifier } from "./login-code.server";
@@ -16,6 +16,7 @@ import { clearReadingReturn } from "./reading-return.server";
 import { clearInvitationCookie, readInvitationCookie } from "./invitation-cookie.server";
 import { magicLinkInvitationContext, magicLinkInvitationIdentifier, parseInvitationRef, sameInvitation } from "./invitation-ref.server";
 import { usedSignupInvitation } from "./signup-invitation.server";
+import { lockSigningMember, SigningError } from "~/lib/signing.server";
 import { hashMagicLinkToken } from "./plugins";
 export const LOGIN_HEADERS = { "Cache-Control": "no-store", "Referrer-Policy": "strict-origin", "X-Robots-Tag": "noindex" };
 export const magicLinkUsedIdentifier = (token: string) => `magic-link-used:${hashMagicLinkToken(token)}`;
@@ -54,7 +55,7 @@ export async function completeMagicLink(request: Request, token: string): Promis
 async function verifyMagicLink(request: Request, token: string): Promise<Completion> {
   const db = await getDb();
   if (!(await matchesMagicLinkBrowser(db, request, token))) return invalid;
-  const [credential] = await db.select({ expiresAt: verification.expiresAt }).from(verification)
+  const [credential] = await db.select({ expiresAt: verification.expiresAt, value: verification.value }).from(verification)
     .where(eq(verification.identifier, `magic-link:${hashMagicLinkToken(token)}`));
   if (!credential || credential.expiresAt <= new Date()) return invalid;
   const identifier = magicLinkInvitationIdentifier(token);
@@ -70,16 +71,31 @@ async function verifyMagicLink(request: Request, token: string): Promise<Complet
       identifier, browserBindingIdentifier(token), magicLinkNextIdentifier(token), loginCodeLinkIdentifier(token), ...mappings.map(row => loginCodeIdentifier(row.value)),
     ]));
   };
-  const verify = async () => (await getAuth()).api.magicLinkVerify({ query: { token }, headers: request.headers, request, asResponse: true });
+  const auth = await getAuth();
+  const verify = async (connection?: Db) => (connection ? bindAuthToDatabase(auth, connection) : auth).api.magicLinkVerify({ query: { token }, headers: request.headers, request, asResponse: true });
+  const verifyWithMemberLock = async () => {
+    const email = (JSON.parse(credential.value) as { email?: string }).email?.toLowerCase();
+    const [member] = email ? await db.select({ id: user.id }).from(user).where(eq(user.email, email)) : [];
+    if (!member) return verify();
+    return db.transaction(async tx => {
+      await lockSigningMember(tx, member.id);
+      return verify(tx);
+    });
+  };
   let res: Response;
   try {
-    res = await (binding ? magicLinkInvitationContext.run({ ref }, verify) : verify());
+    res = await (binding ? magicLinkInvitationContext.run({ ref }, verifyWithMemberLock) : verifyWithMemberLock());
   } catch (error) {
+    if (error instanceof SigningError) {
+      await clean();
+      return invalid;
+    }
     if (!isAPIError(error)) throw error;
     if (error.body?.code === "INVITATION_REQUIRED") {
       await clean();
       return { kind: "invitation_unavailable" };
     }
+    await clean();
     return invalid;
   }
   if (res.status !== 200) {
@@ -90,6 +106,7 @@ async function verifyMagicLink(request: Request, token: string): Promise<Complet
       await clean();
       return { kind: "invitation_unavailable" };
     }
+    await clean();
     return invalid;
   }
   const body = await res.json() as { user?: { id?: unknown } };

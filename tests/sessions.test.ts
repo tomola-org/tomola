@@ -5,7 +5,8 @@ import { eq } from "drizzle-orm";
 import { createAuth } from "~/lib/auth/auth.server";
 import { getSessionUser } from "~/lib/auth/session.server";
 import { sessionCookieMiddleware } from "~/lib/auth/session-cookies.server";
-import { session } from "~/lib/db/schema";
+import { profiles, session } from "~/lib/db/schema";
+import { createProfile } from "~/lib/profiles.server";
 import { createInvitation } from "~/lib/invitations.server";
 import { action as logoutAction } from "~/routes/logout";
 import { createTestDb } from "./helpers/db";
@@ -34,6 +35,15 @@ describe("sessions keep no IP address or user agent", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].ipAddress).toBeNull();
     expect(rows[0].userAgent).toBeNull();
+    expect(rows[0]).toMatchObject({ loginMethod: "email_link", reauthenticationMethod: "email_link", reauthenticatedAt: expect.any(Date) });
+    const { internalAdapter } = await auth.$context;
+    expect(await internalAdapter.createSession(rows[0].userId)).toMatchObject({ loginMethod: "unknown", reauthenticatedAt: null, reauthenticationMethod: null });
+    await createProfile(db, rows[0].userId, { handle: "method_member", homeArea: "en", readLangs: ["en"] });
+    await auth.api.signInMagicLink({ body: { email: "a@example.com" }, headers: new Headers() });
+    await db.update(profiles).set({ passkeyOnly: true }).where(eq(profiles.userId, rows[0].userId));
+    expect((await auth.api.magicLinkVerify({ query: { token: sent[1] }, headers: new Headers(), asResponse: true })).status).toBe(401);
+    await expect(internalAdapter.createSession(rows[0].userId)).rejects.toMatchObject({ statusCode: 401 });
+    expect(await db.select().from(session)).toHaveLength(2);
   });
 });
 

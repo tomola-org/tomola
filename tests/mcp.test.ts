@@ -898,8 +898,8 @@ describe("complete credential revocation", () => {
         const { action } = await import("~/routes/admin-roles");
         await expect(action({ request: new Request(`${base}/admin/roles`, { method: "POST", headers: { cookie: operatorCookie, origin: base }, body: new URLSearchParams({ intent: "revoke-tokens", userId: "member", confirm: "1" }) }) } as never)).rejects.toMatchObject({ status: 302 });
       } else {
-        await db.update(profiles).set({ passkeyEnrolledAt: new Date() }).where(eq(profiles.userId, "member"));
-        await recoverPasskeys(db, { id: "other", email: "other@example.com" }, "member", "Identity verified independently");
+        await db.update(profiles).set({ passkeyEnrolledAt: new Date(), signPosts: true }).where(eq(profiles.userId, "member"));
+        await recoverPasskeys(db, { id: "other", email: "other@example.com" }, "member", "Member lost their keys", "Identity verified by known phone number");
       }
       expect(await auth.api.getSession({ headers: new Headers({ cookie }) })).toBeNull();
       expect((await modern("server/discover", pat.token)).status).toBe(401);

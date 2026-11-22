@@ -7,7 +7,7 @@ import { googleLoginConfig } from "~/lib/auth/google-config.server";
 import { invitationCookie, readInvitationCookie } from "~/lib/auth/invitation-cookie.server";
 import { createInvitation, hashInvitationToken } from "~/lib/invitations.server";
 import { isGoogleAuthEndpoint } from "~/lib/auth/endpoints.server";
-import { account, invitations, session, sharedInvitations, sharedInvitationUses, user, verification, villageMembers, villages } from "~/lib/db/schema";
+import { account, invitations, jobs, profiles, session, sharedInvitations, sharedInvitationUses, user, verification, villageMembers, villages } from "~/lib/db/schema";
 import { addMember, createTestDb } from "./helpers/db";
 import { createProfile } from "~/lib/profiles.server";
 import { action as settingsAction } from "~/routes/settings";
@@ -18,7 +18,9 @@ import { findValidInvitationByToken } from "~/lib/invitations.server";
 import { googleInvitationContext } from "~/lib/auth/google-policy.server";
 import { googleBrowserBlocked, googleBrowserFromRequest } from "~/lib/auth/google-browser";
 import { action as inviteAction, loader as inviteLoader } from "~/routes/invite";
-import { action as loginAction } from "~/routes/login";
+import { action as loginAction, loader as loginLoader } from "~/routes/login";
+import { loginMethodReauthenticationPath } from "~/lib/reauth";
+import { loginReauthentication } from "~/lib/auth/login-reauthentication.server";
 
 vi.hoisted(() => vi.resetModules());
 vi.mock("~/paraglide/messages.js", async () => ({ m: (await import("./helpers/messages-json")).jsonMessages() }));
@@ -39,7 +41,7 @@ function cookies(response: Response, previous = "") {
   }
   return [...jar].map(([key, value]) => `${key}=${value}`).join("; ");
 }
-afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 async function setup(claims: Record<string, unknown> = {}) {
   vi.stubEnv("GOOGLE_LOGIN", "1"); vi.stubEnv("GOOGLE_CLIENT_ID", "fixture-client"); vi.stubEnv("GOOGLE_CLIENT_SECRET", "fixture-secret");
@@ -86,6 +88,8 @@ describe("Google authorization-code registration", () => {
     const flow = await h.start(invitation.cookie);
     expect(h.requests).toEqual([]);
     expect(flow.url.pathname).toBe("/o/oauth2/v2/auth");
+    expect(flow.url.searchParams.has("prompt")).toBe(false);
+    expect(flow.url.searchParams.has("max_age")).toBe(false);
     expect(flow.url.searchParams.get("scope")).toBe("openid email");
     expect(flow.url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(flow.url.searchParams.has("nonce")).toBe(false);
@@ -195,6 +199,7 @@ describe("explicit Google connections", () => {
     const h = await setup(); const invitation = await h.invite();
     const cookie = cookies(await h.emailLogin());
     const [member] = await h.db.select().from(user);
+    await createProfile(h.db, member.id, { handle: "alice", homeArea: "en", readLangs: ["en"] });
     const flow = await h.start(cookie, {}, true);
     const rows = await h.db.select().from(verification);
     const states = rows.map(row => JSON.parse(row.value)).filter(value => value.link);
@@ -208,11 +213,12 @@ describe("explicit Google connections", () => {
     const h = await setup(); await h.invite();
     const emailResult = await h.emailLogin(); const originalCookie = cookies(emailResult);
     const [member] = await h.db.select().from(user);
+    await createProfile(h.db, member.id, { handle: "alice", homeArea: "en", readLangs: ["en"] });
     await h.db.update(user).set({ name: "Member chosen name" }).where(eq(user.id, member.id));
     expect((await h.callback(await h.start())).headers.get("location")).toContain("error=account_not_linked");
     expect(await h.db.select().from(account)).toHaveLength(0);
-    const old = new Date(Date.now() - 2 * 86400_000);
-    await h.db.update(session).set({ createdAt: old });
+    const old = new Date(Date.now() - 11 * 60_000);
+    await h.db.update(session).set({ reauthenticatedAt: old });
     const stale = await h.auth.handler(h.request("/api/auth/link-social", originalCookie, { provider: "google", callbackURL: "/settings" }));
     expect(stale.status).toBe(403);
     expect(await stale.json()).toMatchObject({ code: "SESSION_NOT_FRESH" });
@@ -233,7 +239,7 @@ describe("explicit Google connections", () => {
     expect(afterSession!.session.token).not.toBe(beforeSession!.session.token);
     expect(await h.db.select().from(user)).toMatchObject([{ id: member.id, email: "alice@gmail.com", name: "Member chosen name", image: null }]);
     expect(await h.db.select().from(account)).toMatchObject([{ accessToken: null, refreshToken: null, idToken: null }]);
-    await h.db.update(session).set({ createdAt: old });
+    await h.db.update(session).set({ reauthenticatedAt: old });
     const unlink = () => h.auth.handler(h.request("/api/auth/unlink-account", cookies(login), { accountId: connection.id }));
     expect((await unlink()).status).toBe(403);
     const refreshed = cookies(await h.emailLogin());
@@ -244,10 +250,31 @@ describe("explicit Google connections", () => {
 
   it("checks freshness again when a connection callback returns", async () => {
     const h = await setup(); await h.invite(); const cookie = cookies(await h.emailLogin());
+    const [member] = await h.db.select().from(user);
+    await createProfile(h.db, member.id, { handle: "alice", homeArea: "en", readLangs: ["en"] });
     const flow = await h.start(cookie, {}, true);
-    await h.db.update(session).set({ createdAt: new Date(Date.now() - 2 * 86400_000) });
+    await h.db.update(session).set({ reauthenticatedAt: new Date(Date.now() - 11 * 60_000) });
     expect((await h.callback(flow)).headers.get("location")).toContain("error=google_reauth");
     expect(await h.db.select().from(account)).toHaveLength(0);
+  });
+
+  it.each([null, -670, 0])("uses only recent Google auth_time for reauthentication during ordinary login (%s)", async offset => {
+    const h = await setup(); await h.invite(); const initial = cookies(await h.emailLogin());
+    const [member] = await h.db.select().from(user);
+    await createProfile(h.db, member.id, { handle: "alice", homeArea: "en", readLangs: ["en"] });
+    expect((await h.callback(await h.start(initial, {}, true))).headers.get("location")).toBe("/settings#settings-google");
+    h.claims(offset === null ? {} : { auth_time: Math.floor(Date.now() / 1000) + offset });
+    const flow = await h.start();
+    expect(flow.url.searchParams.has("prompt")).toBe(false);
+    expect(flow.url.searchParams.has("max_age")).toBe(false);
+    const signedIn = await h.callback(flow);
+    expect(signedIn.headers.get("location")).toBe("/");
+    const google = (await h.db.select().from(session)).find(row => row.loginMethod === "google");
+    expect(google).toMatchObject({ reauthenticationMethod: offset === 0 ? "google" : null, reauthenticatedAt: offset === 0 ? expect.any(Date) : null });
+    await h.db.update(profiles).set({ passkeyOnly: true }).where(eq(profiles.userId, member.id));
+    const denied = await h.callback(await h.start());
+    expect(denied.headers.get("location")).toContain("error=account_not_linked");
+    expect((await h.db.select().from(session)).filter(row => row.loginMethod === "google")).toHaveLength(1);
   });
 
   it("blocks ID-token sign-in and linking without any network request", async () => {
@@ -315,6 +342,112 @@ async function withAuth<T>(h: Awaited<ReturnType<typeof setup>>, run: () => Prom
   g.__tomolaAuth = Promise.resolve(h.auth); g.__tomolaDb = Promise.resolve(h.db);
   try { return await run(); } finally { g.__tomolaAuth = oldAuth; g.__tomolaDb = oldDb; }
 }
+
+describe("explicit Google reauthentication", () => {
+  const next = "/settings#settings-passkeys";
+  async function connectedMember() {
+    const h = await setup();
+    await h.invite();
+    const cookie = cookies(await h.emailLogin());
+    const [member] = await h.db.select().from(user);
+    await createProfile(h.db, member.id, { handle: "alice", homeArea: "en", readLangs: ["en"] });
+    expect((await h.callback(await h.start(cookie, {}, true))).headers.get("location")).toBe("/settings#settings-google");
+    const [origin] = await h.db.select().from(session);
+    const startReauthentication = (method: "passkey" | "remaining" = "remaining") => withAuth(h, () => loginAction({ request: new Request(
+      BASE + loginMethodReauthenticationPath(next, "remove-passkey", method), {
+        method: "POST", headers: { origin: BASE, cookie }, body: new URLSearchParams({ intent: "google-login", reauth: "1", next }),
+      },
+    ) } as never) as Promise<Response>);
+    const flow = async () => {
+      const response = await startReauthentication();
+      const url = new URL(response.headers.get("location")!);
+      expect(url.searchParams.get("max_age")).toBe("0");
+      expect(url.searchParams.has("prompt")).toBe(false);
+      return { url, cookie: cookies(response, cookie) };
+    };
+    return { ...h, cookie, member, origin, startReauthentication, flow };
+  }
+
+  it.each([null, -661, 61])("offers another method when Google auth_time is outside the allowed window (%s)", async offset => {
+    const h = await connectedMember();
+    const flow = await h.flow();
+    const now = Math.ceil(Date.now() / 1000) * 1000;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
+    h.claims(offset === null ? {} : { auth_time: now / 1000 + offset });
+    const result = await h.callback(flow);
+    const fallback = new URL(result.headers.get("location")!, BASE);
+    expect(fallback.pathname).toBe("/login");
+    expect(Object.fromEntries(fallback.searchParams)).toMatchObject({ reauth: "1", method: "remaining", purpose: "remove-passkey", next, error: "google_reauth" });
+    const data = await withAuth(h, () => loginLoader({ request: new Request(fallback, { headers: { cookie: h.cookie } }) } as never));
+    expect(data).toMatchObject({ googleReauthenticationFailed: true, verifying: { remaining: true, purpose: "remove-passkey" } });
+    expect(data).not.toHaveProperty("google");
+    expect(await h.db.select().from(session)).toEqual([h.origin]);
+  });
+
+  it.each([[-660, -600], [-90, -30], [-30, 0], [60, 0]])("records Google auth_time offset %s as %s, with at most ten minutes of freshness", async (offset, recordedOffset) => {
+    const h = await connectedMember();
+    const flow = await h.flow();
+    const now = Math.ceil(Date.now() / 1000) * 1000;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
+    h.claims({ auth_time: now / 1000 + offset });
+    const result = await h.callback(flow);
+    expect(result.headers.get("location")).toBe(next);
+    const [created] = (await h.db.select().from(session)).filter(row => row.id !== h.origin.id);
+    const recordedAt = new Date(now + recordedOffset * 1000);
+    expect(created).toMatchObject({ userId: h.member.id, loginMethod: "google", reauthenticatedAt: recordedAt });
+    const lastFresh = recordedAt.getTime() + 10 * 60_000;
+    expect(await loginReauthentication(h.db, h.member.id, created.id, "remaining", new Date(lastFresh))).toMatchObject({ reauthenticationMethod: "google" });
+    expect(await loginReauthentication(h.db, h.member.id, created.id, "remaining", new Date(lastFresh + 1))).toBeNull();
+  });
+
+  it("drops the provider error description and keeps the reauthentication context", async () => {
+    const h = await connectedMember();
+    const flow = await h.flow();
+    const result = await h.callback(flow, flow.cookie, "&error=access_denied&error_description=provider-detail");
+    const fallback = new URL(result.headers.get("location")!, BASE);
+    expect(fallback.pathname).toBe("/login");
+    expect(Object.fromEntries(fallback.searchParams)).toEqual({ reauth: "1", method: "remaining", purpose: "remove-passkey", next, google: "1", error: "access_denied" });
+    expect(await h.db.select().from(session)).toEqual([h.origin]);
+  });
+
+  it("rejects reauthentication by another member's connected Google account", async () => {
+    const h = await connectedMember();
+    await addMember(h.db, "other-google", "other_google");
+    await h.db.insert(account).values({ id: "other-google-account", userId: "other-google", providerId: "google", accountId: "other-google-subject" });
+    h.claims({ sub: "other-google-subject", auth_time: Math.floor(Date.now() / 1000) });
+    const result = await h.callback(await h.flow());
+    const fallback = new URL(result.headers.get("location")!, BASE);
+    expect(fallback.pathname).toBe("/login");
+    expect(Object.fromEntries(fallback.searchParams)).toMatchObject({ reauth: "1", next, error: "account_not_linked" });
+    expect(fallback.searchParams.has("error_description")).toBe(false);
+    expect(await h.db.select().from(session)).toEqual([h.origin]);
+  });
+
+  it.each(["revoked", "expired", "absolute expiry"])("rejects the callback when its source session has %s", async reason => {
+    const h = await connectedMember();
+    h.claims({ auth_time: Math.floor(Date.now() / 1000) });
+    const flow = await h.flow();
+    const source = eq(session.id, h.origin.id);
+    if (reason === "revoked") await h.db.delete(session).where(source);
+    else await h.db.update(session).set(reason === "expired" ? { expiresAt: new Date(0) } : { createdAt: new Date(0) }).where(source);
+    const result = await h.callback(flow);
+    expect(result.headers.get("location")).not.toBe(next);
+    expect(result.headers.getSetCookie().some(value => /session_token=/.test(value))).toBe(false);
+    expect((await h.db.select().from(session)).filter(row => row.id !== h.origin.id)).toEqual([]);
+  });
+
+  it("rejects starting Google for a passkey-only reauthentication or a protected member", async () => {
+    const h = await connectedMember();
+    await expect(h.startReauthentication("passkey")).rejects.toMatchObject({ status: 404 });
+    for (const protection of [{ signPosts: true, passkeyOnly: false }, { signPosts: false, passkeyOnly: true }]) {
+      await h.db.update(profiles).set(protection).where(eq(profiles.userId, h.member.id));
+      await expect(h.startReauthentication()).rejects.toMatchObject({ status: 404 });
+    }
+    expect(await h.db.select().from(verification)).toEqual([]);
+  });
+});
 
 describe("Google application routes and notices", () => {
   it("keeps native sign-in returns on the site while preserving encoded paths", async () => {
@@ -424,7 +557,7 @@ describe("Google application routes and notices", () => {
     const h = await setup(); await h.invite(); const cookie = cookies(await h.emailLogin());
     const [member] = await h.db.select().from(user); await createProfile(h.db, member.id, { handle: "alice", homeArea: "en", readLangs: ["en"] });
     await withAuth(h, async () => {
-      await h.db.update(session).set({ createdAt: new Date(Date.now() - 2 * 86400_000) });
+      await h.db.update(session).set({ reauthenticatedAt: new Date(Date.now() - 11 * 60_000) });
       const form = (intent: string, cookie: string, accountId = "missing") => new Request(`${BASE}/settings`, { method: "POST", headers: { origin: BASE, cookie }, body: new URLSearchParams({ intent, accountId }) });
       await expect(settingsAction({ request: form("google-link", cookie) })).rejects.toMatchObject({ status: 302 });
       const fresh = cookies(await h.emailLogin());
@@ -432,6 +565,11 @@ describe("Google application routes and notices", () => {
       expect(new URL(redirect.headers.get("location")!).hostname).toBe("accounts.google.com");
       expect(redirect.headers.get("referrer-policy")).toBe("no-referrer");
       await expect(settingsAction({ request: form("google-unlink", fresh, "someone-elses-account") })).rejects.toMatchObject({ status: 404 });
+      const flow = await h.start(fresh, {}, true);
+      expect((await h.callback(flow)).headers.get("location")).toBe("/settings#settings-google");
+      const [linked] = await h.db.select().from(account);
+      await expect(settingsAction({ request: form("google-unlink", fresh, linked.id) })).rejects.toMatchObject({ status: 302 });
+      expect((await h.db.select().from(jobs).where(eq(jobs.kind, "send_passkey_notice"))).map(row => (row.payload as { action: string }).action).sort()).toEqual(["google_connected", "google_disconnected"]);
     });
   });
   it("keeps invitation tokens unchanged in external-browser links and adds privacy text only when enabled", async () => {

@@ -51,7 +51,7 @@ export const searchData = loaderFixture<SearchRoute.ComponentProps["loaderData"]
 type MemberNavigation = Extract<MemberLayoutRoute.ComponentProps["loaderData"], { reader: false }>;
 export const memberNavigationData = loaderFixture<MemberNavigation>(() => ({
   reader: false, userId: "fixture", handle: "fixture", passkeyPrompt: { cookieName: "fixture.prompt", deferred: false },
-  hasPasskey: true, credentialFresh: false, isOperator: false, canInvite: false,
+  hasPasskey: true, credentialFresh: false, passkeyEnrollmentFresh: false, passkeyEnrollmentAllowed: true, isOperator: false, canInvite: false,
   isModerator: false, apiDrafts: 0, previewedDrafts: 0, apiDraftLabel: "", previewedDraftLabel: "",
   unreadNotifications: 0, followedUnread: false, welcome: null,
 }));
@@ -64,6 +64,7 @@ export const onboardingData = loaderFixture<OnboardingRoute.ComponentProps["load
 export const settingsData = loaderFixture<SettingsRoute.ComponentProps["loaderData"]>(() => ({
   homeArea: "ja", handle: "fixture", displayLang: null, readLangs: ["ja"], nextAreaChange: null,
   nextHandleChange: null, saved: null, passkeys: [], emailPref: "auto", signPosts: false,
+  login: { fresh: false, passkeyFresh: false, remainingFresh: false, protected: false, needsRecovery: false, passkeyOnly: false, canEnable: false, remaining: { tokens: 0, connections: 0, links: 0 } },
   shareBookmarklet: "", nushi: null, avatarUrl: "/avatar/fixture", avatarUploaded: false, introEntryId: null,
   returnTo: null, displayName: null, displayNameLatin: null, colorScheme: null, credentialFresh: false,
 }));

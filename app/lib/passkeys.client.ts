@@ -1,8 +1,8 @@
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import type { PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/server";
 
-async function post(body: unknown) {
-  const response = await fetch("/passkeys", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+async function post(body: unknown, path = "/passkeys") {
+  const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const result = await response.json();
   if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : "passkey_failed");
   return result;
@@ -15,4 +15,11 @@ export async function addVerifiedPasskey(name = ""): Promise<void> {
   }
   const response = await startRegistration({ optionsJSON: result.options as PublicKeyCredentialCreationOptionsJSON });
   await post({ intent: "verify", challenge: result.challenge, response });
+}
+
+export async function recoverVerifiedPasskey(token: string): Promise<void> {
+  const path = "/auth/recover-passkeys";
+  const options = await post({ intent: "options", token }, path);
+  const response = await startRegistration({ optionsJSON: options.options as PublicKeyCredentialCreationOptionsJSON });
+  await post({ intent: "verify", token, challenge: options.challenge, response }, path);
 }

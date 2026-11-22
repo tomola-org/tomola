@@ -66,6 +66,7 @@ export const publicOnly = [
 ] as const;
 export const bothModes = [
   ["draft-preview", ".*"],
+  ["passkey-enrollment", "passkey-only sign-in"],
   ["home-following", ".*"],
   ["load-more", "members"],
   ["introductions", ".*"],

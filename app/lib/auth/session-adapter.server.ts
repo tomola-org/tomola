@@ -1,8 +1,10 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { getCurrentAdapter, type BetterAuthOptions, type DBTransactionAdapter } from "better-auth";
 import { isDeletedIdentity } from "../deleted-member";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { is } from "drizzle-orm";
 import { PgTransaction } from "drizzle-orm/pg-core";
-import type { Db } from "~/lib/db/client.server";
+import type { Db, Tx } from "~/lib/db/client.server";
 import * as schema from "~/lib/db/schema";
 import { RETENTION, DAY_MS } from "~/lib/retention";
 import { invitationRequired } from "./invitation-ref.server";
@@ -54,7 +56,18 @@ function wrap<T extends Pick<Adapter, "create" | "findOne" | "findMany">>(adapte
   };
 }
 
-export function sessionAdapter(db: Db, prepareRemoteKeys = false, signupGrants = new Map<string, SignupInvitationGrant>()): ReturnType<typeof drizzleAdapter> {
+export function sessionWriteScope(db: Db) {
+  const transaction = new AsyncLocalStorage<Tx>();
+  const connections = new WeakMap<object, Db>();
+  return { transaction, connections, run: async <T, Options extends BetterAuthOptions>(adapter: DBTransactionAdapter<Options>, work: () => Promise<T>): Promise<T> => {
+    const active = transaction.getStore();
+    if (active) return work();
+    const connection = connections.get(await getCurrentAdapter(adapter)) ?? db;
+    return is(connection, PgTransaction) ? transaction.run(connection as Tx, work) : connection.transaction(tx => transaction.run(tx, work));
+  } };
+}
+
+export function sessionAdapter(db: Db, prepareRemoteKeys = false, signupGrants = new Map<string, SignupInvitationGrant>(), scope = sessionWriteScope(db)): ReturnType<typeof drizzleAdapter> {
   return options => {
     const makeAdapter = (connection: Db) => drizzleAdapter(connection, { provider: "pg", schema })(options);
     function forConnection(connection: Db): Adapter {
@@ -74,10 +87,21 @@ export function sessionAdapter(db: Db, prepareRemoteKeys = false, signupGrants =
           signupGrants.delete(id);
         }
       };
-      return {
-        ...wrap(adapter, connection, prepareRemoteKeys, createUser, makeAdapter),
+      const wrapped = wrap(adapter, connection, prepareRemoteKeys, createUser, makeAdapter);
+      const result: Adapter = {
+        ...wrapped,
+        create: query => {
+          const tx = scope.transaction.getStore();
+          return tx && tx !== connection && (query.model === "session" || query.model === "account") ? makeAdapter(tx).create(query) : wrapped.create(query);
+        },
+        update: query => {
+          const tx = scope.transaction.getStore();
+          return query.model === "account" && tx && tx !== connection ? makeAdapter(tx).update(query) : wrapped.update(query);
+        },
         transaction: <R>(callback: (trx: Adapter) => Promise<R>) => connection.transaction(tx => callback(forConnection(tx))),
       };
+      scope.connections.set(result, connection);
+      return result;
     }
     return forConnection(db);
   };

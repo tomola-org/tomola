@@ -1,20 +1,25 @@
-import { eq } from "drizzle-orm";
-import { user } from "../db/schema";
+import { and, eq, gt } from "drizzle-orm";
+import { passkey, profiles, session } from "../db/schema";
 import { isDeletedIdentity } from "../deleted-member";
 import { randomUUID } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware, getOAuthState, isAPIError } from "better-auth/api";
 import { googleLoginConfig } from "./google-config.server";
 import { finishGoogleFlow, googleInvitationRef, prepareGoogleFlow, validateGoogleUser } from "./google-policy.server";
-import { getDb, type Db } from "~/lib/db/client.server";
-import { sessionAdapter } from "./session-adapter.server";
-import { RETENTION } from "~/lib/retention";
+import { getDb, type Db, type Tx } from "~/lib/db/client.server";
+import { sessionAdapter, sessionWriteScope } from "./session-adapter.server";
+import { passkeySessionPlugin } from "./passkey-session.server";
+import { internalLogin, linkedGoogle, markVerifiedLogin, passkeyChallenges, protectedLogin, verifiedEmailCode, verifiedLogin } from "./login-method.server";
+import { loginReauthentication } from "./login-reauthentication.server";
+import { enqueuePasskeyNotice } from "./passkeys.server";
+import { lockSigningMember, SigningError } from "~/lib/signing.server";
+import { DAY_MS, RETENTION } from "~/lib/retention";
 import { safeErrorText } from "~/lib/error-text.server";
 import { getMailer, type Mailer } from "~/lib/mail/mail.server";
 import { siteUrl } from "~/lib/site-url";
 import { createMagicLinkSender } from "./magic-link.server";
 import { authSecret } from "./secret.server";
-import { authPlugins, type SendMagicLink } from "./plugins";
+import { authPlugins, hashMagicLinkToken, type SendMagicLink } from "./plugins";
 import { hasSharedInvitationCookie, readInvitationCookie } from "./invitation-cookie.server";
 import { invitationRequired, magicLinkInvitationContext } from "./invitation-ref.server";
 import type { SignupInvitationGrant } from "./signup-invitation.server";
@@ -29,24 +34,61 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
   const prepareRemoteKeys = Boolean(preparedMetadataFetch);
   const metadataFetch = preparedMetadataFetch ?? sharedMetadataFetch(opts.metadataFetch);
   const signupGrants = new Map<string, SignupInvitationGrant>();
+  const writes = sessionWriteScope(db);
+  const clearGoogleTokens = { accessToken: null, refreshToken: null, idToken: null, accessTokenExpiresAt: null, refreshTokenExpiresAt: null };
+  const confirmGoogleConnection = async (context: Parameters<typeof validateGoogleUser>[1] | null) => {
+    const state = await getOAuthState();
+    if (!state?.link) return;
+    const tx = writes.transaction.getStore();
+    if (!tx || !context) throw new APIError("UNAUTHORIZED", { code: "google_reauth", message: "Reauthentication required" });
+    const userId = state.link.userId;
+    await lockSigningMember(tx, userId);
+    const current = context.context.session;
+    if (current?.user.id !== userId || current.session.id !== state.serverContext?.linkSessionId || !await loginReauthentication(tx, userId, current.session.id)) {
+      throw new APIError("UNAUTHORIZED", { code: "google_reauth", message: "Reauthentication required" });
+    }
+    await enqueuePasskeyNotice(tx, userId, "google_connected", "", new Date());
+  };
   const auth = betterAuth({
     baseURL: opts.baseURL,
     secret: opts.secret,
-    session: { expiresIn: RETENTION.sessionDays * 86400, updateAge: 86400 },
-    database: sessionAdapter(db, prepareRemoteKeys, signupGrants),
+    session: { expiresIn: RETENTION.sessionDays * 86400, updateAge: 86400, additionalFields: {
+      loginMethod: { type: "string", required: false, input: false, returned: false },
+      reauthenticatedAt: { type: "date", required: false, input: false, returned: false },
+      reauthenticationMethod: { type: "string", required: false, input: false, returned: false },
+    } },
+    database: sessionAdapter(db, prepareRemoteKeys, signupGrants, writes),
     socialProviders: google ? { google: {
       ...google, disableDefaultScope: true, scope: ["openid", "email"], includeGrantedScopes: false,
       disableIdTokenSignIn: true, overrideUserInfoOnSignIn: false,
       mapProfileToUser: () => ({ name: "", image: undefined }),
     } } : {},
-    user: { validateUserInfo: validateGoogleUser },
+    user: { validateUserInfo: async (input, ctx) => {
+      const failure = await validateGoogleUser(input, ctx);
+      if (failure || input.source.action !== "link-account" || input.source.oauth?.providerId !== "google") return failure;
+      const current = ctx.context.session;
+      if (!current || !await loginReauthentication(db, current.user.id, current.session.id)) return { error: "google_reauth" };
+    } },
     account: { accountLinking: { disableImplicitLinking: true, allowDifferentEmails: true, allowUnlinkingAll: true, updateUserInfoOnLink: false }, updateAccountOnSignIn: false },
     logger: { level: "warn", log: (level, message, ...args) => {
       const write = level === "error" ? console.error : level === "warn" ? console.warn : console.info;
       write("[auth]", safeErrorText([message, ...args]));
     } },
     hooks: { before: createAuthMiddleware(async ctx => {
-      await prepareGoogleFlow(ctx, !!google);
+      await prepareGoogleFlow(ctx, !!google, (userId, sessionId) => loginReauthentication(db, userId, sessionId));
+      if (ctx.path === "/magic-link/verify" && typeof ctx.query?.token === "string") {
+        const expected = `magic-link:${hashMagicLinkToken(ctx.query.token)}`;
+        const adapter = ctx.context.internalAdapter;
+        // The endpoint's atomic consume returns null for expired and already
+        // consumed rows. Other verification deletes do not establish proof.
+        ctx.context.internalAdapter = { ...adapter, consumeVerificationValue: async identifier => {
+          const value = await adapter.consumeVerificationValue(identifier);
+          if (identifier === expected && value?.identifier === expected && value.expiresAt.getTime() > Date.now()) {
+            markVerifiedLogin(ctx.context, { method: verifiedEmailCode.getStore() ? "email_code" : "email_link", at: new Date() });
+          }
+          return value;
+        } };
+      }
       if (ctx.path === "/sign-in/magic-link" && isDeletedIdentity(undefined, ctx.body?.email)) return ctx.json({ status: true });
     }), after: createAuthMiddleware(async ctx => {
       await finishGoogleFlow(ctx, opts.secret);
@@ -54,14 +96,23 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
       const result = ctx.context.returned;
       if (result && typeof result === "object" && "challenge" in result && typeof result.challenge === "string") return ctx.json({ ...result, userVerification: "required" });
     }) },
-    plugins: authPlugins(opts.sendMagicLink, { baseURL: opts.baseURL, metadataFetch, prepareRemoteKeys }),
+    plugins: [...authPlugins(opts.sendMagicLink, { baseURL: opts.baseURL, metadataFetch, prepareRemoteKeys }), passkeySessionPlugin],
     // Better Auth disables origin checks by default under NODE_ENV=test. Always enable them in every environment.
     // disableIpTracking: do not store IP addresses in sessions (minimize personal data). This also disables Better Auth's own HTTP rate limit
     // based on IPs, but the app has its own login rate limit (magic-link.server.ts) and an HTTP endpoint allowlist (endpoints.server.ts).
     advanced: { disableOriginCheck: false, ipAddress: { disableIpTracking: true } },
     databaseHooks: {
       verification: {
+        delete: { after: async (value, context) => {
+          if (context?.path === "/passkey/verify-authentication") {
+            const challenge = JSON.parse(value.value) as { userData?: { id?: string }; sessionId?: string };
+            if (challenge.userData?.id) passkeyChallenges.set(context.context, { userId: challenge.userData.id, sessionId: challenge.sessionId });
+          }
+        } },
         create: { before: async (value, context) => {
+          if (context?.path === "/passkey/generate-authenticate-options" && context.context.session) {
+            return { data: { ...value, value: JSON.stringify({ ...JSON.parse(value.value), sessionId: context.context.session.session.id }) } };
+          }
           if (context?.path !== "/link-social" || context.body?.provider !== "google") return;
           const state = JSON.parse(value.value);
           // With allowDifferentEmails, link.email is unused. Keep the required
@@ -70,16 +121,46 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
         } },
       },
       account: {
-        create: { before: async value => value.providerId === "google" ? { data: { accessToken: null, refreshToken: null, idToken: null, accessTokenExpiresAt: null, refreshTokenExpiresAt: null } } : undefined },
-        update: { before: async (value, context) => context?.path === "/callback/:id" && context.params?.id === "google" ? { data: { ...value, accessToken: null, refreshToken: null, idToken: null, accessTokenExpiresAt: null, refreshTokenExpiresAt: null } } : undefined },
+        create: { before: async (value, context) => {
+          if (value.providerId !== "google") return;
+          await confirmGoogleConnection(context);
+          return { data: { ...clearGoogleTokens } };
+        } },
+        update: { before: async (value, context) => {
+          if (context?.path !== "/callback/:id" || context.params?.id !== "google") return;
+          await confirmGoogleConnection(context);
+          return { data: { ...value, ...clearGoogleTokens } };
+        } },
       },
       session: {
         create: {
           // Better Auth stores user agents in sessions without a setting to disable this. Omit them. The setting above omits IPs, which arrive as empty strings; normalize them to null.
-          before: async value => {
-            const [account] = await db.select({ email: user.email }).from(user).where(eq(user.id, value.userId));
-            if (isDeletedIdentity(value.userId, account?.email)) throw new APIError("UNAUTHORIZED", { message: "Invalid account" });
-            return { data: { ipAddress: null, userAgent: null } };
+          before: async (value, context) => {
+            const tx = writes.transaction.getStore();
+            if (!tx) throw new Error("Session creation requires a transaction");
+            const proof = verifiedLogin(context?.context, value.userId);
+            const reject = () => new APIError("UNAUTHORIZED", { code: proof?.method === "google" ? "account_not_linked" : "INVALID_TOKEN", message: "Invalid account" });
+            try { await lockSigningMember(tx, value.userId); }
+            catch (error) { if (error instanceof SigningError) throw reject(); throw error; }
+            const [profile] = await tx.select({ passkeyOnly: profiles.passkeyOnly, signPosts: profiles.signPosts }).from(profiles).where(eq(profiles.userId, value.userId));
+            if (profile?.passkeyOnly && proof?.method !== "passkey") throw reject();
+            if (proof?.method === "google" && !(await linkedGoogle(tx, value.userId, proof.googleSubject))) throw reject();
+            if (proof?.method === "google" && proof.sourceSessionId && profile && protectedLogin(profile)) throw reject();
+            const challenge = proof?.credentialId && context ? passkeyChallenges.get(context.context) : undefined;
+            if (challenge && challenge.userId !== value.userId) throw reject();
+            const sourceSessionId = challenge?.sessionId ?? proof?.sourceSessionId;
+            if (sourceSessionId) {
+              const now = new Date();
+              const [origin] = await tx.select({ id: session.id }).from(session).where(and(eq(session.id, sourceSessionId), eq(session.userId, value.userId),
+                gt(session.expiresAt, now), gt(session.createdAt, new Date(now.getTime() - RETENTION.sessionAbsoluteDays * DAY_MS))));
+              if (!origin) throw reject();
+            }
+            if (proof?.credentialId) {
+              const [key] = await tx.select({ id: passkey.id, userId: passkey.userId }).from(passkey).where(eq(passkey.credentialID, proof.credentialId));
+              if (key?.userId !== value.userId) throw reject();
+              if (proof.backedUp !== undefined) await tx.update(passkey).set({ backedUp: proof.backedUp }).where(eq(passkey.id, key.id));
+            }
+            return { data: { ipAddress: null, userAgent: null, loginMethod: proof?.method ?? "unknown", reauthenticatedAt: proof?.at ?? null, reauthenticationMethod: proof?.at ? proof.method : null } };
           },
         },
       },
@@ -110,6 +191,23 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
       },
     },
   });
+  // Better Auth runs create.before before calling its database adapter. Wrap the
+  // entry point so the hook and the insertion share the same transaction.
+  void auth.$context.then(ctx => {
+    const adapter = ctx.internalAdapter;
+    const createSession = adapter.createSession;
+    adapter.createSession = (...args) => writes.run(ctx.adapter, () => createSession(...args));
+    const createAccount = adapter.createAccount;
+    const updateAccount = adapter.updateAccount;
+    adapter.createAccount = async (...args) => args[0].providerId === "google" && (await getOAuthState())?.link
+      ? writes.run(ctx.adapter, () => createAccount(...args)) : createAccount(...args);
+    adapter.updateAccount = async (...args) => (await getOAuthState())?.link
+      ? writes.run(ctx.adapter, async () => {
+        const account = await updateAccount(...args);
+        if (!account) throw new APIError("CONFLICT", { code: "google_reauth", message: "Reauthentication required" });
+        return account;
+      }) : updateAccount(...args);
+  }, () => {});
   originalOptions.set(auth, opts);
   return auth;
 }
@@ -179,4 +277,10 @@ export function getAuth(): Promise<Auth> {
     });
   }
   return g.__tomolaAuth;
+}
+
+export async function issuePasskeySession(auth: Auth, db: Tx, userId: string, at: Date, credentialId?: string) {
+  const bound = bindAuthToDatabase(auth, db);
+  const { headers } = await internalLogin.run({ method: "passkey", userId, at, credentialId }, () => bound.api.issuePasskeySession({ returnHeaders: true }));
+  return headers;
 }

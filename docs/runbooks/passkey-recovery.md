@@ -1,25 +1,23 @@
 # Manual passkey recovery
 
-Only for a member who has lost every passkey, an operator verifies the member's identity and allows them to register again. Being able to read the member's email is not enough for recovery. The record of earlier registration remains even after the keys are deleted, so the member does not go back to the first-registration path.
+Use this procedure when a member who requires passkey-only login or signs posts has lost all usable passkeys. Other members can sign in through an available method and register a replacement in settings.
 
-1. Receive the member's request and confirm it with the member through a known contact channel. Do not rely on the content of an email alone; use a check that an AI able to read the email could not imitate, such as a call with the known person. Record the method, the date and time, and who checked.
-2. Confirm the database of the environment you run it in, `BETTER_AUTH_URL` and `OPERATOR_EMAILS`. The person running it must be a registered operator, with an account other than the member's.
-3. Run the command below. The note must be 10 to 4000 characters. It is stored in the audit record of the recovery, so do not write answers to secret questions, ID numbers or the like.
+1. Verify the member through a separate contact channel known before the request, or document the basis on which you personally know the member. A reply from the member’s email address alone is insufficient. Record the method, time, and operator who verified the identity. Omit sensitive evidence such as identity document numbers or answers to secret questions.
+2. Confirm the database, `BETTER_AUTH_URL` and `OPERATOR_EMAILS` for the intended environment. Run the command as a registered operator using an account other than the member’s. Both the reason and the verification method are required and kept in the recovery audit record.
 
 ```sh
-pnpm exec tsx --env-file-if-exists=.env scripts/recover-passkeys.ts   operator@example.org member@example.org   'Confirmed the request and the lost device in a call with the known person. Date, time and checker recorded.'
+pnpm exec tsx --env-file-if-exists=.env scripts/recover-passkeys.ts operator@example.org member@example.org \
+  'Member reported losing access to all passkeys' 'Verified in a call to the previously recorded number. Operator and time recorded.'
 ```
 
-For Docker Compose, run the same command inside the app container:
+For Docker Compose, run the command in the app container:
 
 ```sh
 docker compose exec app pnpm exec tsx scripts/recover-passkeys.ts operator@example.org member@example.org \
-  'Confirmed the request and the lost device in a call with the known person. Date, time and checker recorded.'
+  'Member reported losing access to all passkeys' 'Verified in a call to the previously recorded number. Operator and time recorded.'
 ```
 
-4. When the command succeeds, all of the member's sessions, all passkeys and the unused signing and registration challenges are invalidated. A 30-minute re-registration window opens and a recovery notice email is queued. The member logs in by email and registers a new passkey within 30 minutes. The recovery window closes after re-registration.
-5. Ask the member to confirm logging in and signing with the new key. If the window has expired, the operator checks the identity record again before allowing recovery again. Do not work around this by deleting the registration record directly in the database.
+3. The command revokes the member’s old passkeys, challenges, previous recovery permit, sessions, API tokens, MCP connections, and Open in AI links. The worker sends a dedicated registration link to the account’s email address. The link permits one registration with user verification within 30 minutes of issuance. A successful registration consumes the permit, records the completion time in the recovery log, and opens a passkey session while preserving the login preference.
+4. Ask the member to try logging in with the new key. Members who sign posts should also confirm they can sign. If the permit expires, check the identity evidence before issuing a new one. Verify delivery through the job status if the member does not receive the link.
 
-If the notices of adding, deleting or recovering a passkey cannot be sent, the worker retries them. The operator checks the result of sending. Recovery does not delete the signatures on published posts, the copies of public keys or earlier revisions. The member's data export contains the evidence.
-
-A passkey on another device through a QR code depends on Bluetooth and the platform's relay. Check supported platforms, Bluetooth availability, relay access and network restrictions on real devices used by the site's members before offering this recovery route. These are deployment conditions, independent of a test-site notice.
+Published signatures and their public keys remain available as evidence. Use the device or credential provider’s backup options to establish a second working way to use a passkey.

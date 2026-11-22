@@ -11,8 +11,9 @@ async function main() {
   const operatorEmail = parseEmail(process.argv[2] ?? "");
   const memberEmail = parseEmail(process.argv[3] ?? "");
   const note = process.argv[4] ?? "";
-  if (!operatorEmail || !memberEmail || note.trim().length < 10) {
-    console.error("usage: pnpm exec tsx scripts/recover-passkeys.ts <operator-email> <member-email> '<identity verification explanation>'");
+  const identityVerification = process.argv[5] ?? "";
+  if (!operatorEmail || !memberEmail || note.trim().length < 10 || !identityVerification.trim()) {
+    console.error("usage: pnpm exec tsx scripts/recover-passkeys.ts <operator-email> <member-email> '<reason>' '<identity verification method and evidence>'");
     process.exitCode = 1;
   } else {
     const db = await getDb();
@@ -20,8 +21,8 @@ async function main() {
       const [operator] = await db.select({ id: user.id, email: user.email }).from(user).where(eq(user.email, operatorEmail));
       const [member] = await db.select({ id: user.id }).from(user).where(eq(user.email, memberEmail));
       if (!operator || !member) throw new Error("Operator or member account not found");
-      const result = await recoverPasskeys(db, operator, member.id, note);
-      console.log(`Recovery permitted until ${result.expiresAt.toISOString()}. All sessions and old credentials were revoked; a notice is queued. The member must sign in by email and register within thirty minutes.`);
+      const result = await recoverPasskeys(db, operator, member.id, note, identityVerification);
+      console.log(`Recovery permitted until ${result.expiresAt.toISOString()}. All sessions and old credentials were revoked; the member will receive a one-time passkey registration link by email.`);
     } catch (error) { console.error(safeErrorText(error)); process.exitCode = 1; }
     finally { await closeDb(db); }
   }

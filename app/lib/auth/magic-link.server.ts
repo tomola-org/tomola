@@ -9,7 +9,7 @@ import { clientAddress } from "~/lib/http/client-ip.server";
 import { normalizeEmail } from "~/lib/invitations.server";
 import { mailDecoyTo, type Mailer } from "~/lib/mail/mail.server";
 import { defaultUiLocale } from "~/lib/enabled-langs.server";
-import { magicLinkMail, mailLocale } from "~/lib/mail/magic-link.server";
+import { magicLinkMail, mailLocale, passkeyOnlyLoginMail } from "~/lib/mail/magic-link.server";
 import { hitRateLimit, MAGIC_LINK_EMAIL_LIMIT, MAGIC_LINK_EMAIL_IP_LIMIT, MAGIC_LINK_IP_LIMIT } from "~/lib/rate-limit.server";
 import { hashMagicLinkToken, type SendMagicLink } from "./plugins";
 import { browserBindingIdentifier } from "./magic-link-browser.server";
@@ -18,6 +18,7 @@ import { validBrowserNonce } from "./magic-link-browser.server";
 import { findSharedInvitation, sharedInvitationStatus } from "~/lib/shared-invitations.server";
 import { magicLinkInvitationIdentifier, parseInvitationRef } from "./invitation-ref.server";
 import { magicLinkNextIdentifier } from "./magic-link-next.server";
+import { passkeyOnlyAddress } from "./login-method.server";
 
 // Email URLs point to the confirmation page /auth/confirm (app/routes/auth-confirm.tsx), rather than Better Auth's verification URL (/api/auth/magic-link/verify).
 // Opening the URL does not consume the token; the page button's POST does. Return destinations stay beside the token hash in verification, never in mail.
@@ -124,10 +125,11 @@ export function createMagicLinkSender(deps: {
       ? await hitRateLimit(db, { key: `magic-link:email:${addressHash(email)}`, ...MAGIC_LINK_EMAIL_LIMIT, now }) : null;
     if (byEmail && !byEmail.allowed) limited = "address";
 
-    // `keepCode` leaves the code rows in place. A held address keeps them so the code screen behaves exactly as it does for an ordinary invited address.
-    const cleanup = async (keepCode = false) => {
-      const identifiers = [`magic-link:${hashMagicLinkToken(token)}`, browserBindingIdentifier(token), magicLinkNextIdentifier(token), magicLinkInvitationIdentifier(token)];
-      if (observed && !keepCode && validBrowserNonce(metadata?.codeId)) identifiers.push(loginCodeIdentifier(metadata.codeId), loginCodeLinkIdentifier(token));
+    // Preserve code-attempt state when the page should behave like an ordinary
+    // delivery. Without the underlying link, those codes cannot sign anyone in.
+    const cleanup = async (remove: "all" | "link" | "none" = "all") => {
+      const identifiers = remove === "none" ? [] : [`magic-link:${hashMagicLinkToken(token)}`, browserBindingIdentifier(token), magicLinkNextIdentifier(token), magicLinkInvitationIdentifier(token)];
+      if (remove === "all" && validBrowserNonce(metadata?.codeId)) identifiers.push(loginCodeIdentifier(metadata.codeId), loginCodeLinkIdentifier(token));
       try {
         await db.delete(verification).where(inArray(verification.identifier, identifiers));
       } catch (error) {
@@ -167,6 +169,8 @@ export function createMagicLinkSender(deps: {
           if (observed) observed.result = "unregistered";
           return;
         }
+        const passkeyOnly = await passkeyOnlyAddress(db, email);
+        const locale = mailLocale(metadata?.locale) ?? defaultUiLocale();
         // The address of a member who left while suspended may be invited but cannot register. Nothing is mailed to it, and it is not logged (not even a hash). The screens still say
         // "sent", and the sender takes the same path and the same wait as for any invited address: one ordinary-looking login mail (same sender, subject kind and size, a code and link
         // that are not real) goes to a decoy address that the provider accepts and does not deliver. The credential, the browser binding and the return row are dropped, so no
@@ -174,19 +178,19 @@ export function createMagicLinkSender(deps: {
         if (await isSuspendedDeletedAddress(db, email, now)) {
           held = true;
           console.warn(`[magic-link] not sent: address held after a suspended departure ip=${ip ?? "unknown"}`);
-          await cleanup(true);
+          await cleanup("link");
           const decoy = (deps.decoyTo ?? mailDecoyTo)();
           if (!decoy) throw new Error("MAIL_DECOY_TO is not set");
-          const locale = mailLocale(metadata?.locale) ?? defaultUiLocale();
           const fakeToken = randomBytes(token.length).toString("base64url").slice(0, token.length);
           const fakeCode = randomInt(1_000_000).toString().padStart(6, "0");
           await deps.mailer().send(magicLinkMail({ to: decoy, url: confirmUrl(deps.baseURL, fakeToken), locale, code: fakeCode, invitation: metadata?.invitation === true }));
           if (observed) observed.result = "sent";
           return;
         }
-        const url = confirmUrl(deps.baseURL, token);
-        const locale = mailLocale(metadata?.locale) ?? defaultUiLocale();
-        await deps.mailer().send(magicLinkMail({ to: email, url, locale, code: code ?? "", invitation: metadata?.invitation === true }));
+        // Both paths clean up the database and await the mailer directly.
+        await cleanup(passkeyOnly ? "link" : "none");
+        await deps.mailer().send(passkeyOnly ? passkeyOnlyLoginMail(email, locale)
+          : magicLinkMail({ to: email, url: confirmUrl(deps.baseURL, token), locale, code: code ?? "", invitation: metadata?.invitation === true }));
         if (observed) observed.result = "sent";
       } catch (error) {
         // Synchronous mailer() exceptions reach here too. Keep the caller's response unchanged; only record the delivery failure.

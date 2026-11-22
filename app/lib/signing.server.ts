@@ -130,8 +130,8 @@ function routeOperation(path: string, form: FormData): { operation: SigningOpera
   throw new SigningError("not_a_signed_operation", 400);
 }
 
-function signatureRequired(operation: SigningOperation, signPosts: boolean): boolean {
-  return operation === "remove-passkey" || operation === "change-signing-preference" || signPosts;
+function signatureRequired(operation: SigningOperation, profile: { signPosts: boolean; passkeyOnly: boolean }): boolean {
+  return operation === "change-signing-preference" || profile.signPosts || (operation === "remove-passkey" && profile.passkeyOnly);
 }
 
 export function signingPreferenceValue(form: FormData): boolean {
@@ -259,7 +259,7 @@ async function loadIntent(tx: Tx, userId: string, pathname: string, form: FormDa
     const keys = await tx.select().from(passkey).where(eq(passkey.userId, userId));
     const key = keys.find(k => k.id === formString(form, "passkeyId"));
     if (!key) throw new SigningError("not_found", 404);
-    if (keys.length <= 1) throw new SigningError("last_passkey", 409);
+    if (keys.length <= 1 && (profile.signPosts || profile.passkeyOnly)) throw new SigningError("last_passkey", 409);
     baseVersion = canonicalSigningJson(keys.map(k => k.credentialID).sort());
     content = { title: key.name, body: key.name ?? "", lang: null };
     input = { passkeyId: key.id, credentialId: key.credentialID };
@@ -296,7 +296,7 @@ async function loadIntent(tx: Tx, userId: string, pathname: string, form: FormDa
   const payload = canonicalSigningJson({ version: 1, actor: userId, operation, pathname, target, baseVersion, input, formHash });
   const payloadHash = sha256(payload);
   const keys = await tx.select({ id: passkey.id }).from(passkey).where(eq(passkey.userId, userId));
-  return { payload, payloadHash, formHash, preview: { operation, payloadHash, content, language, viewed: viewed ? { title: viewed.title, body: viewed.body, lang: viewed.lang } : null, current, target, lastEditor, targetContext, enrolled: keys.length > 0, signatureRequired: signatureRequired(operation, profile.signPosts), ...(village ? { village } : {}) } };
+  return { payload, payloadHash, formHash, preview: { operation, payloadHash, content, language, viewed: viewed ? { title: viewed.title, body: viewed.body, lang: viewed.lang } : null, current, target, lastEditor, targetContext, enrolled: keys.length > 0, signatureRequired: signatureRequired(operation, profile), ...(village ? { village } : {}) } };
 }
 
 export async function previewSignedWrite(db: Db, userId: string, pathname: string, form: FormData): Promise<SigningPreview> {
@@ -378,9 +378,9 @@ async function signedWriteInTransaction<T extends MutationResult>(db: Db, userId
     const transportPath = new URL(request.url).pathname;
     const pathname = transportPath === "/_.data" ? "/" : transportPath.endsWith(".data") ? transportPath.slice(0, -5) : transportPath;
     const { operation } = routeOperation(pathname, form);
-    const [profile] = await tx.select({ signPosts: profiles.signPosts }).from(profiles).where(eq(profiles.userId, userId));
+    const [profile] = await tx.select({ signPosts: profiles.signPosts, passkeyOnly: profiles.passkeyOnly }).from(profiles).where(eq(profiles.userId, userId));
     if (!profile) throw new SigningError("not_a_member");
-    if (!signatureRequired(operation, profile.signPosts)) return mutate(tx);
+    if (!signatureRequired(operation, profile)) return mutate(tx);
     const challenge = formString(form, SIGNATURE_CHALLENGE_FIELD);
     const assertionText = formString(form, SIGNATURE_ASSERTION_FIELD);
     if (!challenge || !assertionText) throw new SigningError("signature_required");
@@ -412,7 +412,7 @@ async function signedWriteInTransaction<T extends MutationResult>(db: Db, userId
         const [updated] = await tx.select().from(profiles).where(eq(profiles.userId, userId));
         if (updated?.displayName !== approved.input.displayName || updated?.displayNameLatin !== approved.input.displayNameLatin) throw new SigningError("published_content_changed", 409);
       } else if (intent.preview.operation === "change-signing-preference") {
-        const [updated] = await tx.select({ signPosts: profiles.signPosts }).from(profiles).where(eq(profiles.userId, userId));
+        const [updated] = await tx.select({ signPosts: profiles.signPosts, passkeyOnly: profiles.passkeyOnly }).from(profiles).where(eq(profiles.userId, userId));
         if (updated?.signPosts !== approved.input.signPosts) throw new SigningError("published_content_changed", 409);
       }
       await tx.insert(memberSignatures).values({ userId, entryId, sourceHash: entry?.sourceHash ?? null, operation: issued.operation, payload: issued.payload, payloadHash: issued.payloadHash, challenge, credentialId: key.credentialID, publicKey: key.publicKey, rpId: signingSite().rpId, origin: signingSite().origin, assertion: assertion as unknown as Record<string, unknown>, authenticatorData: assertion.response.authenticatorData, clientDataJson: assertion.response.clientDataJSON, signature: assertion.response.signature, createdAt: now });

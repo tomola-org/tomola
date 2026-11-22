@@ -61,9 +61,14 @@ it("previews unsigned content but refuses to issue an unnecessary challenge", as
   expect(await h.db.select().from(signingChallenges)).toHaveLength(0);
 });
 
-it.each(["sign-posts", "delete-passkey"])("still refuses unsigned settings intent %s", async intent => {
+it("requires a signature for the signing preference and for protected key removal", async () => {
   const { action } = await import("~/routes/settings");
-  expect(await h.outcome(() => action(h.args(h.request("/settings", { as: "hana", form: { intent, signPosts: "1", passkeyId: "missing" } }))))).toMatchObject({ status: 403, value: { data: { error: "signature_required" } } });
+  await h.signIn("protected_settings");
+  const userId = h.ids.protected_settings;
+  await h.db.update(profiles).set({ passkeyOnly: true }).where(eq(profiles.userId, userId));
+  for (const intent of ["sign-posts", "delete-passkey"]) {
+    expect(await h.outcome(() => action(h.args(h.request("/settings", { as: "protected_settings", form: { intent, signPosts: "1", passkeyId: "missing" } }))))).toMatchObject({ status: 403, value: { data: { error: "signature_required" } } });
+  }
 });
 
 it("requires a registered passkey before either preference change and binds both old and new values", async () => {

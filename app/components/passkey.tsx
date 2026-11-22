@@ -12,7 +12,7 @@ export function OrDivider() {
 // A successful passkey login adds the session cookie, then returns to the loader-validated destination.
 // `or` puts the "or" rule before or after the button, shown only when the browser supports passkeys (so a bare rule never appears).
 // `conditional` also offers the member's passkeys from the email field's autofill list (autocomplete="username webauthn"); the button stays as the plain way.
-export function PasskeyLogin({ next = "/", or, conditional = false }: { next?: string; or?: "before" | "after"; conditional?: boolean }) {
+export function PasskeyLogin({ next = "/", or, conditional = false, failureMessage }: { next?: string; or?: "before" | "after"; conditional?: boolean; failureMessage?: string }) {
   const supported = usePasskeySupport();
   const navigate = useNavigate();
   const [state, setState] = useState<"idle" | "busy" | "failed">("idle");
@@ -65,7 +65,7 @@ export function PasskeyLogin({ next = "/", or, conditional = false }: { next?: s
       </Button>
       {state === "failed" && (
         <p role="alert" className="text-destructive">
-          {m.login_passkey_failed()}
+          {failureMessage ?? m.login_passkey_failed()}
         </p>
       )}
       {or === "after" && <OrDivider />}

@@ -1,12 +1,13 @@
 import { expect, it, vi } from "vitest";
 import { randomBytes } from "node:crypto";
 import { createAppAuth } from "~/lib/auth/auth.server";
-import { settleMagicLinkMail } from "~/lib/auth/magic-link.server";
-import { decodeLoginCode } from "~/lib/auth/login-code.server";
+import { magicLinkOutcome, settleMagicLinkMail, type MagicLinkOutcome } from "~/lib/auth/magic-link.server";
+import { decodeLoginCode, loginCodeIdentifier, loginCodeState } from "~/lib/auth/login-code.server";
 import { createInvitation } from "~/lib/invitations.server";
 import { createMemoryMailbox } from "~/lib/mail/transports.server";
 import { createMailer } from "~/lib/mail/mail.server";
 import { createTestDb } from "./helpers/db";
+import { MAGIC_LINK_EMAIL_IP_LIMIT, MAGIC_LINK_EMAIL_LIMIT } from "~/lib/rate-limit.server";
 vi.mock("~/paraglide/messages.js", async () => ({ m: (await import("./helpers/messages-json")).jsonMessages() }));
 const SECRET = "test-secret-0123456789abcdef0123456789abcdef";
 
@@ -56,4 +57,37 @@ it("keeps plaintext codes out of storage and delivery-failure logs, including tr
     expect(logger.mock.calls.flat().join(" ")).not.toContain(code);
     expect(mailText.match(/https?:\/\/\S+/)![0]).not.toContain(code.replace(" ", ""));
   } finally { logger.mockRestore(); }
+});
+
+it("sends a rate-limited notice and keeps the ordinary code screen for passkey-only members", async () => {
+  const { addMember } = await import("./helpers/db");
+  const { eq } = await import("drizzle-orm");
+  const { profiles, verification } = await import("~/lib/db/schema");
+  const db = await createTestDb();
+  await addMember(db, "email-policy", "email_policy");
+  await db.update(profiles).set({ passkeyOnly: true }).where(eq(profiles.userId, "email-policy"));
+  const box = createMemoryMailbox();
+  const auth = createAppAuth(db, { baseURL: "http://localhost:5173", secret: SECRET, mailer: () => createMailer(box.transport, "tomola <no-reply@example.org>") });
+  const limit = Math.min(MAGIC_LINK_EMAIL_IP_LIMIT.limit, MAGIC_LINK_EMAIL_LIMIT.limit);
+  const email = "email-policy@example.com";
+  const codeIdentifiers = [];
+  for (let i = 0; i <= limit; i++) {
+    const outcome: MagicLinkOutcome = {};
+    const codeId = randomBytes(32).toString("base64url");
+    const reply = await magicLinkOutcome.run(outcome, () => auth.api.signInMagicLink({
+      body: { email, metadata: { browserNonce: randomBytes(32).toString("base64url"), codeId } }, headers: new Headers(),
+    }));
+    expect(reply).toEqual({ status: true });
+    expect(outcome.result).toBe(i < limit ? "sent" : "later");
+    if (i < limit) {
+      codeIdentifiers.push(loginCodeIdentifier(codeId));
+      expect(await loginCodeState(db, codeId, null)).toEqual({ invalid: false, limited: null });
+      expect(box.sent[i]).toMatchObject({ to: email, text: expect.stringContaining("passkeys only") });
+      expect(box.sent[i].text).not.toMatch(/https?:|\b\d{3} ?\d{3}\b/);
+    }
+  }
+  expect(box.sent).toHaveLength(limit);
+  const identifiers = (await db.select().from(verification)).map(row => row.identifier);
+  expect(identifiers.filter(identifier => identifier.startsWith("magic-link-code:")).sort()).toEqual(codeIdentifiers.sort());
+  expect(identifiers.filter(identifier => identifier.startsWith("magic-link:"))).toEqual([]);
 });

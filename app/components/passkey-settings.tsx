@@ -3,25 +3,29 @@ import { Button, buttonVariants } from "~/components/ui/button";
 import { Field, FieldLabel } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
 import { useCallback, useRef, useState } from "react";
-import { Form, useRevalidator } from "react-router";
+import { Form, Link, useRevalidator } from "react-router";
 import { m } from "~/paraglide/messages.js";
 import { SignedForm } from "~/components/signed-form";
-import { reauthenticationPath } from "~/lib/reauth";
+import { loginMethodReauthenticationPath } from "~/lib/reauth";
 import { passkeyNeedsActivation, usePasskeyReturn, withPasskeyReturn } from "~/lib/passkey-return";
 import { usePasskeySupport } from "~/lib/use-passkey-support";
 
 export type PasskeySummary = { id: string; name: string | null; createdAt: string | null; backedUp: boolean };
 
 // Passkeys in /settings: list, add through the browser dialog, and remove through a form POST.
-export function PasskeySettings({ passkeys, fresh, saved, returnTo }: { passkeys: PasskeySummary[]; fresh: boolean; saved: "passkey-added" | "passkey-removed" | null; returnTo?: string | null }) {
+export function PasskeySettings({ passkeys, login, saved, returnTo }: { passkeys: PasskeySummary[]; login: { fresh: boolean; remainingFresh: boolean; protected: boolean; needsRecovery: boolean; passkeyOnly: boolean }; saved: "passkey-added" | "passkey-removed" | null; returnTo?: string | null }) {
   const supported = usePasskeySupport();
+  const fresh = login.fresh;
+  const last = passkeys.length === 1;
+  const removeReady = last && !login.protected ? login.remainingFresh : fresh;
   const revalidator = useRevalidator();
   const [name, setName] = useState("");
   const [state, setState] = useState<{ status: "idle" | "busy" | "added" | "error" | "ready"; message?: string }>({ status: "idle" });
   const pending = useRef(false);
   const addButton = useRef<HTMLButtonElement>(null);
-  // An older session cannot add a credential: adding first re-verifies by email, then returns here.
-  const reauth = reauthenticationPath(withPasskeyReturn(withSettingsReturn("/settings#settings-passkeys", returnTo), "settings"));
+  const settingsPath = withSettingsReturn("/settings#settings-passkeys", returnTo);
+  const reauth = loginMethodReauthenticationPath(withPasskeyReturn(settingsPath, "settings"), "add-passkey");
+  const removeReauth = loginMethodReauthenticationPath(settingsPath, "remove-passkey", last && !login.protected ? "remaining" : undefined);
   const add = useCallback(async (automatic = false) => {
     if (pending.current) return;
     pending.current = true;
@@ -47,7 +51,7 @@ export function PasskeySettings({ passkeys, fresh, saved, returnTo }: { passkeys
   return (
     <section id="settings-passkeys" aria-labelledby="settings-passkeys-heading" className="scroll-mt-4 space-y-3">
       <h3 id="settings-passkeys-heading" className="text-lg font-semibold">{m.settings_passkeys_heading()}</h3>
-      <p className="ui-help text-muted-foreground">{m.settings_passkeys_intro()}</p>
+      {!login.passkeyOnly && <p className="ui-help text-muted-foreground">{m.settings_passkeys_intro()}</p>}
       {saved === "passkey-removed" && (
         <div className="space-y-2">
         <p role="status" className="text-success">
@@ -74,21 +78,21 @@ export function PasskeySettings({ passkeys, fresh, saved, returnTo }: { passkeys
               <span className="font-semibold">{p.name || m.settings_passkeys_unnamed()}</span>
               {p.createdAt && <span className="ui-meta text-muted-foreground">{m.settings_passkeys_created({ date: p.createdAt.slice(0, 10) })}</span>}
               {p.backedUp && <span className="ui-meta text-muted-foreground">{m.settings_passkeys_synced()}</span>}
-              <SignedForm signatureRequired method="post" action={withSettingsReturn("/settings#settings-passkeys", returnTo)} className="ms-auto" onSubmit={(e) => {
-                  if (!window.confirm(m.settings_passkeys_remove_confirm())) e.preventDefault();
+              {!removeReady && !(last && login.protected) ? <Link to={removeReauth} className={`${buttonVariants({ variant: "outline" })} ms-auto`}>{m.settings_passkeys_remove()}</Link> : <SignedForm signatureRequired={login.protected} method="post" action={settingsPath} className="ms-auto" onSubmit={(e) => {
+                  if (!login.protected && !window.confirm(m.settings_passkeys_remove_confirm())) e.preventDefault();
                 }}>
                 <input type="hidden" name="intent" value="delete-passkey" />
                 <input type="hidden" name="passkeyId" value={p.id} />
-                <Button type="submit" disabled={passkeys.length <= 1} className="text-sm" variant="destructive">
+                <Button type="submit" disabled={last && login.protected} className="text-sm" variant="destructive">
                   {m.settings_passkeys_remove()}
                 </Button>
-              </SignedForm>
+              </SignedForm>}
             </li>
           ))}
         </ul>
       )}
-      {passkeys.length === 1 && <p className="ui-help text-muted-foreground">{m.passkey_last_required()}</p>}
-      {supported && !fresh ? (
+      {last && login.protected && <p className="ui-help text-muted-foreground">{m.passkey_last_required()}</p>}
+      {login.needsRecovery ? <p className="ui-help">{m.settings_passkeys_recovery_required()}</p> : supported && !fresh ? (
         <p><a href={reauth} className={buttonVariants()}>{m.settings_passkeys_add()}</a></p>
       ) : supported ? (
         <div className="flex flex-wrap items-end gap-2">

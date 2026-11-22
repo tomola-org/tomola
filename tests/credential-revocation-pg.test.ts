@@ -51,3 +51,59 @@ describe.skipIf(!REAL_PG_URL)("credential creation versus complete revocation", 
     } finally { await held.rollback(); await result; }
   });
 });
+
+// The member lock must cover the settings change and the session insertion,
+// even when the email credential was consumed on another connection first.
+describe.skipIf(!REAL_PG_URL)("passkey-only login races", { tags: ["postgres"] }, () => {
+  let scratch: ScratchDb;
+  beforeAll(async () => { scratch = await createScratchDb(); });
+  afterAll(async () => { await scratch?.drop(); });
+  it("leaves only the rotated passkey session and preserves the final passkey", async () => {
+    const { issuePasskeySession } = await import("~/lib/auth/auth.server");
+    const { setPasskeyOnly, removeOwnPasskey } = await import("~/lib/auth/passkeys.server");
+    const { lockSigningMember } = await import("~/lib/signing.server");
+    const { session, passkey } = await import("~/lib/db/schema");
+    const { signingCredential } = await import("./helpers/signing");
+    const { waitForLockWait } = await import("./helpers/pg-concurrency");
+    const writer = await scratch.open("passkey-setting"), email = await scratch.open("passkey-email"), remover = await scratch.open("passkey-deletion"), admin = await scratch.admin();
+    const userId = "passkey-race";
+    await addMember(writer, userId, "passkey_race");
+    const key = await signingCredential(writer, userId, { counterZero: true });
+    const links: string[] = [];
+    const opts = { baseURL: "http://localhost:5173", secret: "test-secret-0123456789abcdef0123456789abcdef", sendMagicLink: async ({ token }: { token: string }) => { links.push(token); } };
+    const auth = createAuth(writer, opts), emailAuth = createAuth(email, opts);
+    const issue = () => emailAuth.api.signInMagicLink({ body: { email: `${userId}@example.com` }, headers: new Headers() });
+    const verify = () => emailAuth.api.magicLinkVerify({ query: { token: links.at(-1)! }, headers: new Headers(), asResponse: true });
+    await issue();
+    expect((await verify()).status).toBe(200);
+    const [old] = await writer.select().from(session).where(eq(session.userId, userId));
+    const confirm = await writer.transaction(tx => issuePasskeySession(auth, tx, userId, new Date(), key.id));
+    const current = await auth.api.getSession({ headers: new Headers({ cookie: confirm.getSetCookie().map(value => value.split(";")[0]).join("; ") }) });
+    expect(current).not.toBeNull();
+    await issue();
+    let locked!: () => void;
+    let enable!: () => void;
+    const lockReady = new Promise<void>(resolve => { locked = resolve; });
+    const allowEnable = new Promise<void>(resolve => { enable = resolve; });
+    const setting = writer.transaction(async tx => {
+      await lockSigningMember(tx, userId);
+      locked();
+      await allowEnable;
+      return setPasskeyOnly(tx, userId, current!.session.id, true, (inner, at) => issuePasskeySession(auth, inner, userId, at));
+    });
+    await lockReady;
+    const emailResult = verify();
+    const deletion = remover.transaction(async tx => {
+      await lockSigningMember(tx, userId);
+      return removeOwnPasskey(tx, userId, key.id, old.id);
+    }).catch(error => error);
+    try {
+      await Promise.all([waitForLockWait(admin, "passkey-email"), waitForLockWait(admin, "passkey-deletion")]);
+    } finally { enable(); }
+    await setting;
+    expect((await emailResult).status).toBe(401);
+    expect(await deletion).toMatchObject({ code: "last_passkey" });
+    expect(await writer.select().from(session).where(eq(session.userId, userId))).toMatchObject([{ loginMethod: "passkey" }]);
+    expect(await writer.select().from(passkey).where(eq(passkey.userId, userId))).toHaveLength(1);
+  });
+});

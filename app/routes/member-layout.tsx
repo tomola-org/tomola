@@ -1,3 +1,5 @@
+import { loginReauthentication } from "~/lib/auth/login-reauthentication.server";
+import { protectedLogin } from "~/lib/auth/login-method.server";
 import { followedMemberNavigation, type FollowedMemberNavigation } from "~/lib/member-follows.server";
 import { displayLangFor } from "~/lib/display-lang.server";
 import { NavigationUnreadContext, type NavigationUnread } from "~/lib/navigation-unread";
@@ -22,7 +24,7 @@ import { hasLogoutNotice } from "~/lib/auth/logout-notice.server";
 import { passkeyPromptPreference } from "~/lib/passkey-prompt.server";
 import { data, Outlet, useLocation, useMatches } from "react-router";
 import type { Route } from "./+types/member-layout";
-import { getReader, getMemberScope, getCredentialSessionFresh } from "~/lib/auth/session.server";
+import { getReader, getMemberScope, getCredentialSessionFresh, loginManagementSession } from "~/lib/auth/session.server";
 import { readerLoginHref } from "~/lib/public-reading";
 import { countDraftBadges } from "~/lib/drafts.server";
 import { countUnreadNotifications, hasUnreadFollowedThread } from "~/lib/notifications.server";
@@ -64,6 +66,8 @@ export async function loader({ request }: { request: Request }) {
     passkeyPrompt: passkeyPromptPreference(request, user.id),
     hasPasskey: keys.length > 0,
     credentialFresh: await getCredentialSessionFresh(request),
+    passkeyEnrollmentFresh: !!await loginReauthentication(db, user.id, await loginManagementSession(request)),
+    passkeyEnrollmentAllowed: !(protectedLogin(profile) && profile.passkeyEnrolledAt !== null),
     handle: profile.handle,
     isOperator: scope.operator,
     canInvite: canCreateInvitations(scope.operator),
@@ -112,7 +116,7 @@ export default function MemberLayout({ loaderData }: Route.ComponentProps) {
   return (
     <NavigationUnreadContext.Provider value={updateUnread}><NavigationDataContext.Provider value={places}><TooltipProvider>
       {loaderData.welcome && <WelcomeNotice welcome={loaderData.welcome} handle={loaderData.handle} passkeyOffer={!loaderData.hasPasskey && location.pathname !== "/" && location.pathname !== "/settings"} villages={"villages" in loaderData} />}
-      {Prompt && <Prompt key={location.pathname} eligible={!loaderData.hasPasskey} preference={loaderData.passkeyPrompt} fresh={loaderData.credentialFresh} />}
+      {Prompt && <Prompt key={location.pathname} eligible={!loaderData.hasPasskey && loaderData.passkeyEnrollmentAllowed} preference={loaderData.passkeyPrompt} fresh={loaderData.passkeyEnrollmentFresh} />}
       <MemberHeader data={navigation as Exclude<typeof navigation, { reader: true }>} sideNavigation={sideNavigation} />
       {sideNavigation ? <SiteNavigation><Outlet /></SiteNavigation> : <Outlet />}
     </TooltipProvider></NavigationDataContext.Provider></NavigationUnreadContext.Provider>

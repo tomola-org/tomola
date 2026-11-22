@@ -1,3 +1,4 @@
+import { linkedGoogle, protectedLogin } from "~/lib/auth/login-method.server";
 import { withMarkdownRead } from "~/lib/markdown-budget.server";
 import { Field, FieldLabel } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
@@ -17,7 +18,7 @@ import type { Route } from "./+types/login";
 import { GuestHeader } from "~/components/guest-header";
 import { PasskeyLogin } from "~/components/passkey";
 import { getAuth, isOriginRejected, isRejectedInput } from "~/lib/auth/auth.server";
-import { getSessionUser } from "~/lib/auth/session.server";
+import { getSessionUser, loginManagementSession } from "~/lib/auth/session.server";
 import { getDb } from "~/lib/db/client.server";
 import { getProfile } from "~/lib/profiles.server";
 import { passkey } from "~/lib/db/schema";
@@ -29,7 +30,7 @@ import { m } from "~/paraglide/messages.js";
 import { getLocale } from "~/paraglide/runtime.js";
 import { hasLogoutNotice } from "~/lib/auth/logout-notice.server";
 import { safeLocalPath } from "~/lib/display-lang.server";
-import { isReauthentication } from "~/lib/reauth";
+import { isLoginMethodReturn, isReauthentication, loginMethodPurpose } from "~/lib/reauth";
 import { googleLoginConfig } from "~/lib/auth/google-config.server";
 import { googleBrowserFromRequest } from "~/lib/auth/google-browser";
 import { startGoogleSignIn } from "~/lib/auth/google-flow.server";
@@ -47,6 +48,13 @@ const reauthMessages = {
   mcp: m.reauth_for_mcp,
   moderation: m.reauth_for_moderation,
   passkey: m.reauth_for_passkey,
+  "add-passkey": m.reauth_for_passkey,
+  "remove-passkey": m.reauth_for_remove_passkey,
+  "enable-passkey-only": m.reauth_for_enable_passkey_only,
+  "disable-passkey-only": m.reauth_for_disable_passkey_only,
+  "revoke-all": m.reauth_for_revoke_all,
+  "connect-google": m.reauth_for_connect_google,
+  "disconnect-google": m.reauth_for_disconnect_google,
   tokens: m.reauth_for_tokens,
 };
 
@@ -69,18 +77,25 @@ async function loaderImplementation({ request }: Route.LoaderArgs) {
   const codePending = await pendingLoginScreen(db, request);
   if (!reauth && member && (!codePending || parseEmail(codePending.email) === parseEmail(member.email))) throw redirect(next);
   // A re-verification is for a member who is logged in: the screen names them and what it is for, and puts the passkey first when they have one.
-  const verifying = reauth && member && (!codePending || parseEmail(codePending.email) === parseEmail(member.email)) ? {
+  const profile = reauth && member ? await getProfile(db, member.id) : null;
+  const loginMethodChange = mode === "1" && isLoginMethodReturn(next);
+  const passkeyOnly = !!profile?.passkeyOnly || (loginMethodChange && (url.searchParams.get("method") === "passkey" || !!profile && protectedLogin(profile)));
+  const remaining = loginMethodChange && !passkeyOnly && url.searchParams.get("method") === "remaining";
+  const googleError = url.searchParams.get("error");
+  const verifying = reauth && member && (passkeyOnly || !codePending || parseEmail(codePending.email) === parseEmail(member.email)) ? {
     email: member.email,
-    handle: (await getProfile(db, member.id))?.handle ?? null,
-    purpose: mode === "moderation" ? mode : reauthPurpose(next),
+    handle: profile?.handle ?? null,
+    passkeyOnly, remaining,
+    purpose: mode === "moderation" ? mode : (loginMethodChange ? loginMethodPurpose(url.searchParams.get("purpose")) : undefined) ?? reauthPurpose(next),
     // During an AI connection the check is for the account that is logged in; someone who wants another account can leave and return to the same request (the logout screen allows only /mcp/login).
     ...(next.startsWith("/mcp/consent?") ? { switchNext: `/mcp/login?${next.slice("/mcp/consent?".length)}` } : {}),
     hasPasskey: (await db.select({ id: passkey.id }).from(passkey).where(eq(passkey.userId, member.id)).limit(1)).length > 0,
   } : null;
   // The extra fields are present only when they apply, so an ordinary login screen carries nothing more than before.
   return {
-    next, reauth, codePending, loggedOut: hasLogoutNotice(request),
-    ...(googleLoginConfig() && !reauth ? { google: { browser: googleBrowserFromRequest(request), error: url.searchParams.get("error") } } : {}),
+    next, reauth, codePending: passkeyOnly ? null : codePending, loggedOut: hasLogoutNotice(request),
+    ...(reauth && googleError === "google_reauth" ? { googleReauthenticationFailed: true } : {}),
+    ...(googleLoginConfig() && (!reauth || loginMethodChange && googleError !== "google_reauth" && !passkeyOnly && !!member && await linkedGoogle(db, member.id)) ? { google: { browser: googleBrowserFromRequest(request), error: googleError } } : {}),
     ...(verifying ? { verifying } : {}),
     ...(publicReading() ? { publicReading: true } : {}),
     ...(/^\/u\//.test(next) ? { membersOnlyTarget: true } : {}),
@@ -100,7 +115,25 @@ export async function action({ request }: Route.ActionArgs) {
     throw redirect(safeLocalPath(String(form.get("next") ?? "")));
   }
   await enforceIpLimit(await getDb(), request, "auth-page");
-  if (intent === "google-login" && !reauth) return startGoogleSignIn(request, safeLocalPath(String(form.get("next") ?? "")));
+  if (intent === "google-login") {
+    const next = safeLocalPath(String(form.get("next") ?? ""));
+    if (!reauth) return startGoogleSignIn(request, next);
+    const db = await getDb();
+    const profile = member && await getProfile(db, member.id);
+    const source = new URL(request.url);
+    if (!member || !profile || protectedLogin(profile) || source.searchParams.get("method") === "passkey"
+      || !isLoginMethodReturn(next) || !await linkedGoogle(db, member.id)) throw new Response("Not found", { status: 404 });
+    const target = new URL(next, "https://return.invalid");
+    const marker = target.searchParams.get("passkey");
+    target.search = "";
+    if (!/^#settings-(?:login(?:-methods)?|passkeys|google)$/.test(target.hash)) target.hash = "";
+    if (marker === "continue" || marker === "continue-settings") target.searchParams.set("passkey", marker);
+    const sessionId = await loginManagementSession(request);
+    if (!sessionId) throw new Response("Not found", { status: 404 });
+    return startGoogleSignIn(request, target.pathname + target.search + target.hash, null, {
+      userId: member.id, sessionId, purpose: loginMethodPurpose(source.searchParams.get("purpose")), remaining: source.searchParams.get("method") === "remaining",
+    });
+  }
   if (intent === "login-restart") return restartLoginCode(request);
   if (intent === "login-code") return submitLoginCode(request, form);
   const resent = intent === "login-resend";
@@ -192,8 +225,10 @@ export default function Login({ loaderData, actionData }: Route.ComponentProps) 
       {!verifying && ("membersOnlyTarget" in loaderData) && !loaderData.codePending && <MembersOnlyNotice />}
       <h1 className="text-2xl font-bold">{heading}</h1>
       {verifying && <p>{reauthMessages[verifying.purpose]({ who: verifying.handle ? `@${verifying.handle}` : verifying.email })}</p>}
+      {loaderData.googleReauthenticationFailed && <p role="alert" className="ui-help">{m.google_failed()}</p>}
       {!verifying && !loaderData.codePending && <p>{m.entry_intro()}</p>}
-      <IosStandaloneLoginNote />
+      {verifying?.passkeyOnly && !verifying.hasPasskey && <p>{m.settings_passkeys_recovery_required()}</p>}
+      {!verifying?.passkeyOnly && <IosStandaloneLoginNote />}
       {!loaderData.codePending && screenAction?.status === "code_invalid" && <p role="alert" className="text-destructive">{m.login_code_invalid()}</p>}
       {loaderData.codePending ? <>
         <LoginRequestNotice status={screenAction?.status} />
@@ -201,9 +236,9 @@ export default function Login({ loaderData, actionData }: Route.ComponentProps) 
         <LoginCodeForm key={loaderData.codePending.revision} state={loaderData.codePending} resentNotice={screenAction?.status !== "later"} invalid={screenAction?.status === "code_invalid"} limited={screenAction && "limited" in screenAction ? screenAction.limited : undefined} hiddenFields={{ next: loaderData.next, ...(loaderData.reauth ? { reauth: reauthValue } : {}) }} />
         {screenAction?.status === "origin_mismatch" && <p role="alert" className="text-destructive">{m.auth_origin_mismatch()}</p>}
       </> : <>
-      {verifying?.hasPasskey && <PasskeyLogin next={loaderData.next} or="after" />}
-      {loaderData.google && <><GoogleLoginError error={loaderData.google.error} /><GoogleLogin browser={loaderData.google.browser} next={loaderData.next} /></>}
-      <Form method="post" className="space-y-2">
+      {verifying?.hasPasskey && !verifying.remaining && <PasskeyLogin next={loaderData.next} or={verifying.passkeyOnly ? undefined : "after"} failureMessage={verifying.passkeyOnly ? m.signing_failed() : undefined} />}
+      {loaderData.google && <><GoogleLoginError error={loaderData.google.error} /><GoogleLogin browser={loaderData.google.browser} next={loaderData.next} reauth={loaderData.reauth} /></>}
+      {!verifying?.passkeyOnly && <Form method="post" className="space-y-2">
           <input type="hidden" name="next" value={loaderData.next} />
           {loaderData.reauth && <input type="hidden" name="reauth" value={reauthValue} />}
           <Field className="min-w-0 w-auto"><FieldLabel className="block">
@@ -216,7 +251,7 @@ export default function Login({ loaderData, actionData }: Route.ComponentProps) 
           <Button type="submit">
             {verifying ? m.reauth_submit() : m.login_submit()}
           </Button>
-        </Form>
+        </Form>}
       {!verifying && <>
         <PasskeyLogin next={loaderData.next} or="before" conditional />
         <p className="ui-help text-muted-foreground"><span className="block">{m.login_invitation_short()}</span>{("publicReading" in loaderData) && <span className="block">{m.login_reading_note()}</span>}</p>

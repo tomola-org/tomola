@@ -11,6 +11,7 @@ import { magicLinkInvitationIdentifier, parseInvitationRef } from "./invitation-
 import { APIError } from "better-auth/api";
 import { MCP_SCOPES } from "~/lib/connect-paths";
 import { MCP_ACCESS_TOKEN_SECONDS, lineMark } from "~/lib/mcp/line.server";
+import { markVerifiedLogin } from "./login-method.server";
 
 // Magic-link token storage in the DB verification table: SHA-256 encoded as unpadded base64url. This matches Better Auth's default (storeToken: "hashed"),
 // but keep the function here so the app can compute it. When refusing delivery for an unknown recipient or rate limit, the app uses it to delete the row Better Auth wrote before sending
@@ -90,8 +91,9 @@ export function authPlugins(sendMagicLink: SendMagicLink, opts: { baseURL: strin
     }),
     // Passkeys: registration requires a logged-in member (registration.requireSession defaults to true; from /settings). Login requires
     // a user with an existing registered passkey. Users without passkeys cannot be created this way, so invitation-only access cannot be bypassed.
-    passkey({ rpID: site.hostname, rpName: "tomola", origin: site.origin, authentication: { afterVerification: async ({ verification }) => {
+    passkey({ rpID: site.hostname, rpName: "tomola", origin: site.origin, authentication: { afterVerification: async ({ verification, ctx }) => {
       if (!verification.authenticationInfo.userVerified) throw new APIError("UNAUTHORIZED", { code: "USER_VERIFICATION_REQUIRED", message: "User verification required" });
+      markVerifiedLogin(ctx.context, { method: "passkey", at: new Date(), credentialId: verification.authenticationInfo.credentialID, backedUp: verification.authenticationInfo.credentialBackedUp });
     } } }),
     jwt({ jwt: { issuer: `${site.origin}/api/auth` } }),
     mcp({

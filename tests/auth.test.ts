@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createAuth } from "~/lib/auth/auth.server";
-import { invitations, session, user } from "~/lib/db/schema";
+import { invitations, session, user, verification } from "~/lib/db/schema";
+import * as loginMethod from "~/lib/auth/login-method.server";
+import { hashMagicLinkToken } from "~/lib/auth/plugins";
 import { createInvitation } from "~/lib/invitations.server";
 import { createTestDb } from "./helpers/db";
 
@@ -62,9 +64,26 @@ describe("invite-only magic link auth", () => {
     expect(rows).toHaveLength(1);
     const sessions = await db.select().from(session).where(eq(session.userId, rows[0].id));
     expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({ loginMethod: "email_link", reauthenticationMethod: "email_link", reauthenticatedAt: expect.any(Date) });
     const [invitation] = await db.select().from(invitations).where(eq(invitations.email, "alice@example.com"));
     expect(invitation.usedAt).toBeInstanceOf(Date);
     expect(invitation.usedBy).toBe(rows[0].id);
+  });
+
+  it("records no email proof when verification only cleans up expired rows", async () => {
+    const { auth, db, sent } = await setup();
+    const expired = "expired@example.com";
+    await auth.api.signInMagicLink({ body: { email: expired }, headers: new Headers() });
+    const token = new URL(sent[0].url).searchParams.get("token")!;
+    await db.update(verification).set({ expiresAt: new Date(Date.now() - 1_000) }).where(eq(verification.identifier, `magic-link:${hashMagicLinkToken(token)}`));
+    const mark = vi.spyOn(loginMethod, "markVerifiedLogin");
+    try {
+      const result = await auth.api.magicLinkVerify({ query: { token }, headers: new Headers(), asResponse: true });
+      expect(result.headers.get("location")).toContain("error=INVALID_TOKEN");
+      expect(await db.select().from(verification)).toEqual([]);
+      expect(mark).not.toHaveBeenCalled();
+      expect(await db.select().from(session)).toEqual([]);
+    } finally { mark.mockRestore(); }
   });
 
   it("rejects verification and creates no user or session without an invitation", async () => {

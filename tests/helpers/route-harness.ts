@@ -115,8 +115,8 @@ export async function setupRouteHarness(): Promise<RouteHarness> {
         const handle = Object.keys(cookies).find(h => cookies[h] === req.headers.get("cookie"));
         if (named && handle && req.headers.get("origin") === BASE) {
           const userId = ids[handle];
-          const [profile] = await db.select({ signPosts: profiles.signPosts }).from(profiles).where(eq(profiles.userId, userId));
-          if (!profile?.signPosts && !["delete-passkey", "sign-posts"].includes(intent)) return { request: req, params, context: {} } as never;
+          const [profile] = await db.select({ signPosts: profiles.signPosts, passkeyOnly: profiles.passkeyOnly }).from(profiles).where(eq(profiles.userId, userId));
+          if (!profile?.signPosts && intent !== "sign-posts" && !(intent === "delete-passkey" && profile?.passkeyOnly)) return { request: req, params, context: {} } as never;
           let key = signingKeys.get(userId);
           if (!key) { key = await signingCredential(db, userId); signingKeys.set(userId, key); }
           try { req = await attachSigningProof(db, userId, req, key); }

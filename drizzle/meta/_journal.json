@@ -911,6 +911,13 @@
       "when": 1795333338251,
       "tag": "0129_draft_previewed_at",
       "breakpoints": true
+    },
+    {
+      "idx": 130,
+      "version": "7",
+      "when": 1795335761269,
+      "tag": "0130_login_methods",
+      "breakpoints": true
     }
   ]
 }

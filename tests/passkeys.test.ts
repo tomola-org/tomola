@@ -1,7 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { signingCredential } from "./helpers/signing";
 import { ALLOWED_AUTH_ENDPOINTS } from "~/lib/auth/endpoints.server";
-import { passkey, session, user } from "~/lib/db/schema";
+import { passkey, profiles, session, user } from "~/lib/db/schema";
 import { action as authAction, loader as authLoader } from "~/routes/api.auth";
 import { action as enrollAction } from "~/routes/passkeys";
 import { action as settingsAction, loader as settingsLoader } from "~/routes/settings";
@@ -78,7 +79,7 @@ describe("the open passkey endpoints", () => {
   });
 
   it("refuses enrollment with an old session", async () => {
-    await h.db.update(session).set({ createdAt: new Date(Date.now() - 2 * 24 * 3600 * 1000) }).where(eq(session.userId, h.ids.kim));
+    await h.db.update(session).set({ reauthenticatedAt: new Date(Date.now() - 11 * 60_000) }).where(eq(session.userId, h.ids.kim));
     const res = await enroll("kim", { intent: "options", name: "laptop" });
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: "SESSION_NOT_FRESH" });
@@ -97,6 +98,21 @@ describe("the open passkey endpoints", () => {
     expect(res.headers.getSetCookie().some((c) => c.includes("session_token"))).toBe(false);
     expect((await h.db.select().from(user)).length).toBe(users);
     expect((await h.db.select().from(session)).length).toBe(sessions);
+  });
+
+  it("issues a passkey session only after user verification, even when email login is disabled", async () => {
+    const userId = await h.signIn("verified_passkey");
+    const key = await signingCredential(h.db, userId);
+    await h.db.update(profiles).set({ passkeyOnly: true }).where(eq(profiles.userId, userId));
+    const verify = async (uv: boolean) => {
+      const options = await call("GET", "/api/auth/passkey/generate-authenticate-options");
+      const cookie = options.headers.getSetCookie().find(value => value.startsWith("better-auth.better-auth-passkey="))!.split(";")[0];
+      const { challenge } = await options.json();
+      return call("POST", "/api/auth/passkey/verify-authentication", { body: { response: key.assert(challenge, { uv }) }, headers: { cookie } });
+    };
+    expect((await verify(false)).status).toBe(401);
+    expect((await verify(true)).status).toBe(200);
+    expect(await h.db.select().from(session).where(and(eq(session.userId, userId), eq(session.loginMethod, "passkey")))).toMatchObject([{ reauthenticationMethod: "passkey", reauthenticatedAt: expect.any(Date) }]);
   });
 
   it("refuse verification without a challenge cookie", async () => {

@@ -4,7 +4,7 @@ import path from "node:path";
 import { expect, request, type Browser, type Locator, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { AI_CHOICE_STORAGE_KEY, AI_OPEN_CHECK_DELAY_MS, AI_OPEN_CHECK_INTERVAL_MS, OPEN_IN_AI_TTL_SECONDS, CHATGPT_TEMPLATE, CLAUDE_TEMPLATE, serializeChoice } from "../app/lib/open-in-ai";
-import { captureScreenshot, useMember, clientHeaders, enMessages as en, formatMessage, state  } from "./helpers";
+import { captureScreenshot, useMember, clientHeaders, enMessages as en, formatMessage, state, waitForHydration } from "./helpers";
 
 const recovery = formatMessage(en.open_in_ai_not_read, { copy: en.open_in_ai_copy_md });
 // The fixture adds a topic to the shared seed author, so it is opt-in like the other fixture suites.
@@ -124,6 +124,7 @@ test("public readers receive fresh inert markers and see recovery only until the
   const { page, opened, checked, ai, close } = await setup(browser, "10.89.0.2");
   try {
     await page.goto(`/t/${f.topicId}?lang=en`);
+    await waitForHydration(page);
     await expect(page.getByRole("button", { name: en.open_in_ai, exact: true }).first()).toBeVisible();
     await page.locator(".reading-toc-sidebar [data-reading-actions]").getByRole("button", { name: en.open_in_ai, exact: true }).click();
     const dialog = page.getByRole("dialog", { name: en.open_in_ai_dialog_title });
