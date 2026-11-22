@@ -52,7 +52,7 @@ export type TranslationRequest = {
   // The @mentions of the source body (the members it names, as written: "@hana"; the quoted ones included, they are shown as mentions). The translation keeps every one of
   // them (the prompt rule, and checkStructure). Only the body of a post has them.
   mentions?: string[];
-  // Distinguish paid call checkpoints whose masked prompts have different destinations.
+  // Separates protected checkpoints from legacy calls and retains the identity of their original input.
   maskedSourceHash?: string;
   // Additional retry warning after the previous output failed structure checks; used by translateChecked.
   retryNote?: string;

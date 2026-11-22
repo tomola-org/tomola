@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { addMember, createTestDb } from "./helpers/db";
 import { chatMessages, chatMessageTranslations, entries, jobs, llmUsage, translations, villages } from "~/lib/db/schema";
 import { enqueue, runDueJobs } from "~/lib/jobs/queue.server";
-import { translate, type TranslationOutcome, type TranslationEngine } from "~/lib/llm/index.server";
+import { hasSavedTranslation, translate, type TranslationOutcome, type TranslationEngine } from "~/lib/llm/index.server";
 import * as markdown from "~/lib/markdown-budget.server";
 import { translationCallKey, withPaidTranslationCalls } from "~/lib/jobs/paid-translation.server";
 import { getBudgetState } from "~/lib/llm/usage.server";
@@ -20,13 +20,17 @@ it.each([
   expect(await getBudgetState(db, now, env)).toBe(state);
   const call = vi.fn<TranslationEngine["translate"]>();
   const engine: TranslationEngine = { id: "claude", model: "claude-haiku-4-5", translate: call };
-  const req = { text: "A clear original.", from: "en", to: "ja" } as const;
-  const result = { text: "翻訳結果", model: engine.model, promptVersion: "fixture", inputTokens: 10, outputTokens: 2 };
+  const destination = "https://docs.example.test/paid";
+  const req = { text: `A clear [original](${destination}).`, from: "en", to: "ja" } as const;
+  const result = { text: `明快な[原文](${destination})です。`, model: engine.model, promptVersion: "translate-v14", inputTokens: 10, outputTokens: 2 };
   const saved = { paidTranslationCalls: { [translationCallKey(engine, req, "translate", role)]: { result, costUsdMicro: 20 } } };
   const save = vi.fn();
-  vi.spyOn(markdown, "markdownTask").mockResolvedValue({ flags: [], notes: [] });
-  const out = await withPaidTranslationCalls(saved, save, () => translate(db, role, req, { now, env, engines: { primary: engine, secondary: engine, judge: null } }));
-  expect(out).toMatchObject({ text: result.text, costUsdMicro: 20, inputTokens: 10 });
+  const opts = { now, env, engines: { primary: engine, secondary: engine, judge: null } };
+  const out = await withPaidTranslationCalls(saved, save, async () => {
+    expect(await hasSavedTranslation(role, req, opts)).toBe(true);
+    return translate(db, role, req, opts);
+  });
+  expect(out).toMatchObject({ text: result.text, promptVersion: "translate-v14", costUsdMicro: 20, inputTokens: 10, attempts: 1, flags: [] });
   expect(call).not.toHaveBeenCalled();
   expect(save).not.toHaveBeenCalled();
   expect(await db.select().from(llmUsage)).toHaveLength(1);
@@ -37,7 +41,10 @@ it.each([1, 2])("resumes inspection after paid call %i without repeating either 
   const translateCall = vi.fn(async () => ({ text: busyAt === 2 && ++calls === 1 ? "bad" : "翻訳結果", model: "claude-haiku-4-5", promptVersion: "fixture", inputTokens: 10, outputTokens: 2 }));
   const engine: TranslationEngine = { id: "claude", model: "claude-haiku-4-5", translate: translateCall };
   let blocked = false;
-  vi.spyOn(markdown, "markdownTask").mockImplementation(async (_operation, args) => {
+  const task = markdown.markdownTask;
+  vi.spyOn(markdown, "markdownTask").mockImplementation(async (...call) => {
+    const [operation, args] = call;
+    if (operation !== "inspectTranslation") return task(...call);
     if (args[1] === "bad") return { flags: ["structure_mismatch"], notes: ["Preserve the structure"] };
     if (!blocked) { blocked = true; throw new markdown.MarkdownBusyError(); }
     return { flags: [], notes: [] };
@@ -56,6 +63,32 @@ it.each([1, 2])("resumes inspection after paid call %i without repeating either 
   expect(result).toMatchObject({ text: "翻訳結果", attempts: busyAt, inputTokens: busyAt * 10, costUsdMicro: expect.any(Number) });
   expect(result!.costUsdMicro).toBeGreaterThan(0);
   expect((await db.select().from(jobs))[0].payload).toEqual({ retained: "original payload" });
+});
+
+it("replays both legacy calls using the original title context and retry note", async () => {
+  const db = await createTestDb();
+  const translateCall = vi.fn<TranslationEngine["translate"]>();
+  const engine: TranslationEngine = { id: "claude", model: "claude-haiku-4-5", translate: translateCall };
+  const destination = "https://docs.example.test/paid";
+  const req = { text: "A title", field: "title", from: "en", to: "ja", titleBodyContext: `[Guide](${destination})` } as const;
+  const protectedContext = { titleBodyContext: "[Guide](TMLINK0X1Z)" };
+  const retryNote = "Preserve the structure";
+  const result = { text: "題名", model: engine.model, promptVersion: "translate-v14", inputTokens: 10, outputTokens: 2 };
+  const saved = { paidTranslationCalls: {
+    [translationCallKey(engine, req, "translate", "primary")]: { result: { ...result, text: "bad" }, costUsdMicro: 20 },
+    [translationCallKey(engine, { ...req, retryNote }, "translate", "primary")]: { result, costUsdMicro: 25 },
+  } };
+  const task = markdown.markdownTask;
+  vi.spyOn(markdown, "markdownTask").mockImplementation(async (...call) => {
+    if (call[0] !== "inspectTranslation") return task(...call);
+    return call[1][1] === "bad" ? { flags: ["structure_mismatch"], notes: [retryNote] } : { flags: [], notes: [] };
+  });
+  const save = vi.fn();
+  const out = await withPaidTranslationCalls(saved, save, () => translate(db, "primary", { ...req, protectedContext }, { engines: { primary: engine, secondary: null, judge: null } }));
+  expect(out).toMatchObject({ text: result.text, attempts: 2, inputTokens: 20, costUsdMicro: 45, flags: [] });
+  expect(translateCall).not.toHaveBeenCalled();
+  expect(save).not.toHaveBeenCalled();
+  expect(await db.select().from(llmUsage)).toHaveLength(0);
 });
 
 it("resumes a paid fallback without calling the refused primary again", async () => {

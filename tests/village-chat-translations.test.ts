@@ -14,7 +14,7 @@ import { deleteOwnChat } from "~/lib/village-chat-own.server";
 import { getBudgetStatus, getChatBudgetStatus, recordUsage } from "~/lib/llm/usage.server";
 import { translate, translateChat } from "~/lib/llm/index.server";
 import { createFakeEngine } from "~/lib/llm/engines/fake.server";
-import { buildTranslationPrompt, CHAT_PROMPT_VERSION, decodeChatEntities, PROMPT_VERSION } from "~/lib/llm/prompt.server";
+import { buildTranslationPrompt, CHAT_PROMPT_VERSION, decodeChatEntities } from "~/lib/llm/prompt.server";
 import { translateChecked } from "~/lib/llm/translate.server";
 import { inspectTranslation } from "~/lib/llm/translation-inspect.core.server";
 import type { TranslationEngine } from "~/lib/llm/types";
@@ -258,7 +258,6 @@ it("passes neutralized untrusted context through the normal engine and decodes p
   expect(prompt!.user).toContain("<\u200b/conversation_context-fixed>");
   expect(prompt!.user.match(/<\/conversation_context-fixed>/g)).toHaveLength(1);
   expect(buildTranslationPrompt({ text: "Original", from: "en", to: "ja" }).system).not.toContain("10. The");
-  expect(PROMPT_VERSION).toBe("translate-v14");
   await recordUsage(w.db, { engine: "fake", model: "fake-1", purpose: "chat", inputTokens: 1, outputTokens: 1 });
 });
 

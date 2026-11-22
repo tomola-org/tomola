@@ -1,8 +1,10 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { maskLinkTargets, protectedTitleBodyContext, restoreLinkTargets } from "~/lib/llm/link-targets.core.server";
 import { createFakeEngine } from "~/lib/llm/engines/fake.server";
-import { buildTranslationPrompt } from "~/lib/llm/prompt.server";
+import { buildTranslationPrompt, KEEP_LINK_MARKERS } from "~/lib/llm/prompt.server";
+import { FLAG_MARKDOWN_BUDGET } from "~/lib/llm/flags";
 import { translateChecked } from "~/lib/llm/translate.server";
+import * as markdown from "~/lib/markdown-budget.server";
 
 it("round trips every occurrence in a long post with similar destinations", () => {
   const destinations = Array.from({ length: 60 }, (_, i) => `https://docs.example.test/guide/${i % 11}/ja/#section-${i % 4}`);
@@ -12,6 +14,44 @@ it("round trips every occurrence in a long post with similar destinations", () =
   expect(text).not.toContain("https://docs.example.test");
   expect(Object.values(targets)).toEqual(destinations);
   expect(restoreLinkTargets(text, targets, literals)).toEqual({ text: source, valid: true });
+});
+
+it("finds and restores destinations after a leading BOM", () => {
+  const source = "\uFEFF[a](https://example.test/one) [b](https://example.test/two)";
+  const { text, targets, literals } = maskLinkTargets(source);
+  expect(Object.values(targets)).toEqual(["https://example.test/one", "https://example.test/two"]);
+  expect(text).toMatch(/^\uFEFF\[a\]\(TMLINK\d+X\d+Z\) \[b\]\(TMLINK\d+X\d+Z\)$/);
+  expect(restoreLinkTargets(text, targets, literals)).toEqual({ text: source, valid: true });
+});
+
+it("keeps a literal marker by using a different namespace for link targets", async () => {
+  const source = "TMLINK1X1Z [Guide](https://example.test/one)";
+  const fake = createFakeEngine();
+  const out = await translateChecked({ ...fake, async translate(req) {
+    expect(req.text.match(/TMLINK1X1Z/g)).toHaveLength(1);
+    expect(req.text).not.toContain("https://example.test/one");
+    return fake.translate(req);
+  } }, { text: source, from: "en", to: "ja" });
+  expect(out).toMatchObject({ text: `[ja] ${source}`, attempts: 1, flags: [] });
+});
+
+it("flags a restoration budget failure after the checked retry", async () => {
+  const task = markdown.markdownTask;
+  const restore = vi.spyOn(markdown, "markdownTask").mockImplementation(async (...call) => {
+    if (call[0] === "restoreLinkTargets") throw new markdown.MarkdownBudgetError();
+    return task(...call);
+  });
+  try {
+    const source = "[Guide](https://example.test/one)";
+    const fake = createFakeEngine();
+    const translate = vi.fn(fake.translate);
+    const out = await translateChecked({ ...fake, translate }, { text: source, from: "en", to: "ja" });
+    expect(translate).toHaveBeenCalledTimes(2);
+    expect(translate.mock.calls[1][0].retryNote).toBeTruthy();
+    expect(out).toMatchObject({ text: source, flags: [FLAG_MARKDOWN_BUDGET], attempts: 2 });
+  } finally {
+    restore.mockRestore();
+  }
 });
 
 it("uses Markdown destination boundaries and leaves code, math and HTML alone", () => {
@@ -65,14 +105,14 @@ it.each(["missing", "duplicate", "unknown", "moved"] as const)("retries and flag
   expect(out.attempts).toBe(2);
   expect(out.flags).toContain("link_mismatch");
   expect(out.text).not.toMatch(/TMLINK\d+X\d+Z/i);
-  expect(notes[1]).toMatch(/keep each link marker/i);
+  expect(notes[1]).toContain(KEEP_LINK_MARKERS);
 });
 
 it("instructs only post translators to preserve link markers", () => {
   const request = { text: "Source", from: "en", to: "ja" } as const;
-  expect(buildTranslationPrompt(request).system).toMatch(/keep each link marker/i);
+  expect(buildTranslationPrompt(request).system).toContain(KEEP_LINK_MARKERS);
   for (const mode of [{ chat: { context: [] } }, { village: "name" as const }, { invitationNote: true }, { figure: true }, { nushiReading: true as const }]) {
-    expect(buildTranslationPrompt({ ...request, ...mode }).system).not.toMatch(/link marker/i);
+    expect(buildTranslationPrompt({ ...request, ...mode }).system).not.toContain(KEEP_LINK_MARKERS);
   }
 });
 

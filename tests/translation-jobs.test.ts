@@ -81,7 +81,7 @@ it("sends masked post destinations to the engine and saves the original addresse
   const db = await setup();
   const url = "https://docs.example.test/guide/one#part";
   const alternate = "https://docs.example.test/guide/two";
-  const body = `本文 [資料](${url}) と <${alternate}>。再掲 [資料](${url})。`;
+  const body = `[資料](${url}) の呼び名（フランス語では guide）。\n\n本文 [資料](${url}) と <${alternate}>。再掲 [資料](${url})。`;
   const title = `題 [項目](${url})`;
   const id = await newTopic(db, { body, title });
   const fake = createFakeEngine();
@@ -92,9 +92,11 @@ it("sends masked post destinations to the engine and saves the original addresse
   } };
   await run(db, { primary, secondary: null, judge: null }, { now: new Date(Date.now() + 1_000) });
   expect(requests.find(req => req.field === "title" && req.titleBodyContext)?.titleBodyContext).toMatch(/TMLINK\d+X\d+Z/);
+  expect(requests.find(req => req.to === "fr" && req.field === "body")?.terminology?.author).toHaveLength(1);
   for (const request of requests) {
     expect(request.text).not.toContain("docs.example.test");
     expect(request.titleBodyContext ?? "").not.toContain("docs.example.test");
+    expect(JSON.stringify(request.terminology ?? {})).not.toContain("docs.example.test");
   }
   const rows = (await transRows(db, id)).filter(row => row.lang === "fr");
   expect(rows).toEqual(expect.arrayContaining([

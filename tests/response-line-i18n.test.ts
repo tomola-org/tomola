@@ -145,7 +145,10 @@ it("projects a departed-author opening when the source author leaves after the r
 it("translates an author's changed opening as ordinary body text", async () => {
   const f = await fixture("原題", true);
   await f.run();
-  expect(f.calls.map(c => c.text)).toEqual([f.body]);
+  expect(f.calls).toHaveLength(1);
+  expect(f.calls[0].text).toContain("自分の言葉：");
+  expect(f.calls[0].text).toContain("原題（@zsource）");
+  expect(f.calls[0].text).not.toContain(`](/t/${f.source.id})`);
   expect((await f.bodyRows())[0].text).toBe(`[en] ${f.body}`);
 });
 

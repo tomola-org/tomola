@@ -23,16 +23,20 @@ const htmlTag = /^<(\/?)([a-z][\da-z-]*)(?=[\s/>])/i;
 const voidTags = new Set("area base br col embed hr img input link meta param source track wbr".split(" "));
 
 function linkSpans(source: string): Span[] {
+  // Micromark discards a leading BOM before counting token and node offsets.
+  const offset = source.startsWith("\uFEFF") ? 1 : 0;
   const spans: Span[] = [], html: Span[] = [];
   const openTags: Array<{ name: string; end: number }> = [];
   function walk(node: Node) {
     node.children?.forEach(walk);
-    const start = node.position?.start.offset, end = node.position?.end.offset;
-    if (start === undefined || end === undefined) return;
+    const position = node.position;
+    if (position?.start.offset === undefined || position.end.offset === undefined) return;
+    const start = position.start.offset + offset, end = position.end.offset + offset;
     const destination = node.data?.destination;
     if (destination) {
-      const angle = source[destination.start] === "<";
-      const span = angle ? { start: destination.start + 1, end: destination.end - 1 } : destination;
+      const start = destination.start + offset, end = destination.end + offset;
+      const angle = source[start] === "<";
+      const span = angle ? { start: start + 1, end: end - 1 } : { start, end };
       if (span.start < span.end) spans.push(span);
     } else if (node.type === "link" && source[start] !== "[") {
       // CommonMark autolinks are enclosed in angles. GFM literals use the node's whole span.

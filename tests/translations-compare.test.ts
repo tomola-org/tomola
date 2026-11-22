@@ -115,7 +115,8 @@ describe("thinking tokens in the comparison", () => {
       models: {
         generateContent: async (params: Record<string, any>) => {
           calls.push(params.config);
-          return { text: "x", candidates: [{ finishReason: "STOP" }], usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 10, thoughtsTokenCount: calls.length === 1 ? 0 : 700 } } as never;
+          const thoughtsTokenCount = params.config.thinkingConfig === undefined ? 700 : 0;
+          return { text: "x", candidates: [{ finishReason: "STOP" }], usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 10, thoughtsTokenCount } } as never;
         },
       },
     };

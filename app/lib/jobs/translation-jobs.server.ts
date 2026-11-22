@@ -13,7 +13,7 @@ import { FLAG_JUDGED, FLAG_MARKDOWN_BUDGET, FLAG_PROVISIONAL_TITLE, FLAG_RETRIED
 import { JUDGE_PROMPT_VERSION } from "~/lib/llm/prompt.server";
 import { LlmError } from "~/lib/llm/errors.server";
 import { BudgetPausedError, hasSavedTranslation, isSecondaryAvailable, jobLlmOptions, judgeDivergence, shouldMeasureDivergence, translate, type LlmOptions, type TranslationOutcome } from "~/lib/llm/index.server";
-import type { GlossaryHint, TranslationRequest } from "~/lib/llm/types";
+import type { GlossaryHint } from "~/lib/llm/types";
 import { isEnabledLang } from "~/lib/enabled-langs.server";
 import type { Lang, SourceLang } from "~/lib/languages";
 import { RENDER_VERSION } from "~/lib/markdown.server";
@@ -34,8 +34,8 @@ import {
   type TranslateJobPayload,
 } from "~/lib/translations.server";
 import { recordRevision } from "~/lib/translation-revisions.server";
-import { TITLE_BODY_MAX_CHARS } from "~/lib/translation-terms";
-import { postTerminologyBodies, translationTermsFor } from "~/lib/translation-terms.server";
+import { titleBodyContext, TITLE_BODY_MAX_CHARS } from "~/lib/translation-terms";
+import { postTerminologyBodies, postTranslationTermsFor } from "~/lib/translation-terms.server";
 import { firstSeenAtForSource } from "~/lib/translation-first-seen.server";
 import { availabilityKey, loadTranslationAvailability } from "~/lib/translation-availability.server";
 import { joinResponsePostLine, localizeResponseBodies, prepareResponsePostTranslation } from "~/lib/response-line.server";
@@ -55,12 +55,19 @@ import { DeferJob, defineJobHandlers, enqueue, isFinalJobFailure, jobAttemptLimi
 // Reuse the existing context budget, including the translated body's terms.
 export const TITLE_CONTEXT_MAX_CHARS = TITLE_BODY_MAX_CHARS;
 
-async function contextForTitle(db: Db, entry: EntryForJob, lang: Lang, title: string): Promise<string> {
+async function contextForTitle(db: Db, entry: EntryForJob, lang: Lang, title: string, terms: Awaited<ReturnType<typeof postTranslationTermsFor>>) {
   const rows = await db.select().from(translations).where(and(eq(translations.entryId, entry.id), eq(translations.field, "body"), eq(translations.lang, lang), inArray(translations.kind, [...SHOWN_KINDS])));
   const chosen = pickTranslation(rows, entry.sourceHash, entry.mentionRevision);
   const body = chosen && !chosen.flags.includes("stale") && isUsablePrimary(chosen, entry.sourceHash, entry.mentionRevision) ? chosen : undefined;
   const context = postTerminologyBodies(entry, body);
-  return markdownTask("protectedTitleBodyContext", [context.body, context.translation, title]);
+  return {
+    ...terms,
+    titleBodyContext: titleBodyContext(context.body, context.translation, title),
+    protectedContext: {
+      ...terms.protectedContext,
+      titleBodyContext: await markdownTask("protectedTitleBodyContext", [context.body, context.translation, title]),
+    },
+  };
 }
 
 type EntryForJob = {
@@ -298,10 +305,10 @@ export function createTranslationHandlers(deps: TranslationJobDeps = {}) {
     const done = await existingTranslation(ctx.db, entry.id, "title", p.lang, "primary");
     if (done?.sourceHash === p.sourceHash && (done.mentionRevision === null || done.mentionRevision === entry.mentionRevision)) return;
     const glossary = await glossaryFor(ctx.db, entry.lang, p.lang, entry.title);
-    const terminology = await translationTermsFor(ctx.db, entry, p.lang);
+    const terms = await postTranslationTermsFor(ctx.db, entry, p.lang);
     const { out, fallback } = await translateWithFallback(job, ctx, {
       text: entry.title, field: "title", from: entry.lang, to: p.lang, glossary: glossary.hints,
-      ...(terminology ? { terminology } : {}),
+      ...terms,
     }, { skipPrimary: false });
     await saveTranslation(ctx.db, {
       entryId: entry.id, field: "title", lang: p.lang, kind: "primary",
@@ -320,8 +327,8 @@ export function createTranslationHandlers(deps: TranslationJobDeps = {}) {
     if (!entry) return;
     const fields = entry.kind === "topic" ? (["body", "title"] as const) : (["body"] as const);
     const response = entry.kind === "topic" ? await prepareResponsePostTranslation(db, entry.body, entry.lang, p.lang) : null;
-    const terminology = await translationTermsFor(db, entry, p.lang);
-    if (entry.kind === "topic" && terminology) {
+    const terms = await postTranslationTermsFor(db, entry, p.lang);
+    if (entry.kind === "topic" && terms.protectedContext.terminology) {
       const body = await existingTranslation(db, entry.id, "body", p.lang, "primary");
       if (!body || !isUsablePrimary(body, p.sourceHash, entry.mentionRevision)) {
         // A body-only edit can carry an unchanged title into this revision. Its
@@ -354,8 +361,7 @@ export function createTranslationHandlers(deps: TranslationJobDeps = {}) {
           from: entry.lang,
           to: p.lang,
           glossary: glossary.hints,
-          ...(field === "title" ? { titleBodyContext: await contextForTitle(db, entry, p.lang, text) } : {}),
-          ...(terminology ? { terminology } : {}),
+          ...(field === "title" ? await contextForTitle(db, entry, p.lang, text, terms) : terms),
           ...(source && source.mentions.length > 0 ? { mentions: source.mentions } : {}),
         },
         fallbackState,
@@ -425,7 +431,7 @@ export function createTranslationHandlers(deps: TranslationJobDeps = {}) {
         const out = await translate(
           db,
           "secondary",
-          { text: response?.body ?? entry.body, from: entry.lang, to: p.lang, glossary: glossary.hints, terminology: await translationTermsFor(db, entry, p.lang), ...(mentions.length > 0 ? { mentions } : {}) },
+          { text: response?.body ?? entry.body, from: entry.lang, to: p.lang, glossary: glossary.hints, ...await postTranslationTermsFor(db, entry, p.lang), ...(mentions.length > 0 ? { mentions } : {}) },
           llm(ctx),
         );
         if (response) out.text = joinResponsePostLine(response.line, response.body ? out.text : "");
@@ -583,14 +589,14 @@ export function createTranslationHandlers(deps: TranslationJobDeps = {}) {
       if (text && text.trim() !== "") {
         const response = entry.kind === "topic" ? await prepareResponsePostTranslation(db, entry.body, entry.lang, lang) : null;
         const glossary = await glossaryFor(db, entry.lang, lang, field === "body" ? response?.body ?? text : text);
-        const request: TranslationRequest = {
+        const terms = await postTranslationTermsFor(db, entry, lang);
+        const request = {
           text: field === "body" ? response?.body ?? text : text,
           field,
           from: entry.lang,
           to: lang,
           glossary: glossary.hints,
-          ...(field === "title" ? { titleBodyContext: await contextForTitle(db, entry, lang, text) } : {}),
-          terminology: await translationTermsFor(db, entry, lang),
+          ...(field === "title" ? await contextForTitle(db, entry, lang, text, terms) : terms),
           ...(field === "body" && sourceMentions.mentions.length > 0 ? { mentions: sourceMentions.mentions } : {}),
         };
         const out = await translate(db, "retry", request, llm(ctx));

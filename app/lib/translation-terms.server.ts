@@ -1,9 +1,9 @@
-import { markdownTask } from "./markdown-budget.server";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "./db/client.server";
 import { entries, translations } from "./db/schema";
 import { isStale, isUsablePrimary, pickTranslation, SHOWN_KINDS } from "./display";
 import { isLang, type Lang } from "./languages";
+import { markdownTask } from "./markdown-budget.server";
 import { publicTopicPlace } from "./visibility.server";
 import { parseResponsePost } from "./response-post.server";
 import { authorTermDeclarations, terminologyPassages, type TranslationTerms } from "./translation-terms";
@@ -23,11 +23,11 @@ export function postTerminologyBodies(entry: TermSource, translation?: { text: s
 
 // The shared parser identifies the target; visibility is checked here before
 // reading its translations. No reference-index row or notification is needed.
-export async function translationTermsFor(db: Db, entry: TermSource & { id: number }, to: Lang): Promise<TranslationTerms | undefined> {
+export async function postTranslationTermsFor(db: Db, entry: TermSource & { id: number }, to: Lang) {
   const { body: sourceBody } = postTerminologyBodies(entry);
   const [maskedSource] = await markdownTask("maskLinkContext", [sourceBody]);
-  const author = authorTermDeclarations(maskedSource, to);
-  const terms: TranslationTerms = { author };
+  const originalTerms: TranslationTerms = { author: authorTermDeclarations(sourceBody, to) };
+  const protectedTerms: TranslationTerms = { author: authorTermDeclarations(maskedSource, to) };
   if (entry.kind === "topic") {
     const target = parseResponsePost(entry.body)?.topicId ?? null;
     if (target !== null && target !== entry.id) {
@@ -42,15 +42,23 @@ export async function translationTermsFor(db: Db, entry: TermSource & { id: numb
         const title = original.lang === to ? original.title ?? undefined : current("title")?.text;
         const originalBodies = postTerminologyBodies(original, current("body"));
         const body = original.lang === to ? originalBodies.body : originalBodies.translation;
-        const [maskedBody, maskedTranslation, maskedTitle, maskedTitleTranslation] = await markdownTask("maskLinkContext", [originalBodies.body, body ?? "", original.title ?? "", title ?? ""]);
-        const declarations = authorTermDeclarations(maskedBody, to);
-        terms.response = {
-          ...(original.title && title ? { title: { source: maskedTitle.slice(0, 300), translation: maskedTitleTranslation.slice(0, 300) } } : {}),
-          passages: body ? terminologyPassages(maskedBody, maskedTranslation, maskedSource) : [], author: declarations,
-        };
-        if (!terms.response.title && !terms.response.passages.length && !declarations.length) delete terms.response;
+        const titles = original.title && title ? [original.title, title] : [];
+        const [maskedBody, maskedTranslation, ...maskedTitles] = await markdownTask("maskLinkContext", [originalBodies.body, body ?? "", ...titles]);
+        function responseTerms(source: string, translated: string | undefined, reply: string, [sourceTitle, translatedTitle]: string[]) {
+          const title = sourceTitle && translatedTitle ? { source: sourceTitle.slice(0, 300), translation: translatedTitle.slice(0, 300) } : undefined;
+          const passages = translated ? terminologyPassages(source, translated, reply) : [];
+          const author = authorTermDeclarations(source, to);
+          return title || passages.length || author.length ? { ...(title ? { title } : {}), passages, author } : undefined;
+        }
+        originalTerms.response = responseTerms(originalBodies.body, body, sourceBody, titles);
+        protectedTerms.response = responseTerms(maskedBody, maskedTranslation, maskedSource, maskedTitles);
       }
     }
   }
-  return author.length || terms.response ? terms : undefined;
+  const present = (terms: TranslationTerms) => terms.author.length || terms.response ? terms : undefined;
+  return { terminology: present(originalTerms), protectedContext: { terminology: present(protectedTerms) } };
+}
+
+export async function translationTermsFor(db: Db, entry: TermSource & { id: number }, to: Lang): Promise<TranslationTerms | undefined> {
+  return (await postTranslationTermsFor(db, entry, to)).protectedContext.terminology;
 }

@@ -32,7 +32,8 @@ export function translationCallKey(engine: Pick<TranslationEngine, "id" | "model
   const { signal: _signal, postTranslation: _postTranslation, ...input } = req;
   return createHash("sha256").update(JSON.stringify(ordered({ engine: engine.id, model: engine.model, purpose, role, input }))).digest("hex");
 }
-export const hasPaidTranslationCall = (key: string): boolean => !!storage.getStore()?.calls[key];
+export const savedTranslationCall = (key: string): PaidTranslationCall | undefined => storage.getStore()?.calls[key];
+export const hasPaidTranslationCall = (key: string): boolean => !!savedTranslationCall(key);
 export function withPaidTranslationCalls<T>(payload: unknown, save: (key: string, call: PaidTranslationCall) => Promise<void>, run: () => T): T {
   const saved = (payload as { paidTranslationCalls?: Calls } | null)?.paidTranslationCalls;
   const calls: Calls = {};

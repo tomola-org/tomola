@@ -1,4 +1,4 @@
-import { hasPaidTranslationCall, translationCallKey } from "../jobs/paid-translation.server";
+import { hasPaidTranslationCall, savedTranslationCall, translationCallKey } from "../jobs/paid-translation.server";
 import { currentJobSignal } from "../jobs/signal.server";
 import { meteredEngine } from "./metering.server";
 import type { Db } from "~/lib/db/client.server";
@@ -8,7 +8,7 @@ import { assertBudget, getBudgetState, getChatBudgetStatus } from "./usage.serve
 import { budgetAllows } from "./usage-policy";
 import { CHAT_PROMPT_VERSION, decodeChatEntities } from "./prompt.server";
 import { villageChatEnabled } from "../village-chat-enabled.server";
-import { prepareTranslationLinks, translateChecked, type CheckedTranslation } from "./translate.server";
+import { prepareTranslationLinks, translateChecked, type CheckedTranslation, type ProtectedTranslationContext } from "./translate.server";
 import { currentDivergenceSampleRate, isDivergenceSampled } from "./divergence-sample.server";
 import type { DivergenceJudge, EmbeddingEngine, EmbedRequest, EmbedResult, EngineId, JudgeRequest, JudgeResult, LlmEnv, TranslationEngine, TranslationRequest, TranslationRole } from "./types";
 
@@ -75,13 +75,17 @@ export type TranslationOutcome = CheckedTranslation & {
   costUsdMicro: number;
 };
 
-export async function hasSavedTranslation(role: TranslationRole, req: TranslationRequest, opts: LlmOptions = {}): Promise<boolean> {
+type PostTranslationRequest = TranslationRequest & { protectedContext?: ProtectedTranslationContext };
+
+export async function hasSavedTranslation(role: TranslationRole, { protectedContext, ...req }: PostTranslationRequest, opts: LlmOptions = {}): Promise<boolean> {
   const engines = opts.engines ?? resolveEngines(opts.env);
   const engine = role === "primary" ? engines.primary : role === "secondary" ? engines.secondary : engines.retry;
-  return !!engine && hasPaidTranslationCall(translationCallKey(engine, (await prepareTranslationLinks(req)).request, role === "retry" ? "retry" : "translate", role));
+  const purpose = role === "retry" ? "retry" : "translate";
+  return !!engine && (hasPaidTranslationCall(translationCallKey(engine, req, purpose, role)) ||
+    hasPaidTranslationCall(translationCallKey(engine, (await prepareTranslationLinks(req, protectedContext)).request, purpose, role)));
 }
 
-export async function translate(db: Db, role: TranslationRole, req: TranslationRequest, opts: LlmOptions = {}): Promise<TranslationOutcome> {
+export async function translate(db: Db, role: TranslationRole, { protectedContext, ...req }: PostTranslationRequest, opts: LlmOptions = {}): Promise<TranslationOutcome> {
   const now = opts.now ?? new Date();
   const engines = opts.engines ?? resolveEngines(opts.env);
   const engine = role === "primary" ? engines.primary : role === "secondary" ? engines.secondary : (engines.retry ?? null);
@@ -94,10 +98,22 @@ export async function translate(db: Db, role: TranslationRole, req: TranslationR
   const metered = meteredEngine(db, { ...opts, purpose, role, now: opts.clock ?? opts.now }).translation(engine, {
     reusePaidResult: true, addCost: cost => { costUsdMicro += cost; },
   });
-  const result = await translateChecked(metered, { ...req, postTranslation: true }, async input => {
-    if (!hasPaidTranslationCall(translationCallKey(engine, input, purpose, role))) {
-      assertBudget(await getBudgetState(db, now, opts.env), purpose, now, role);
-    }
+  const result = await translateChecked(metered, { ...req, postTranslation: true }, {
+    context: protectedContext,
+    // Legacy results already contain their destinations. Replay and inspect them
+    // without marker restoration, retaining the original retry key and cost.
+    replayLegacy(input) {
+      const saved = savedTranslationCall(translationCallKey(engine, input, purpose, role));
+      if (!saved) return;
+      (opts.signal ?? input.signal ?? currentJobSignal())?.throwIfAborted();
+      costUsdMicro += saved.costUsdMicro;
+      return saved.result;
+    },
+    async beforeCall(input) {
+      if (!hasPaidTranslationCall(translationCallKey(engine, input, purpose, role))) {
+        assertBudget(await getBudgetState(db, now, opts.env), purpose, now, role);
+      }
+    },
   });
   return { ...result, engine: engine.id, costUsdMicro };
 }

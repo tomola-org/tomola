@@ -28,6 +28,7 @@ export const looksUntranslated = (source: string, translated: string, from: Sour
 const COPY_FLAG = { identical: FLAG_UNTRANSLATED, script: FLAG_UNTRANSLATED_SCRIPT, similar: FLAG_UNTRANSLATED_SIMILAR } as const;
 
 type Problems = { notes: string[]; flags: string[]; normalizedText?: string };
+export const LINK_MISMATCH_RETRY = "your previous translation contained URLs, links, or images that are not in the source. Translate again, keep every URL, link target, and image address of the source exactly as it is, and do not add any.";
 
 // Check translation structure (code/math counts), links (URLs absent from source) and untranslated output.
 export function inspectTranslation(req: TranslationRequest, text: string, engineId: string): Problems {
@@ -73,9 +74,7 @@ export function inspectTranslation(req: TranslationRequest, text: string, engine
     );
   }
   if (flags.includes(FLAG_LINK_MISMATCH)) {
-    notes.push(
-      "your previous translation contained URLs, links, or images that are not in the source. Translate again, keep every URL, link target, and image address of the source exactly as it is, and do not add any.",
-    );
+    notes.push(LINK_MISMATCH_RETRY);
   }
   // The fake engine writes "[ja] original": a near copy by construction, so only an identical copy counts for it.
   const verdict = judgeCopy(req.text, text, req.from, req.to, { near: engineId !== "fake", mentions: req.mentions, ...(plain ? { plainText: true } : {}) });
