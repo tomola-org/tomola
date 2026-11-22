@@ -91,6 +91,7 @@ services:
       - "443:443/udp"
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/caddy:/etc/caddy/caddy:ro
       # Certificates and the ACME account. Deleting these forces certificate reissuance; mind issuance rate limits.
       - caddy_data:/data
       - caddy_config:/config

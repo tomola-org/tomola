@@ -1,0 +1,65 @@
+(imageResetRequest) {
+	path_regexp ^/(settings/avatar|v/[a-z0-9]+(-[a-z0-9]+)*/icon)(\.data)?$
+	not header_regexp Content-Type (?i)^multipart/form-data[[:blank:]]*;
+}
+
+(tomola_site) {
+	# Request-body limit, matching the app's MAX_REQUEST_BODY_BYTES default of 2 MiB. Caddy rejects oversized bodies with 413 before forwarding them to the app.
+	# Image actions allow 10 MiB of image data plus 64 KiB of multipart overhead.
+	# Include React Router fetcher paths; path matching excludes the query string.
+	@imageUpload {
+		method POST
+		path_regexp ^/(api/media|media|settings/avatar|v/[a-z0-9]+(-[a-z0-9]+)*/icon)(\.data)?$
+		not {
+			import imageResetRequest
+		}
+	}
+	request_body @imageUpload {
+		max_size 10551296
+	}
+	@ordinaryBody {
+		not {
+			method POST
+			path_regexp ^/(api/media|media|settings/avatar|v/[a-z0-9]+(-[a-z0-9]+)*/icon)(\.data)?$
+		}
+	}
+	request_body @ordinaryBody {
+		max_size 2MiB
+	}
+	# Avatar and village icon resets have a smaller limit within the image actions.
+	@imageReset {
+		method POST
+		import imageResetRequest
+	}
+	request_body @imageReset {
+		max_size 256
+	}
+
+	header {
+		-Server
+	}
+
+	# Access logging is disabled by default. If enabled, URLs containing tokens (?k=, ?q=, /auth/confirm?token=, /invite/<token>) would be retained verbatim, so redact the entire query string
+	# rather than maintaining a list of secret parameter names, which changes as features are added. Also remove Referer, since other pages' URLs can contain ?k= and similar parameters.
+	# Caddy redacts credentials such as Cookie and Authorization by default; the global log_credentials option is disabled by default.
+	# Invitation-path redaction is approximate: the regex cannot cover alternative spellings such as /./invite/… or /%69nvite/…. For reliable protection, omit the URI with `request>uri delete`
+	# and use the app's access log in server.ts, which resolves these spellings before redacting. The example below follows Caddy's log format filter syntax, with fields and filters inside fields,
+	# but has not been verified by running it:
+	# log {
+	# 	output stdout
+	# 	format filter {
+	# 		wrap json
+	# 		fields {
+	# 			request>uri regexp \?.* ?[redacted]
+	# 			request>uri regexp (?i)/invite/[^/?]+ /invite/[redacted]
+	# 			request>headers>Referer delete
+	# 		}
+	# 	}
+	# }
+}
+
+(tomola_upstream) {
+	# A single upstream can accept traffic as soon as it listens again, without waiting for an active health probe.
+	lb_try_duration 30s
+	lb_try_interval 250ms
+}
