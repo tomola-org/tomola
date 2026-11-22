@@ -87,16 +87,22 @@ function detect(body: string, hint?: string | null, extended = false): string | 
     return [{ lang, hits, score: hits + bonus }];
   }).sort((a, b) => b.score - a.score);
   const [best, runnerUp] = scores;
-  if (best.hits < 3 || best.score < 2 * runnerUp.score) return null;
+  if (best.hits < 3) return null;
+  let rivalScore = runnerUp.score;
+  // Spanish was already a candidate for posts. On the supported-only surfaces,
+  // require Spanish to lose outright but preserve the old margin against other rivals.
+  if (!extended && runnerUp.lang === "es") {
+    if (best.score === runnerUp.score) return null;
+    rivalScore = scores[2]?.score ?? 0;
+  }
   // Even on surfaces that only return supported languages, shared words in
   // Portuguese or Italian must not pass as Spanish at the margin.
-  if (best.lang === "es") {
-    const rivals = extended ? [runnerUp.score] : [runnerUp.score, ...Object.values(otherWords).map(vocabulary =>
+  if (!extended && best.lang === "es") {
+    rivalScore = Math.max(rivalScore, ...Object.values(otherWords).map(vocabulary =>
       tokens.filter(word => vocabulary.has(word)).length,
-    )];
-    if (best.score <= 2 * Math.max(...rivals)) return null;
+    ));
   }
-  return best.lang;
+  return best.score >= 2 * rivalScore ? best.lang : null;
 }
 
 // Other translation surfaces retain their existing language selection rules.

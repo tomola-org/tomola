@@ -8,7 +8,7 @@ import { FLAG_JUDGED, FLAG_PROVISIONAL_TITLE, NEAR_COPY_FLAGS } from "~/lib/llm/
 import { isDivergenceAvailable, type LlmOptions } from "~/lib/llm/index.server";
 import { currentDivergenceSampleRate, isDivergenceSampled } from "~/lib/llm/divergence-sample.server";
 import { enabledLangs, enabledTargetLangs } from "~/lib/enabled-langs.server";
-import type { Lang } from "~/lib/languages";
+import { originalLanguageOf, type Lang } from "~/lib/languages";
 import { translationEagerConfig } from "~/lib/translation-eager-config.server";
 import {
   DIVERGENCE_JOB,
@@ -71,6 +71,7 @@ export async function requeueTranslations(
       id: entries.id,
       kind: entries.kind,
       lang: entries.lang,
+      langCode: entries.langCode,
       title: entries.title,
       chars: opts.dryRun ? sql<number>`char_length(${entries.body}) + coalesce(char_length(${entries.title}), 0)` : sql<number>`0`,
       sourceHash: entries.sourceHash,
@@ -108,7 +109,7 @@ export async function requeueTranslations(
   for (const entry of all) {
     if (entry.sourceHash === null) continue;
     const fields = entry.kind === "topic" && entry.title?.trim() ? (["title", "body"] as const) : (["body"] as const);
-    for (const lang of enabledTargetLangs(entry.lang, opts.env).filter((l) => wanted.includes(l))) {
+    for (const lang of enabledTargetLangs(originalLanguageOf(entry), opts.env).filter((l) => wanted.includes(l))) {
       const payload: TranslateJobPayload = { entryId: entry.id, lang: lang as Lang, sourceHash: entry.sourceHash, ...(opts.includeFlagged ? { redoFlagged: true as const } : {}) };
       const done = fields.every((f) => {
         const row = byKey.get(`${entry.id}:${f}:${lang}`);

@@ -184,7 +184,7 @@ async function loaderImplementation({ request, params }: Route.LoaderArgs) {
   // ?orig=<id>, ?tr=<id>, and ?old=<id> are link targets for switching versions without JavaScript.
   const displaysPromise = loadEntryDisplays(
     db,
-    shown.map((e) => ({ id: e.id, kind: e.kind, lang: e.lang, sourceHash: e.sourceHash })),
+    shown.map((e) => ({ id: e.id, kind: e.kind, lang: e.lang, langCode: e.langCode, sourceHash: e.sourceHash })),
     {
       browser: new Set(shown.filter(e => e.visibility === "visible").map(e => e.id)),
       readLangs,

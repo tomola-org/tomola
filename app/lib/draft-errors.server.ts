@@ -47,7 +47,7 @@ const MESSAGES: Record<DraftApiError, string> = {
   invalid_encoding: "The body must be valid UTF-8 without NUL (U+0000) characters.",
 };
 
-// invalid_lang names the languages that are enabled on this site (ENABLED_LANGS), not the nine the software supports.
+// invalid_lang lists the languages enabled on this site (ENABLED_LANGS).
 export function messageOf(error: string): string {
   if (error === "thread_not_found" || error === "parent_not_in_thread") error = "reply_to_not_found";
   if (error === "invalid_draft") return "Provide a valid draft kind and body without NUL characters.";

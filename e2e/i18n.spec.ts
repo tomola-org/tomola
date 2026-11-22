@@ -79,8 +79,7 @@ test("switching to Indonesian and Spanish persists the locale and uses the catal
 test("the login link mail is written in the language of the page it was asked from", async () => {
   await openUserMenu(page);
   await page.getByRole("menuitem", { name: enMessages.nav_logout }).click();
-  const afterLogout = test.info().config.metadata.publicReading ? "/" : "/login";
-  await expect(page).toHaveURL(url => url.pathname === afterLogout);
+  await expect(page).toHaveURL(/\/login$/);
   // Check the two source locales; missing translations use English.
   for (const locale of ["ja", "en"]) {
     await page.goto("/login");

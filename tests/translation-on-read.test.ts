@@ -38,6 +38,22 @@ async function topic(db: Awaited<ReturnType<typeof createTestDb>>, title: string
 }
 const queued = (db: Awaited<ReturnType<typeof createTestDb>>, kind: string) => db.select().from(jobs).where(eq(jobs.kind, kind));
 
+it("shows a legacy original and skips on-read work in its own language", async () => {
+  const db = await setup();
+  const source = await topic(db);
+  await db.update(entries).set({ lang: "other", langCode: "es" }).where(eq(entries.id, source.id));
+  await db.delete(jobs);
+  const inputs = (await translationPageInputs(db, source.id))!;
+  expect(await requestBodyTranslations(db, inputs, "es", true)).toEqual({ ready: [source.id], unavailable: [], paused: [], stopped: false });
+  expect(await queued(db, TRANSLATE_JOB)).toHaveLength(0);
+  await db.insert(translations).values({ entryId: source.id, field: "body", lang: "es", kind: "human", text: "Texto duplicado.", sourceHash: source.sourceHash });
+  const display = (await loadEntryDisplays(db, inputs, { browser: new Set([source.id]), displayLang: "es", readLangs: [] })).get(source.id);
+  expect(display).toMatchObject({ shown: "original", translation: null, pending: false });
+  expect(display?.needsCurrent).toBeUndefined();
+  await requestBodyTranslations(db, inputs, "id", true);
+  expect((await queued(db, TRANSLATE_JOB)).map(job => job.payload)).toEqual([expect.objectContaining({ entryId: source.id, lang: "id" })]);
+});
+
 it("validates the default reader policy and threshold at startup", () => {
   expect(translationEagerConfig({})).toEqual({ scope: "readers", minReaders: 1 });
   expect(translationEagerConfig({ TRANSLATION_EAGER_SCOPE: "all", TRANSLATION_EAGER_MIN_READERS: "3" })).toEqual({ scope: "all", minReaders: 3 });

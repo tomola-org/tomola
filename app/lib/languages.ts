@@ -6,6 +6,11 @@ export type SourceLang = typeof SOURCE_LANGS[number];
 export type LangSource = "explicit" | "detected" | "default" | "checked";
 export const isSourceLang = (value: unknown): value is SourceLang => value === "other" || isLang(value);
 
+// Posts saved before their language was supported can still carry it in langCode.
+export function originalLanguageOf(source: { lang: string; langCode?: string | null }): string {
+  return source.lang === "other" && isLang(source.langCode) ? source.langCode : source.lang;
+}
+
 export const LATIN_SCRIPT_LANGS: readonly string[] = ["en", "fr", "de", "vi", "id", "es"] satisfies readonly Lang[];
 
 export const AREAS = [...LANGS, "other"] as const;

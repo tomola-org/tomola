@@ -10,7 +10,7 @@ export const HTML_LANG_STRATEGY = "custom-htmlLang";
 // Called once in app/entry.client.tsx, before hydration. <html lang> is read ONCE, here: a browser's page translation (or an extension) rewrites <html lang> after hydration
 // ("es", "zh-CN", "th", ...), and Paraglide throws on a value that is not one of its locales, so reading the attribute on every getLocale() would make every message call throw
 // (the root ErrorBoundary included) and a "th" would silently switch the page to unchecked strings. A language switch always reloads the page, so a value read once is enough.
-// A value that is not one of the nine locales ("", "mul", ...) gives undefined, and Paraglide falls to the base locale.
+// Unsupported locales such as "" and "mul" return undefined so Paraglide uses the base locale.
 export function defineHtmlLangStrategy(): void {
   const rendered = typeof document === "undefined" ? undefined : toLocale(document.documentElement.lang);
   defineCustomClientStrategy(HTML_LANG_STRATEGY, {

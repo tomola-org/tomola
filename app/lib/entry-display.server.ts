@@ -7,7 +7,7 @@ import { entries, translations } from "~/lib/db/schema";
 import { decideShown, isStale, pickOlderTranslation, pickTranslation, SHOWN_KINDS, wantsTranslation, type ShownKind, type Shown } from "~/lib/display";
 import { renderTranslationHtml } from "~/lib/entries.server";
 import { headlineFromBody } from "~/lib/headline.server";
-import type { Lang, SourceLang } from "~/lib/languages";
+import { originalLanguageOf, type Lang, type SourceLang } from "~/lib/languages";
 import { RENDER_VERSION, type RenderedEntry } from "~/lib/markdown.server";
 import type { MentionTargets } from "~/lib/mentions-md.server";
 import { resolveSourceSnapshotsFor, resolveTranslationMentionsFor, type SourceMentionSnapshot } from "~/lib/mentions.server";
@@ -73,7 +73,7 @@ export type EntryDisplay = {
   translation: TranslationView | null;
 };
 
-export type DisplayInput = { id: number; kind: "topic" | "reply"; lang: SourceLang; sourceHash: string | null };
+export type DisplayInput = { id: number; kind: "topic" | "reply"; lang: SourceLang; langCode?: string | null; sourceHash: string | null };
 export type DisplayOptions = {
   // Topic HTML only: browser translation work and first-display reports.
   browser?: ReadonlySet<number>;
@@ -109,7 +109,7 @@ export async function loadPickedTranslations(
   displayLang: Lang,
   fields: readonly Field[] | ((entry: DisplayInput) => readonly Field[]) = ["title", "body"],
 ): Promise<Map<number, PickedTranslations>> {
-  const wanted = inputs.filter((e) => e.lang !== displayLang);
+  const wanted = inputs.filter(e => originalLanguageOf(e) !== displayLang);
   const out = new Map<number, PickedTranslations>();
   if (wanted.length === 0) return out;
   // Group the entries by the fields to read, so that one query reads the titles of some entries and the bodies of others.
@@ -197,7 +197,7 @@ export async function loadEntryDisplays(db: Db, inputs: readonly DisplayInput[],
       const [availability, notices, sourceOf, savedMentions] = await Promise.all([
         loadTranslationAvailability(db, inputs.filter(e => {
           const body = picked.get(e.id)?.body;
-          return (!body || (browser(e.id) && (body.sourceHash !== e.sourceHash || isStale(body.flags)))) && wantsTranslation(e.lang, opts.readLangs, opts.displayLang);
+          return (!body || (browser(e.id) && (body.sourceHash !== e.sourceHash || isStale(body.flags)))) && wantsTranslation(originalLanguageOf(e), opts.readLangs, opts.displayLang);
         }), [opts.displayLang], undefined, { currentOnly: !!opts.browser }),
         loadReportNotices(db, inputs.filter(e => picked.get(e.id)?.body).map(e => ({ entryId: e.id, lang: opts.displayLang, sourceHash: e.sourceHash }))),
         resolveSourceSnapshotsFor(db, renderIds),
@@ -214,7 +214,7 @@ export async function loadEntryDisplays(db: Db, inputs: readonly DisplayInput[],
   for (const entry of inputs) {
     const rows = picked.get(entry.id);
     const source = sourceOf.get(entry.id);
-    const wants = wantsTranslation(entry.lang, opts.readLangs, opts.displayLang);
+    const wants = wantsTranslation(originalLanguageOf(entry), opts.readLangs, opts.displayLang);
     let translation: TranslationView | null = null;
     if (rows?.body) {
       const title = rows.title
@@ -308,7 +308,7 @@ export async function loadTopicLineTranslations(
   inputs: readonly (DisplayInput & { title: string | null })[],
   displayLang: Lang,
 ): Promise<Map<number, PickedLineTranslations>> {
-  const wanted = inputs.filter(e => e.lang !== displayLang);
+  const wanted = inputs.filter(e => originalLanguageOf(e) !== displayLang);
   const out = new Map<number, PickedLineTranslations>();
   if (wanted.length === 0) return out;
   const titled = wanted.filter(e => e.title !== null).map(e => e.id);
@@ -392,7 +392,7 @@ export async function loadTitlelessBodies(db: Db, topics: ReadonlyArray<{ id: nu
 export async function loadTitleDisplays(
   db: Db,
   // body need not be given. When it is not, this function reads the bodies of the topics without a title only, in one query (the bodies of topics with a title are not read).
-  topics: ReadonlyArray<{ id: number; lang: SourceLang; title: string | null; sourceHash: string | null; body?: string }>,
+  topics: ReadonlyArray<Omit<DisplayInput, "kind"> & { title: string | null; body?: string }>,
   opts: Pick<DisplayOptions, "readLangs" | "displayLang">,
   // Shared selection preserves saved text; only screen callers opt into typography.
   typeset = false,
@@ -400,10 +400,10 @@ export async function loadTitleDisplays(
   const bodies = await loadTitlelessBodies(db, topics);
   const inputs = topics.map((t) => ({ ...t, kind: "topic" as const }));
   const picked = await loadTopicLineTranslations(db, inputs, opts.displayLang);
-  const availability = await loadTranslationAvailability(db, inputs.filter(e => !picked.get(e.id)?.hasBody && wantsTranslation(e.lang, opts.readLangs, opts.displayLang)), [opts.displayLang]);
+  const availability = await loadTranslationAvailability(db, inputs.filter(e => !picked.get(e.id)?.hasBody && wantsTranslation(originalLanguageOf(e), opts.readLangs, opts.displayLang)), [opts.displayLang]);
   const out = new Map<number, TitleDisplay>();
   for (const topic of topics) {
-    const line = (await topicLine({ ...topic, body: bodies.get(topic.id) }, picked.get(topic.id), wantsTranslation(topic.lang, opts.readLangs, opts.displayLang), opts.displayLang, typeset));
+    const line = (await topicLine({ ...topic, body: bodies.get(topic.id) }, picked.get(topic.id), wantsTranslation(originalLanguageOf(topic), opts.readLangs, opts.displayLang), opts.displayLang, typeset));
     const wait = translationWaitForAvailability(NORMAL_WAIT, availability.get(availabilityKey(topic.id, opts.displayLang)));
     out.set(topic.id, {
       ...(wait.kind === "stopped" ? { wait } : {}),

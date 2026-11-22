@@ -180,6 +180,26 @@ describe("langs:open: refusals, all before any database is opened", () => {
 });
 
 describe("langs:open: queueing", () => {
+  it("excludes legacy originals from opening their own language", async () => {
+    const { db, older, recent, reply } = await setup();
+    await db.update(entries).set({ lang: "other", langCode: "es" }).where(eq(entries.id, older));
+    await db.update(entries).set({ lang: "other", langCode: "id" }).where(eq(entries.id, recent));
+    const counts = { ...READY, es: READY.fr, id: READY.fr };
+    const env = { ENABLED_LANGS: "ja,en,id,es", TRANSLATION_PRIMARY: "fake" };
+    for (const [lang, translated] of [["es", recent], ["id", older]] as const) {
+      const h = harness(db, { counts, env });
+      expect(await h.run(lang, "--allow-fake", "--dry-run")).toBe(0);
+      expect(h.out.join("\n")).toContain(`2 (post x language) translation(s) into ${lang}`);
+      expect(await queued(db, lang)).toHaveLength(0);
+      expect(await h.run(lang, "--allow-fake")).toBe(0);
+      expect((await queued(db, lang)).map(job => job.payload)).toEqual([
+        expect.objectContaining({ entryId: translated }), expect.objectContaining({ entryId: reply }),
+      ]);
+    }
+    const sources = await db.select({ lang: entries.lang, langCode: entries.langCode }).from(entries).orderBy(asc(entries.id));
+    expect(sources).toEqual([{ lang: "other", langCode: "es" }, { lang: "other", langCode: "id" }, { lang: "ja", langCode: null }]);
+  });
+
   it("queues the posts that have no translation into the language yet, topics first and the most recent first, and says what happens next", async () => {
     const { db, older, recent, reply } = await setup();
     const h = harness(db);

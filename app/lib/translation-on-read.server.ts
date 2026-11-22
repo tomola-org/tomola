@@ -10,7 +10,7 @@ import { primaryEngineId, primaryModelOf } from "./llm/config.server";
 import { readPostTranslationWait } from "./translation-wait.server";
 import { translationWaitForAvailability } from "./translation-wait";
 import { enqueueCurrentBodyTranslation } from "./translations.server";
-import type { Lang } from "./languages";
+import { originalLanguageOf, type Lang, type SourceLang } from "./languages";
 import { checkPagination, pageCount, REPLIES_PER_PAGE } from "./pagination";
 import type { StanceTag } from "./stances";
 import { readThreadReplyPage } from "./thread-page.server";
@@ -26,14 +26,14 @@ export const TRANSLATION_READ_CALLS_HOURLY = 3600;
 // in unfiltered pages, without loading or rendering any post content.
 export async function translationPageInputs(db: Db, threadId: number, opts: { page?: number; stanceTag?: StanceTag } = {}): Promise<DisplayInput[] | null> {
   const paging = checkPagination(opts, REPLIES_PER_PAGE);
-  const columns = { id: entries.id, kind: entries.kind, lang: entries.lang, sourceHash: entries.sourceHash };
+  const columns = { id: entries.id, kind: entries.kind, lang: entries.lang, langCode: entries.langCode, sourceHash: entries.sourceHash };
   const [topic] = await db.select(columns).from(entries)
     .where(and(eq(entries.id, threadId), eq(entries.kind, "topic"), isNull(entries.deletedAt), isNull(entries.hiddenAt), publicTopicPlace()));
   if (!topic) return null;
   const { replies, replyTotal } = await readThreadReplyPage(db, threadId, paging, columns, opts);
   if (paging.page > pageCount(replyTotal, paging.limit)) return null;
   return [topic, ...replies.filter(row => row.visibility === "visible")]
-    .map(row => ({ id: row.id, kind: row.kind as DisplayInput["kind"], lang: row.lang as Lang, sourceHash: row.sourceHash }));
+    .map(row => ({ id: row.id, kind: row.kind as DisplayInput["kind"], lang: row.lang as SourceLang, langCode: row.langCode, sourceHash: row.sourceHash }));
 }
 
 function hasCurrentBody(entry: DisplayInput, picked: PickedTranslations | undefined): boolean {
@@ -45,7 +45,7 @@ function hasCurrentBody(entry: DisplayInput, picked: PickedTranslations | undefi
 // atomic with edits/deletion. Each post still gets its own deduplicated job.
 export async function requestBodyTranslations(db: Db, inputs: readonly DisplayInput[], lang: Lang, requestWork: boolean) {
   const picked = await loadPickedTranslations(db, inputs, lang, ["body"]);
-  const ready = inputs.filter(e => e.lang === lang || hasCurrentBody(e, picked.get(e.id))).map(e => e.id);
+  const ready = inputs.filter(e => originalLanguageOf(e) === lang || hasCurrentBody(e, picked.get(e.id))).map(e => e.id);
   const missing = inputs.filter(e => !ready.includes(e.id));
   const availability = await loadTranslationAvailability(db, missing, [lang], undefined, { currentOnly: true });
   const unavailable = missing.filter(e => availability.get(availabilityKey(e.id, lang)) === "unavailable").map(e => e.id);
@@ -58,12 +58,12 @@ export async function requestBodyTranslations(db: Db, inputs: readonly DisplayIn
     if (wanted.size) {
       stopped = await db.transaction(async tx => {
         // Use a consistent lock order for overlapping requests and source edits.
-        const rows = await tx.select({ id: entries.id, sourceHash: entries.sourceHash, lang: entries.lang, body: entries.body, mentionRevision: entries.mentionRevision }).from(entries)
+        const rows = await tx.select({ id: entries.id, sourceHash: entries.sourceHash, lang: entries.lang, langCode: entries.langCode, body: entries.body, mentionRevision: entries.mentionRevision }).from(entries)
           .where(and(inArray(entries.id, [...wanted.keys()]), isNull(entries.deletedAt), isNull(entries.hiddenAt)))
           .orderBy(asc(entries.id)).for("no key update");
         const current = rows.flatMap(row => {
           const input = wanted.get(row.id);
-          return input && row.sourceHash && row.sourceHash === input.sourceHash && row.lang === input.lang
+          return input && row.sourceHash && row.sourceHash === input.sourceHash && row.lang === input.lang && originalLanguageOf(row) !== lang
             ? [{ input, row: { ...row, sourceHash: row.sourceHash } }] : [];
         });
         const found = await loadPickedTranslations(tx, current.map(({ input }) => input), lang, ["body"]);

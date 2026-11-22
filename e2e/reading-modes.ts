@@ -94,7 +94,6 @@ export const bothModes = [
   ["early-actions", "early settings selections"],
   ["public-stats", ".*"],
   ["lang-switch-member", ".*"],
-  ["i18n", ".*"],
   ["draft-recovery", ".*"],
   ["first-look", "consent returns"],
   ["member-avatar", ".*"],

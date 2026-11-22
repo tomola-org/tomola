@@ -62,9 +62,17 @@ describe("prose language detection", () => {
     expect((await detectLang("We are here to discuss the work of François with our friends and their colleagues."))).toBe("en");
   });
   it.each([
+    "Pour moi la question de la langue est importante, mais la question de la confiance est plus importante.",
+    "Tu peux regarder la page de la ville, il y a toutes les informations sur la consultation.",
+    "La plupart des gens que je connais utilisent la version mobile de la plateforme.",
+  ])("detects French despite shared Spanish words: %s", body => {
+    expect(detectLang(body)).toBe("fr");
+  });
+  it.each([
     [sentences.id, "id"],
     ["Kami sedang membina tempat untuk semua orang yang mahu berkongsi pendapat dan belajar daripada satu sama lain.", "id"],
     [sentences.es, "es"],
+    ["Usted puede escribir las razones de su postura como respuesta.", "es"],
     ["We are discussing yang, dan, di and ke with Ada and Dan, and we will share our findings with them.", "en"],
     ["The labels are yang, untuk, dengan, and karena. We will discuss their use with our colleagues.", "en"],
   ] as const)("agrees on the language of %s on both surfaces", (body, lang) => {
@@ -83,7 +91,7 @@ describe("prose language detection", () => {
     "¿Cómo estás hoy?",
     "Yang yang yang yang yang yang.",
     "Kami ingin berbicara dengan mereka. We are here to work with them.",
-    "Los amigos están en la casa. Os amigos estão na casa.",
+    "Los amigos están en la casa. Os amigos estão na casa e têm um convite.",
   ])("leaves short or mixed prose inconclusive: %s", body => {
     expect(detectLang(body)).toBeNull();
     expect(detectSourceLanguage(body)).toBeNull();
