@@ -534,14 +534,15 @@ describe("translate_entry", () => {
       .toMatchObject({ sourceHash: restored.sourceHash, mentionRevision: restored.mentionRevision, text: `[en] ${body}` });
   });
 
-  it("skips deleted entries and permanently fails invalid payloads", async () => {
+  it("skips deleted entries and schedules another validation for incompatible payloads", async () => {
     const db = await setup();
     const topicId = await newTopic(db);
     await db.update(entries).set({ deletedAt: t0 }).where(eq(entries.id, topicId));
     expect(await run(db, noSecondary())).toMatchObject({ done: 2 * targets });
     expect(await transRows(db, topicId)).toHaveLength(0);
     await db.insert(jobs).values({ kind: "translate_entry", payload: { entryId: "x" } });
-    expect(await run(db, noSecondary(), { now: new Date(t0.getTime() + 1000) })).toMatchObject({ failed: 1, retried: 0 });
+    expect(await run(db, noSecondary(), { now: new Date(t0.getTime() + 1000) })).toMatchObject({ failed: 0, retried: 1, done: 0 });
+    expect(await transRows(db, topicId)).toHaveLength(0);
   });
 });
 
@@ -633,10 +634,15 @@ describe("failure handling", () => {
       },
     };
     const engines = { primary: cut, secondary: null, judge: null };
+    let now = t0;
     for (let attempt = 1; attempt <= attempts; attempt++) {
-      expect(await run(db, engines, { now: new Date(t0.getTime() + attempt * 3_600_000) })).toMatchObject({
+      expect(await run(db, engines, { now })).toMatchObject({
         ran: 2, retried: attempt < attempts ? 2 : 0, failed: attempt === attempts ? 2 : 0,
       });
+      if (attempt < attempts) {
+        const scheduled = await db.select({ runAt: jobs.runAt }).from(jobs);
+        now = new Date(Math.max(...scheduled.map(job => job.runAt.getTime())));
+      }
     }
     expect(await run(db, engines, { now: new Date(t0.getTime() + 24 * 3_600_000) })).toMatchObject({ ran: 0 });
     expect(calls).toBe(2 * attempts);

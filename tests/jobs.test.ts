@@ -9,13 +9,13 @@ import {
   backoffMs,
   countFailedJobs,
   DeferJob,
+  defineJobHandlers,
   isPermanentFailure,
   runDueJobs,
   STUCK_AFTER_MS,
   type JobHandler,
   type JobRow,
 } from "~/lib/jobs/queue.server";
-import { createNushiTranslationHandlers } from "~/lib/nushi-translations.server";
 import { isWorkerEnabled, startWorker } from "~/lib/jobs/worker.server";
 import { createTestDb } from "./helpers/db";
 import { LlmError } from "~/lib/llm/errors.server";
@@ -37,28 +37,48 @@ const one = async (db: Db, id: number): Promise<JobRow> => {
   return row;
 };
 
-it("records malformed saved payloads as permanent failures without logging their contents", async () => {
+it("retries incompatible payloads on a bounded schedule and validates before running a handler", async () => {
   const db = await createTestDb();
-  const malformed = [{ answerId: "private payload", lang: "ja" }, "private payload"];
-  for (const payload of malformed) {
-    await enqueueFixture(db, "translate_nushi", payload, { runAt: t0 });
-  }
+  const paidTranslationCalls = { ["a".repeat(64)]: { costUsdMicro: 1, result: { text: "private payload", model: "fake-1", promptVersion: "test", inputTokens: 1, outputTokens: 1 } } };
+  const malformed = { answerId: "private payload", lang: "ja", paidTranslationCalls };
+  const rejected = await enqueueFixture(db, "translate_nushi", malformed, { runAt: t0 });
+  const scalar = await enqueueFixture(db, "translate_nushi", "private payload", { runAt: t0 });
+  const corrected = await enqueueFixture(db, "translate_nushi", malformed, { runAt: t0, maxAttempts: 1 });
   // A supported but disabled language is still valid queue input.
   vi.stubEnv("ENABLED_LANGS", "en,ja");
-  await enqueueFixture(db, "translate_nushi", { answerId: 1, lang: "fr" }, { runAt: t0 });
-  const error = vi.fn(), warn = vi.fn();
+  vi.useFakeTimers({ toFake: ["Date"] });
   try {
-    const handlers = createNushiTranslationHandlers();
-    expect(await runDueJobs(db, handlers, { now: t0, logger: { error, warn } })).toMatchObject({ failed: 2, retried: 0, done: 1 });
-    const rows = await all(db);
-    for (const row of rows.slice(0, malformed.length)) {
-      expect(row).toMatchObject({ status: "failed", attempts: 1, lockedAt: null });
-      expect(row.lastError).toContain(row.kind);
+    const handler = vi.fn<JobHandler>(async () => {});
+    const handlers = defineJobHandlers({ translate_nushi: handler });
+    const error = vi.fn(), warn = vi.fn();
+    const runAt = (sec: number) => runDueJobs(db, handlers, { now: at(sec), logger: { error, warn } });
+    const lastError = "InvalidJobPayloadError: Invalid translate_nushi payload";
+
+    expect(await runAt(0)).toMatchObject({ retried: 3, failed: 0, done: 0 });
+    expect(handler).not.toHaveBeenCalled();
+    for (const id of [rejected.id, scalar.id, corrected.id]) {
+      expect(await one(db, id)).toMatchObject({ status: "queued", attempts: 1, runAt: at(60), lastError, lockedAt: null });
     }
-    expect(rows.at(-1)).toMatchObject({ status: "done", lastError: null });
-    expect(JSON.stringify([rows.map(row => row.lastError), error.mock.calls, warn.mock.calls])).not.toContain("private payload");
-    expect(await run(db, handlers, at(3600))).toMatchObject({ ran: 0 });
+    expect((await one(db, rejected.id)).payload).toEqual(malformed);
+    await db.update(jobs).set({ payload: { answerId: 1, lang: "fr", paidTranslationCalls } }).where(eq(jobs.id, corrected.id));
+    expect(await runAt(59)).toMatchObject({ ran: 0 });
+    expect(await runAt(60)).toMatchObject({ retried: 2, failed: 0, done: 1 });
+    expect(handler).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: corrected.id, payload: { answerId: 1, lang: "fr" } }), expect.anything());
+    expect(await one(db, corrected.id)).toMatchObject({ status: "done", attempts: 2, payload: { answerId: 1, lang: "fr" } });
+    expect(await one(db, rejected.id)).toMatchObject({ attempts: 2, runAt: at(180) });
+    expect(await runAt(179)).toMatchObject({ ran: 0 });
+    expect(await runAt(180)).toMatchObject({ retried: 2, failed: 0 });
+    expect(await one(db, rejected.id)).toMatchObject({ attempts: 3, runAt: at(420), payload: malformed });
+    expect(await runAt(419)).toMatchObject({ ran: 0 });
+    expect(await runAt(420)).toMatchObject({ retried: 0, failed: 2, done: 0 });
+    for (const id of [rejected.id, scalar.id]) {
+      expect(await one(db, id)).toMatchObject({ status: "failed", attempts: 4, lastError, lockedAt: null });
+    }
+    expect((await one(db, rejected.id)).payload).toEqual({ answerId: "private payload", lang: "ja" });
+    expect(JSON.stringify([error.mock.calls, warn.mock.calls])).not.toContain("private payload");
+    expect(await runAt(3600)).toMatchObject({ ran: 0 });
   } finally {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
   }
 });
@@ -226,29 +246,39 @@ describe("runDueJobs", () => {
     expect(a.ran + b.ran).toBe(1);
   });
 
-  it("delays a failed job exponentially and runs it again when it is due", async () => {
+  it("delays retries exponentially from the time each failure is recorded", async () => {
     const db = await createTestDb();
     const { id } = await enqueueFixture(db, "flaky");
     let calls = 0;
-    const flaky: JobHandler = async () => {
+    const flaky: JobHandler = async (_job, ctx) => {
       calls++;
+      if (calls === 1) {
+        vi.setSystemTime(at(900));
+        expect(ctx.clock?.()).toEqual(at(900));
+      }
       if (calls < 3) throw new Error(`fail ${calls}`);
     };
-    expect(await run(db, { flaky }, t0)).toMatchObject({ ran: 1, retried: 1 });
-    expect(await one(db, id)).toMatchObject({
-      status: "queued",
-      attempts: 1,
-      lastError: "Error: fail 1",
-      runAt: new Date(t0.getTime() + backoffMs(1)),
-      lockedAt: null,
-    });
-    // Do not run before the delay.
-    expect(await run(db, { flaky }, at(29))).toMatchObject({ ran: 0 });
-    expect(await run(db, { flaky }, at(30))).toMatchObject({ ran: 1, retried: 1 });
-    expect(await one(db, id)).toMatchObject({ attempts: 2, runAt: at(30 + 60) });
-    expect(await run(db, { flaky }, at(30 + 59))).toMatchObject({ ran: 0 });
-    expect(await run(db, { flaky }, at(90))).toMatchObject({ ran: 1, done: 1 });
-    expect(await one(db, id)).toMatchObject({ status: "done", attempts: 3 });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(t0);
+    try {
+      expect(await run(db, { flaky }, t0)).toMatchObject({ ran: 1, retried: 1 });
+      expect(await one(db, id)).toMatchObject({
+        status: "queued",
+        attempts: 1,
+        lastError: "Error: fail 1",
+        runAt: at(930),
+        lockedAt: null,
+        updatedAt: t0,
+      });
+      expect(await run(db, { flaky }, at(929))).toMatchObject({ ran: 0 });
+      expect(await run(db, { flaky }, at(930))).toMatchObject({ ran: 1, retried: 1 });
+      expect(await one(db, id)).toMatchObject({ attempts: 2, runAt: at(990) });
+      expect(await run(db, { flaky }, at(989))).toMatchObject({ ran: 0 });
+      expect(await run(db, { flaky }, at(990))).toMatchObject({ ran: 1, done: 1 });
+      expect(await one(db, id)).toMatchObject({ status: "done", attempts: 3 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("marks a job failed when it runs out of attempts, and does not run it again", async () => {

@@ -16,7 +16,10 @@ it("recovers only transient failures on visible current posts, once daily and at
     await db.update(jobs).set({ status: "failed", attempts: 10, lastError }).where(eq(jobs.id, id));
     ids.push(id);
   }
+  const invalidPayload = await enqueue(db, "translate_title", { entryId: post.id, lang: "en", sourceHash: "h" });
+  await db.update(jobs).set({ status: "failed", attempts: 4, lastError: "InvalidJobPayloadError: Invalid translate_title payload" }).where(eq(jobs.id, invalidPayload.id));
   expect(await retryFailedTranslations(db, now)).toBe(1);
+  expect((await db.select().from(jobs).where(eq(jobs.id, invalidPayload.id)))[0]).toMatchObject({ status: "failed", attempts: 4 });
   expect((await db.select().from(jobs).where(eq(jobs.id, ids[0])))[0]).toMatchObject({ status: "queued", attempts: 0 });
   await db.update(jobs).set({ status: "failed" }).where(eq(jobs.id, ids[0]));
   expect(await retryFailedTranslations(db, now)).toBe(0);

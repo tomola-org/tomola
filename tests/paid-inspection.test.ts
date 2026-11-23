@@ -57,7 +57,7 @@ it.each([1, 2])("resumes inspection after paid call %i without repeating either 
   expect(translateCall).toHaveBeenCalledTimes(busyAt);
   const [stored] = await db.select().from(jobs);
   expect(stored.payload).toMatchObject({ retained: "original payload", paidTranslationCalls: expect.any(Object) });
-  expect(await runDueJobs(db, handlers, { now: new Date(now.getTime() + 31_000), limit: 1, logger: { warn() {}, error() {} } })).toMatchObject({ done: 1 });
+  expect(await runDueJobs(db, handlers, { now: stored.runAt, limit: 1, logger: { warn() {}, error() {} } })).toMatchObject({ done: 1 });
   expect(translateCall).toHaveBeenCalledTimes(busyAt);
   expect(await db.select().from(llmUsage)).toHaveLength(busyAt);
   expect(result).toMatchObject({ text: "翻訳結果", attempts: busyAt, inputTokens: busyAt * 10, costUsdMicro: expect.any(Number) });
@@ -112,7 +112,8 @@ it("resumes a paid fallback without calling the refused primary again", async ()
   const handlers = createTranslationHandlers({ llm: { engines: { primary, secondary, judge: null }, now } });
   await enqueue(db, "translate_entry", { entryId: entry.id, lang: "ja", sourceHash: "h" }, { runAt: now });
   expect(await runDueJobs(db, handlers, { now, limit: 1, logger: { warn() {}, error() {} } })).toMatchObject({ retried: 1 });
-  expect(await runDueJobs(db, handlers, { now: new Date(now.getTime() + 31_000), limit: 1, logger: { warn() {}, error() {} } })).toMatchObject({ done: 1 });
+  const [retry] = await db.select({ runAt: jobs.runAt }).from(jobs);
+  expect(await runDueJobs(db, handlers, { now: retry.runAt, limit: 1, logger: { warn() {}, error() {} } })).toMatchObject({ done: 1 });
   expect(primaryCall).toHaveBeenCalledTimes(1);
   expect(secondaryCall).toHaveBeenCalledTimes(1);
   expect(await db.select().from(llmUsage)).toHaveLength(2);
@@ -138,7 +139,8 @@ it("resumes actual chat inspection with its strict handler payload and clears th
   const handlers = createChatTranslationHandlers({ engines: { primary: engine, secondary: null, judge: null, chat: engine }, now });
   await enqueue(db, "translate_chat", { messageId: message.id, lang: "en", sourceHash: chatSourceHash(message.body) }, { runAt: now });
   expect(await runDueJobs(db, handlers, { now, logger: { warn() {}, error() {} } })).toMatchObject({ retried: 1 });
-  expect(await runDueJobs(db, handlers, { now: new Date(now.getTime() + 31_000), logger: { warn() {}, error() {} } })).toMatchObject({ done: 1 });
+  const [retry] = await db.select({ runAt: jobs.runAt }).from(jobs);
+  expect(await runDueJobs(db, handlers, { now: retry.runAt, logger: { warn() {}, error() {} } })).toMatchObject({ done: 1 });
   expect(await db.select().from(chatMessageTranslations)).toMatchObject([{ state: "ready", text: "Hello there." }]);
   expect(translateCall).toHaveBeenCalledTimes(1);
   expect(await db.select().from(llmUsage)).toHaveLength(1);

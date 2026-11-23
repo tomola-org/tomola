@@ -72,7 +72,8 @@ export class DeferJob extends Error {
   }
 }
 
-// Whether a failure cannot be fixed by retry: an error with `retryable === false`, such as LLM refusal. Mark failed immediately without retry.
+// An error with `retryable === false`, such as LLM refusal, normally fails the job immediately.
+// Payload validation failures get a separate retry schedule before this rule applies.
 export function isPermanentFailure(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as { retryable?: unknown }).retryable === false;
 }
@@ -97,6 +98,8 @@ export const STUCK_AFTER_MS = 10 * 60 * 1000;
 export const HEARTBEAT_MS = STUCK_AFTER_MS / 4;
 const BACKOFF_BASE_MS = 30 * 1000;
 const BACKOFF_MAX_MS = 60 * 60 * 1000;
+// Give another worker version time to pick up a payload this version cannot read.
+const INVALID_PAYLOAD_RETRY_DELAYS_MS = [60_000, 120_000, 240_000];
 const LAST_ERROR_MAX = 2000;
 
 // Successful effects must not be repeated merely because their final UPDATE
@@ -276,6 +279,7 @@ export async function runDueJobs(db: Db, handlers: JobHandlers, opts: RunOptions
     // The current locked_at proves ownership when recording results. Do not write results if another worker reclaimed and claimed the job.
     const lock = { at: now };
     const startedAt = Date.now();
+    const clock = () => opts.now ? new Date(now.getTime() + (Date.now() - startedAt)) : new Date();
     let beating: Promise<void> | undefined;
     const beat = async () => {
       const next = new Date(Math.max(now.getTime() + (Date.now() - startedAt), lock.at.getTime() + 1));
@@ -325,7 +329,7 @@ export async function runDueJobs(db: Db, handlers: JobHandlers, opts: RunOptions
         const [saved] = await db.update(jobs).set({ payload: sql`case when ${jobs.payload}->>'discardPaidTranslationCalls' = 'true' then ${jobs.payload} else coalesce(${jobs.payload}, '{}'::jsonb) || jsonb_build_object('paidTranslationCalls', coalesce(${jobs.payload}->'paidTranslationCalls', '{}'::jsonb) || ${JSON.stringify({ [key]: call })}::jsonb) end` })
           .where(and(eq(jobs.id, job.id), eq(jobs.status, "running"), eq(jobs.attempts, job.attempts))).returning({ id: jobs.id });
         if (!saved) throw new Error("Job no longer owns its paid translation checkpoint");
-      }, () => handlers[job.kind]({ ...job, payload: withoutPaidTranslationMetadata(job.payload) }, { db, now, signal: opts.executionSignal, shutdownSignal: opts.signal, clock: () => new Date(now.getTime() + (Date.now() - startedAt)) })))));
+      }, () => handlers[job.kind]({ ...job, payload: withoutPaidTranslationMetadata(job.payload) }, { db, now, signal: opts.executionSignal, shutdownSignal: opts.signal, clock })))));
       handlerSucceeded = true;
       if (await complete() === "queued") stats.deferred++;
       else stats.done++;
@@ -363,7 +367,8 @@ export async function runDueJobs(db: Db, handlers: JobHandlers, opts: RunOptions
         continue;
       }
       const message = errorMessage(error);
-      if (isFinalJobFailure(job, error)) {
+      const payloadRetryDelay = error instanceof InvalidJobPayloadError ? INVALID_PAYLOAD_RETRY_DELAYS_MS[job.attempts - 1] : undefined;
+      if (payloadRetryDelay === undefined && isFinalJobFailure(job, error)) {
         await db.update(jobs).set({ status: "failed", lockedAt: null, lastError: message, updatedAt: now,
           ...(!isPermanentFailure(error) && canRetryTranslationDaily(job.kind, message, job.payload) ? {} : { payload: withoutPayloadKey("paidTranslationCalls") }),
         }).where(owned);
@@ -374,14 +379,15 @@ export async function runDueJobs(db: Db, handlers: JobHandlers, opts: RunOptions
           .update(jobs)
           .set({
             status: "queued",
-            runAt: new Date(now.getTime() + backoffMs(job.attempts)),
+            runAt: new Date(clock().getTime() + (payloadRetryDelay ?? backoffMs(job.attempts))),
             lockedAt: null,
             lastError: message,
             updatedAt: now,
           })
           .where(owned);
         stats.retried++;
-        logger.warn(`[jobs] job ${job.id} (${job.kind}) failed (attempt ${job.attempts}/${jobAttemptLimit(job, error)}): ${message}`);
+        const attemptLimit = payloadRetryDelay === undefined ? jobAttemptLimit(job, error) : INVALID_PAYLOAD_RETRY_DELAYS_MS.length + 1;
+        logger.warn(`[jobs] job ${job.id} (${job.kind}) failed (attempt ${job.attempts}/${attemptLimit}): ${message}`);
       }
     }
   }

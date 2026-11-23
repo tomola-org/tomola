@@ -36,10 +36,10 @@ it("records actual exhausted formatting contention for daily outage recovery", a
   expect(transientFailureMessage((await db.select().from(jobs))[0].lastError!)).toBe(true);
   expect(transientFailureMessage("LlmError: invalid_output")).toBe(false);
 });
-it("permanently fails an invalid per-member digest payload", async () => {
+it("reschedules validation of an incompatible per-member digest payload", async () => {
   const db = await createTestDb();
   await enqueueFixture(db, "send_member_digest", { date: "not a date" });
   const result = await runDueJobs(db, createNotificationHandlers(), { limit: 1, logger: { warn() {}, error() {} } });
-  expect(result).toMatchObject({ failed: 1, retried: 0 });
-  expect((await db.select().from(jobs))[0]).toMatchObject({ status: "failed", attempts: 1 });
+  expect(result).toMatchObject({ failed: 0, retried: 1, done: 0 });
+  expect((await db.select().from(jobs))[0]).toMatchObject({ status: "queued", attempts: 1 });
 });

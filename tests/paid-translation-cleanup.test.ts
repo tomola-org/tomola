@@ -109,7 +109,8 @@ it("checkpoints a new paid result after a deleted source is restored", async () 
     if (!inspected) { inspected = true; throw new MarkdownBusyError(); }
   } };
   expect(await runDueJobs(db, handlers, { now, logger: quiet })).toMatchObject({ retried: 1 });
-  expect((await db.select().from(jobs))[0].payload).toHaveProperty("paidTranslationCalls");
-  expect(await runDueJobs(db, handlers, { now: new Date(now.getTime() + 31_000), logger: quiet })).toMatchObject({ done: 1 });
+  const [retry] = await db.select().from(jobs).where(eq(jobs.id, id));
+  expect(retry.payload).toHaveProperty("paidTranslationCalls");
+  expect(await runDueJobs(db, handlers, { now: retry.runAt, logger: quiet })).toMatchObject({ done: 1 });
   expect(calls).toBe(1);
 });
