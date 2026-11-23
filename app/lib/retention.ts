@@ -12,6 +12,7 @@ export const RETENTION = {
   sessionAbsoluteDays: 90,
   expiredInvitationDays: 30,
   unusedOauthClientDays: 30,
+  oauthExpiryGraceDays: 1,
   llmUsageMonths: 13,
   llmMemberLinkDays: 90,
   finishedJobDays: 30,

@@ -1,6 +1,6 @@
-import { eq, and, isNotNull, isNull, lt, lte, or } from "drizzle-orm";
+import { eq, and, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import type { Db } from "~/lib/db/client.server";
-import { aiQuestionReports, nushiReports, chatAccessLog, chatNushiReservations, llmUsage, notifications, nushiReservations, pushDeliveries, session, signingChallenges, suspendedEmailHashes } from "~/lib/db/schema";
+import { aiQuestionReports, nushiReports, chatAccessLog, chatNushiReservations, llmUsage, notifications, nushiReservations, pushDeliveries, session, signingChallenges, suspendedEmailHashes, oauthAccessToken, oauthClientAssertion, oauthRefreshToken } from "~/lib/db/schema";
 import { RETENTION, daysBefore, monthsBefore } from "~/lib/retention";
 import { drainRetentionRows, withRetentionRun, type RetentionResults, type RetentionRunOptions } from "~/lib/retention-batch.server";
 import { cleanupExpiredLimits } from "~/lib/rate-limit.server";
@@ -27,6 +27,17 @@ export function runRetentionCleanup(db: Db, now = new Date(), options: Retention
     await drainRetentionRows(db, "llm_usage", llmUsage, lt(llmUsage.createdAt, monthsBefore(now, RETENTION.llmUsageMonths)), results);
     // Historical posting challenges can contain copies of post text.
     await drainRetentionRows(db, "signing_challenges", signingChallenges, lte(signingChallenges.expiresAt, now), results);
+    const oauthCutoff = daysBefore(now, RETENTION.oauthExpiryGraceDays);
+    await drainRetentionRows(db, "oauth_access_tokens", oauthAccessToken, lt(oauthAccessToken.expiresAt, oauthCutoff), results);
+    await drainRetentionRows(db, "oauth_client_assertions", oauthClientAssertion, lt(oauthClientAssertion.expiresAt, oauthCutoff), results);
+    // Keep rotated tokens through expiry and the replay window. Leave linked
+    // access tokens to their own bounded drain so the foreign key cannot cascade.
+    await drainRetentionRows(db, "oauth_rotated_refresh_tokens", oauthRefreshToken, and(
+      isNotNull(oauthRefreshToken.rotatedAt),
+      lt(oauthRefreshToken.expiresAt, oauthCutoff),
+      or(isNull(oauthRefreshToken.rotationReplayExpiresAt), lt(oauthRefreshToken.rotationReplayExpiresAt, oauthCutoff)),
+      sql`not exists (select 1 from ${oauthAccessToken} where ${oauthAccessToken.refreshId} = ${oauthRefreshToken.id})`,
+    )!, results);
     return results;
   });
 }

@@ -13,6 +13,12 @@ day of the target month. Read notifications expire from `read_at`;
 unread notifications expire from `created_at`. The LLM ledger contains no
 member identifier or request text.
 
+Daily OAuth cleanup removes expired access-token rows and used client assertion
+identifiers after one day of grace. Rotated refresh tokens remain through both
+their expiry and replay window, plus one day of grace. A rotated row is removed
+only after its linked access-token rows have been removed by their own drain.
+These categories use the standard preservation hold and batch limits.
+
 The `identity_action_snapshots` and `identity_report_snapshots` categories clear
 saved display names and avatar image pointers after 180 days, measured from the
 action's creation or the report's handling time. Open reports remain intact.
