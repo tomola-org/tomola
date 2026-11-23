@@ -2,6 +2,7 @@ import type { Route } from "./+types/api.auth";
 import { authBaseURL, createAppAuth, getAuth } from "~/lib/auth/auth.server";
 import { isAllowedAuthEndpoint, isOAuthAuthEndpoint, isGoogleAuthEndpoint } from "~/lib/auth/endpoints.server";
 import { handleOAuthHttp } from "~/lib/mcp/oauth-http.server";
+import { logOAuthFailure, oauthMachineEndpoint } from "~/lib/mcp/oauth-log.server";
 import { clientAddress } from "~/lib/http/client-ip.server";
 import { getDb } from "~/lib/db/client.server";
 import { hitRateLimit, PASSKEY_IP_LIMIT, rateLimitHeaders } from "~/lib/rate-limit.server";
@@ -19,12 +20,16 @@ async function handle(request: Request) {
   if (isOAuthAuthEndpoint(request)) {
     const baseURL = authBaseURL();
     const expected = new URL(baseURL);
-    if (new URL(request.url).host !== expected.host || (request.headers.has("host") && request.headers.get("host") !== expected.host) || (request.headers.has("origin") && request.headers.get("origin") !== expected.origin)) return new Response("Forbidden", { status: 403, headers: { "Cache-Control": "private, no-store" } });
+    const url = new URL(request.url);
+    const endpoint = oauthMachineEndpoint(url.pathname);
+    if (url.host !== expected.host || (request.headers.has("host") && request.headers.get("host") !== expected.host) || (request.headers.has("origin") && request.headers.get("origin") !== expected.origin)) {
+      return logOAuthFailure(new Response("Forbidden", { status: 403, headers: { "Cache-Control": "private, no-store" } }), endpoint);
+    }
     const db = await getDb();
     const ip = clientAddress(request);
     if (ip !== null) {
       const rate = await hitRateLimit(db, { key: `oauth:ip:${ip}`, limit: 120, windowSeconds: 900 });
-      if (!rate.allowed) return Response.json({ error: "rate_limited" }, { status: 429, headers: { ...rateLimitHeaders(rate), "Cache-Control": "private, no-store" } });
+      if (!rate.allowed) return logOAuthFailure(Response.json({ error: "rate_limited" }, { status: 429, headers: { ...rateLimitHeaders(rate), "Cache-Control": "private, no-store" } }), endpoint);
     }
     const response = await handleOAuthHttp(request, db, await getAuth(), baseURL);
     response.headers.set("Cache-Control", "private, no-store");

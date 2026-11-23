@@ -11,9 +11,9 @@ import * as rates from "~/lib/rate-limit.server";
 import { createAuth } from "~/lib/auth/auth.server";
 import { isAllowedAuthEndpoint } from "~/lib/auth/endpoints.server";
 import type { Db } from "~/lib/db/client.server";
-import { oauthConsent, oauthClient, drafts, entries, notifications, profiles, translations, oauthRefreshToken, mcpRevokedToken, rateLimits, session, verification, villages, villageMembers } from "~/lib/db/schema";
+import { oauthAccessToken, oauthClientAssertion, oauthConsent, oauthClient, drafts, entries, notifications, profiles, translations, oauthRefreshToken, mcpRevokedToken, rateLimits, session, verification, villages, villageMembers } from "~/lib/db/schema";
 import { browserBindingIdentifier } from "~/lib/auth/magic-link-browser.server";
-import { revokedLineId } from "~/lib/mcp/line.server";
+import { lineMark, revokedLineId } from "~/lib/mcp/line.server";
 import { authenticateRead } from "~/lib/api/read-auth.server";
 import { clearMemoryReadLimitsForTests, hitRateLimit, READ_RATE_LIMIT } from "~/lib/rate-limit.server";
 import * as llm from "~/lib/llm/index.server";
@@ -151,6 +151,18 @@ beforeAll(async () => {
 afterAll(async () => { http.closeAllConnections(); await new Promise<void>((resolve) => http.close(async () => resolve())); Object.assign(globals, saved); vi.unstubAllEnvs(); });
 
 const formPost = (path: string, params: Record<string, string>) => fetch(`${base}${path}`, { method: "POST", body: new URLSearchParams(params), redirect: "manual" });
+const refresh = (token: string, credentials: Record<string, string>) =>
+  formPost("/api/auth/oauth2/token", { grant_type: "refresh_token", refresh_token: token, ...credentials });
+const refreshRow = (token: string) => db.query.oauthRefreshToken.findFirst({ where: eq(oauthRefreshToken.token, hashMagicLinkToken(token)) });
+
+function signedClientCredentials(clientId: string, endpoint: string, privateKey: typeof cimdJwtKey.privateKey, kid: string, padding = "") {
+  const header = Buffer.from(JSON.stringify({ alg: "ES256", kid })).toString("base64url");
+  const iat = Math.floor(Date.now() / 1000);
+  const payload = Buffer.from(JSON.stringify({ iss: clientId, sub: clientId, aud: `${base}/api/auth/oauth2/${endpoint}`, exp: iat + 120, iat, jti: randomUUID(), padding })).toString("base64url");
+  const value = `${header}.${payload}`;
+  const signature = sign("sha256", Buffer.from(value), { key: privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+  return { client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: `${value}.${signature}` };
+}
 function cimdFixture(clientId: string, metadata: object = {}, headers?: HeadersInit) {
   return Response.json({ client_id: clientId, client_name: "CIMD fixture", application_type: "native",
     redirect_uris: [`${base}/callback`], grant_types: ["authorization_code", "refresh_token"], token_endpoint_auth_method: "none", ...metadata }, { headers });
@@ -1142,13 +1154,7 @@ describe("OAuth registration and immediate revocation", () => {
     const pair = registration === "cimd" ? cimdJwtKey : generateKeyPairSync("ec", { namedCurve: "prime256v1" });
     const jwk = registration === "cimd" ? cimdJwk : { ...pair.publicKey.export({ format: "jwk" }), kid: "fixture-key", alg: "ES256", use: "sig" };
     const clientId = registration === "cimd" ? cimdJwtId : await register({ token_endpoint_auth_method: "private_key_jwt", jwks: { keys: [jwk] } });
-    const assertion = (endpoint: string) => {
-      const header = Buffer.from(JSON.stringify({ alg: "ES256", kid: jwk.kid })).toString("base64url");
-      const payload = Buffer.from(JSON.stringify({ iss: clientId, sub: clientId, aud: `${base}/api/auth/oauth2/${endpoint}`, exp: Math.floor(Date.now() / 1000) + 120, iat: Math.floor(Date.now() / 1000), jti: randomUUID(), padding: "p".repeat(17 * 1024) })).toString("base64url");
-      const value = `${header}.${payload}`;
-      return `${value}.${sign("sha256", Buffer.from(value), { key: pair.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url")}`;
-    };
-    const credentials = (endpoint: string) => ({ client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: assertion(endpoint) });
+    const credentials = (endpoint: string) => signedClientCredentials(clientId, endpoint, pair.privateKey, jwk.kid, "p".repeat(17 * 1024));
     const token = await authorize(clientId, credentials("token"));
     expect((await modern("server/discover", token.access_token)).status).toBe(200);
     const segments = token.access_token.split(".");
@@ -1274,13 +1280,13 @@ describe("connecting an AI tool", () => {
       ["accept", "yes"], ["oauth_query", url.searchParams.toString()], ...scopes.map(scope => ["scope", scope]),
     ]) }),
   } as never));
-  const exchangeCode = async (clientId: string, response: Response) => {
+  const exchangeCode = async (clientId: string, response: Response, credentials: Record<string, string> = {}) => {
     const callback = new URL(response.headers.get("location")!, base);
     expect(callback.pathname).toBe("/callback");
     expect(callback.searchParams.get("state")).toBe("connect-flow");
     const code = callback.searchParams.get("code");
     expect(code).toBeTruthy();
-    const token = await formPost("/api/auth/oauth2/token", { grant_type: "authorization_code", client_id: clientId, redirect_uri: `${base}/callback`, code: code!, code_verifier: "c".repeat(64), resource: `${base}/mcp` });
+    const token = await formPost("/api/auth/oauth2/token", { grant_type: "authorization_code", client_id: clientId, redirect_uri: `${base}/callback`, code: code!, code_verifier: "c".repeat(64), resource: `${base}/mcp`, ...credentials });
     expect(token.status, await token.clone().text()).toBe(200);
     return token.json();
   };
@@ -1434,27 +1440,166 @@ describe("connecting an AI tool", () => {
     expect(await unsupported.json()).toMatchObject({ error: "invalid_scope" });
   });
 
-  it("issues 15-minute access tokens, and survives a refresh token used twice within 30 seconds but not after", async () => {
+  it("replays a rotation during the retry window and revokes only its line after the window", async () => {
     await relogin();
     const clientId = await register();
+    const credentials = { client_id: clientId };
     const first = await authorize(clientId, {}, "read draft") as { access_token: string; refresh_token: string; expires_in?: number };
+    const other = await exchangeCode(clientId, await startAuthorize(clientId));
+    const [consent] = await db.select({ id: oauthConsent.id }).from(oauthConsent).where(eq(oauthConsent.clientId, clientId));
     expect(first.expires_in).toBe(900);
-    const refresh = (token: string) => formPost("/api/auth/oauth2/token", { grant_type: "refresh_token", client_id: clientId, refresh_token: token });
-    const second = await refresh(first.refresh_token);
+    const second = await refresh(first.refresh_token, credentials);
     expect(second.status, await second.clone().text()).toBe(200);
     const rotated = await second.json() as { access_token: string; refresh_token: string };
-    // The same refresh token again right away (two processes sharing one credential, a retry): the connection is not ended.
-    const again = await refresh(first.refresh_token);
+    const again = await refresh(first.refresh_token, credentials);
     expect(again.status, await again.clone().text()).toBe(200);
-    // The retry is answered with the same new tokens, so a lost reply is recovered and both processes end up with one credential.
-    expect((await again.json() as { refresh_token: string }).refresh_token).toBe(rotated.refresh_token);
+    expect(await again.json()).toMatchObject({ access_token: rotated.access_token, refresh_token: rotated.refresh_token });
+    const original = (await refreshRow(first.refresh_token))!;
+    const head = (await refreshRow(rotated.refresh_token))!;
+    const spare = (await refreshRow(other.refresh_token))!;
+    const mark = lineMark(original.authorizationCodeId!);
+    expect(head.revoked).toBeNull();
+    expect(await db.query.mcpRevokedToken.findFirst({ where: eq(mcpRevokedToken.id, revokedLineId(mark)) })).toBeUndefined();
     expect((await modern("server/discover", rotated.access_token)).status).toBe(200);
-    expect((await refresh(rotated.refresh_token)).status).toBe(200);
-    // Past the window, a rotated token coming back is theft: every refresh token of this member and client ends.
-    await db.update(oauthRefreshToken).set({ rotationReplayExpiresAt: new Date(Date.now() - 1000) }).where(eq(oauthRefreshToken.clientId, clientId));
-    const stolen = await refresh(first.refresh_token);
-    expect(stolen.status).toBe(400);
-    expect((await refresh(rotated.refresh_token)).status).not.toBe(200);
+    await db.update(oauthRefreshToken).set({ rotationReplayExpiresAt: new Date(Date.now() - 1000) }).where(eq(oauthRefreshToken.id, original.id));
+    await db.insert(oauthAccessToken).values([head, spare].map(row => ({
+      id: randomUUID(), token: hashMagicLinkToken(randomUUID()), refreshId: row.id, clientId, userId: row.userId,
+      authorizationCodeId: row.authorizationCodeId, scopes: ["read"], createdAt: new Date(), expiresAt: new Date(Date.now() + 600_000),
+    })));
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      // The provider trims the grant name before dispatching.
+      const response = await refresh(first.refresh_token, { ...credentials, grant_type: " refresh_token " });
+      expect(response.status).toBe(400);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const error = await response.json();
+      expect(error).toMatchObject({ error: "invalid_grant", error_description: expect.stringMatching(/already used.*sign in again/i) });
+      const replayLines = logs.mock.calls.flat().map(String).filter(line => line.startsWith("[http] OAuth "));
+      expect(replayLines).toHaveLength(2);
+      const events = replayLines.map(line => JSON.parse(line.slice(line.indexOf("{"))));
+      expect(events).toEqual([
+        { lineMark: mark, revokedCount: 1, secondsSinceRotation: expect.any(Number) },
+        { endpoint: "token", grant_type: "refresh_token", status: 400, ...error, client_id: clientId },
+      ]);
+      expect(events[0].secondsSinceRotation).toBeGreaterThanOrEqual(0);
+      for (const secret of [first.refresh_token, rotated.refresh_token, first.access_token, original.token, original.authorizationCodeId!,
+        `"${original.userId}"`, "member@example.com"]) expect(replayLines.join("\n")).not.toContain(secret);
+
+      const repeated = await refresh(first.refresh_token, credentials);
+      expect(repeated.status).toBe(400);
+      expect(await repeated.json()).toEqual(error);
+      expect(await refreshRow(first.refresh_token)).toMatchObject({ id: original.id, revoked: original.revoked, rotationReplayResponse: null });
+      expect(await refreshRow(rotated.refresh_token)).toMatchObject({ id: head.id, revoked: expect.any(Date), rotationReplayResponse: null });
+      expect((await refresh(rotated.refresh_token, credentials)).status).toBe(400);
+      for (const token of [first.access_token, rotated.access_token]) expect((await modern("server/discover", token)).status).toBe(401);
+      expect(await db.select({ refreshId: oauthAccessToken.refreshId }).from(oauthAccessToken).where(eq(oauthAccessToken.clientId, clientId))).toEqual([{ refreshId: spare.id }]);
+      expect((await modern("server/discover", other.access_token)).status).toBe(200);
+      const renewed = await refresh(other.refresh_token, credentials);
+      expect(renewed.status, await renewed.clone().text()).toBe(200);
+      expect((await modern("server/discover", (await renewed.json()).access_token)).status).toBe(200);
+      expect(await db.select({ id: oauthConsent.id }).from(oauthConsent).where(eq(oauthConsent.clientId, clientId))).toEqual([consent]);
+    } finally { logs.mockRestore(); }
+  });
+
+  it("preserves the line when a rotated refresh token is expired or the request fails resource or scope validation", async () => {
+    await relogin();
+    const clientId = await register();
+    const credentials = { client_id: clientId };
+    const first = await authorize(clientId);
+    const rotation = await refresh(first.refresh_token, credentials);
+    expect(rotation.status, await rotation.clone().text()).toBe(200);
+    const rotated = await rotation.json();
+    const original = (await refreshRow(first.refresh_token))!;
+    const past = new Date(Date.now() - 1000);
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await db.update(oauthRefreshToken).set({ expiresAt: past, rotationReplayExpiresAt: past }).where(eq(oauthRefreshToken.id, original.id));
+      const expired = await refresh(first.refresh_token, credentials);
+      expect(expired.status).toBe(400);
+      expect(await expired.json()).toMatchObject({ error: "invalid_grant", error_description: "invalid refresh token" });
+      await db.update(oauthRefreshToken).set({ expiresAt: original.expiresAt }).where(eq(oauthRefreshToken.id, original.id));
+      const wrongResource = await refresh(first.refresh_token, { ...credentials, resource: "https://resource.example.net/mcp" });
+      expect(wrongResource.status).toBe(400);
+      expect(await wrongResource.json()).toMatchObject({ error: "invalid_target" });
+      const untrustedScope = "fixture-scope-with-private-value";
+      const wrongScope = await refresh(first.refresh_token, { ...credentials, scope: untrustedScope });
+      expect(wrongScope.status).toBe(400);
+      expect(await wrongScope.json()).toMatchObject({ error: "invalid_scope" });
+      const lines = logs.mock.calls.flat().map(String).filter(line => line.startsWith("[http] OAuth "));
+      expect(lines).toHaveLength(3);
+      expect(lines.every(line => line.includes("OAuth failure"))).toBe(true);
+      expect(lines.join("\n")).not.toContain(untrustedScope);
+      expect(await refreshRow(rotated.refresh_token)).toMatchObject({ revoked: null });
+      expect((await modern("server/discover", rotated.access_token)).status).toBe(200);
+      expect((await refresh(rotated.refresh_token, credentials)).status).toBe(200);
+    } finally {
+      logs.mockRestore();
+      await db.update(oauthRefreshToken).set({ rotationReplayExpiresAt: original.rotationReplayExpiresAt }).where(eq(oauthRefreshToken.id, original.id));
+    }
+  });
+
+  it("preserves provider-wide refresh deletion when the reused token lacks a line identifier", async () => {
+    await relogin();
+    const clientId = await register();
+    const credentials = { client_id: clientId };
+    const first = await authorize(clientId);
+    await exchangeCode(clientId, await startAuthorize(clientId));
+    expect((await refresh(first.refresh_token, credentials)).status).toBe(200);
+    const original = (await refreshRow(first.refresh_token))!;
+    await db.update(oauthRefreshToken).set({ authorizationCodeId: null, rotationReplayExpiresAt: new Date(Date.now() - 1000) })
+      .where(eq(oauthRefreshToken.id, original.id));
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const response = await refresh(first.refresh_token, credentials);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: "invalid_grant", error_description: "invalid refresh token" });
+      expect(await db.$count(oauthRefreshToken, eq(oauthRefreshToken.clientId, clientId))).toBe(0);
+      expect(await db.$count(oauthConsent, eq(oauthConsent.clientId, clientId))).toBe(1);
+      const lines = logs.mock.calls.flat().map(String).filter(line => line.startsWith("[http] OAuth "));
+      expect(lines).toHaveLength(2);
+      expect(JSON.parse(lines[0].slice(lines[0].indexOf("{")))).toEqual({ deletedCount: 3 });
+      expect(lines[1]).toContain("OAuth failure");
+    } finally { logs.mockRestore(); }
+  });
+
+  it("commits CIMD updates and consumes a signed client assertion when revoking a replayed line", async () => {
+    await relogin();
+    const clientId = "https://clients.example.net/refresh-signed.json";
+    const credentials = () => signedClientCredentials(clientId, "token", cimdJwtKey.privateKey, cimdJwk.kid);
+    let name = "Initial replay fixture";
+    const document = vi.fn(async () => cimdFixture(clientId, {
+      client_name: name, token_endpoint_auth_method: "private_key_jwt", jwks_uri: cimdJwksUri, scope: "read draft offline_access",
+    }, { "Cache-Control": "max-age=1" }));
+    metadataFixtures.set(clientId, document);
+    const first = await authorize(clientId, credentials());
+    const other = await exchangeCode(clientId, await startAuthorize(clientId), credentials());
+    const rotation = await refresh(first.refresh_token, credentials());
+    expect(rotation.status, await rotation.clone().text()).toBe(200);
+    const rotated = await rotation.json();
+    const original = (await refreshRow(first.refresh_token))!;
+    await db.update(oauthRefreshToken).set({ rotationReplayExpiresAt: new Date(Date.now() - 1000) }).where(eq(oauthRefreshToken.id, original.id));
+    const assertions = await db.$count(oauthClientAssertion);
+    const clock = cimdClock();
+    const consumed = credentials();
+    try {
+      const previousFetches = document.mock.calls.length;
+      clock.advance(2_000);
+      name = "Updated replay fixture";
+      const response = await refresh(first.refresh_token, consumed);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: "invalid_grant", error_description: expect.stringMatching(/sign in again/i) });
+      expect(await db.$count(oauthClientAssertion)).toBe(assertions + 1);
+      expect(await db.query.oauthClient.findFirst({ where: eq(oauthClient.clientId, clientId) })).toMatchObject({ name });
+      expect(document).toHaveBeenCalledTimes(previousFetches + 1);
+      const rejectedAssertion = await refresh(other.refresh_token, consumed);
+      expect(rejectedAssertion.status).toBe(400);
+      expect(await rejectedAssertion.json()).toMatchObject({ error: "invalid_client" });
+      expect((await modern("server/discover", rotated.access_token)).status).toBe(401);
+      expect((await modern("server/discover", other.access_token)).status).toBe(200);
+      expect((await refresh(other.refresh_token, credentials())).status).toBe(200);
+      expect(document).toHaveBeenCalledTimes(previousFetches + 1);
+      expect(await db.$count(oauthConsent, eq(oauthConsent.clientId, clientId))).toBe(1);
+    } finally { clock.restore(); }
   });
 
   it("does not issue a code from an existing consent to a login older than 24 hours: the consent screen checks the login first", async () => {

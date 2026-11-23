@@ -10,6 +10,7 @@ import { RETENTION, DAY_MS } from "~/lib/retention";
 import { invitationRequired } from "./invitation-ref.server";
 import { redeemSignupInvitation, type SignupInvitationGrant } from "./signup-invitation.server";
 import { DCR_JWKS_DISCOVERY_ID } from "~/lib/mcp/cimd.server";
+import { deleteRefreshLineAccessTokens, refreshReplayScope, stopRefreshLine } from "~/lib/mcp/refresh-revocation.server";
 
 // The OAuth provider must keep its default client model name, "oauthClient".
 const disabledClientLogout = {
@@ -21,6 +22,20 @@ const disabledClientLogout = {
 
 type Adapter = ReturnType<ReturnType<typeof drizzleAdapter>>;
 type SessionQuery = Parameters<Adapter["findOne"]>[0];
+type DeleteQuery = Parameters<Adapter["deleteMany"]>[0];
+
+function matchesDeleteCondition(condition: DeleteQuery["where"][number], field: string, value: string | null, operator?: "ne") {
+  return condition.field === field && condition.value === value && condition.operator === operator
+    && Object.keys(condition).length === (operator ? 3 : 2);
+}
+
+function isRefreshReplayDeletion({ model, where }: DeleteQuery, clientId: string, userId: string) {
+  // Match only the provider's invalidateRefreshFamily filters. This hook is
+  // active only while the provider handles a refresh grant for a known token.
+  const family = model === "oauthRefreshToken" ? where.length === 2
+    : model === "oauthAccessToken" && where.length === 3 && matchesDeleteCondition(where[2], "refreshId", null, "ne");
+  return family && matchesDeleteCondition(where[0], "clientId", clientId) && matchesDeleteCondition(where[1], "userId", userId);
+}
 
 function bounded<T extends { model: string; where?: SessionQuery["where"] }>(query: T): T {
   return query.model === "session" ? { ...query, where: [...query.where ?? [], { field: "createdAt", operator: "gt" as const, value: new Date(Date.now() - RETENTION.sessionAbsoluteDays * DAY_MS) }] } : query;
@@ -35,7 +50,7 @@ function allowed(value: unknown, model: string): boolean {
 
 // Enforce the lifetime at the authoritative read, including library middleware
 // that calls getSession internally instead of the app's session helper.
-function wrap<T extends Pick<Adapter, "create" | "findOne" | "findMany">>(adapter: T, db: Db,
+function wrap<T extends Pick<Adapter, "create" | "findOne" | "findMany" | "deleteMany">>(adapter: T, db: Db,
   createUser: Adapter["create"], makeAdapter: (db: Db) => Adapter): T {
   return {
     ...adapter,
@@ -67,6 +82,26 @@ function wrap<T extends Pick<Adapter, "create" | "findOne" | "findMany">>(adapte
       // Keep session-bound token revocation while suppressing client logout delivery.
       if (query.model === "oauthClient") return values.map(value => ({ ...value, ...disabledClientLogout }));
       return values.filter(value => allowed(value, query.model));
+    },
+    deleteMany: async query => {
+      const replay = refreshReplayScope.getStore();
+      if (!replay || !isRefreshReplayDeletion(query, replay.sent.clientId, replay.sent.userId)) return adapter.deleteMany(query);
+      const { sent } = replay;
+      if (!sent.authorizationCodeId) {
+        const count = await adapter.deleteMany(query);
+        if (query.model === "oauthRefreshToken") replay.outcome = { deletedCount: count };
+        return count;
+      }
+      const line = { ...sent, authorizationCodeId: sent.authorizationCodeId };
+      if (query.model === "oauthAccessToken") return deleteRefreshLineAccessTokens(db, line);
+      const now = new Date();
+      const stopped = await stopRefreshLine(db, line, now);
+      replay.outcome = {
+        ...stopped,
+        secondsSinceRotation: sent.rotatedAt ? Math.max(0, Math.floor((now.getTime() - sent.rotatedAt.getTime()) / 1000)) : null,
+      };
+      // deleteMany counts physical deletions. The refresh rows are retained.
+      return 0;
     },
   };
 }

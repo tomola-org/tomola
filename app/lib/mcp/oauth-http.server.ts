@@ -1,11 +1,12 @@
-import { and, eq, isNull, lte } from "drizzle-orm";
+import { eq, lte } from "drizzle-orm";
 import type { Db } from "~/lib/db/client.server";
-import { mcpRevokedToken, oauthAccessToken, oauthRefreshToken, oauthClient } from "~/lib/db/schema";
+import { mcpRevokedToken, oauthRefreshToken, oauthClient } from "~/lib/db/schema";
 import { hashMagicLinkToken } from "~/lib/auth/plugins";
 import { authMetadataSources, bindAuthToDatabase } from "~/lib/auth/auth.server";
 import { mcpUnauthorized, tokenDigest, type McpAuth } from "./auth.server";
 import { verifyLocalMcpJwt } from "./jwt.server";
-import { MCP_ACCESS_TOKEN_SECONDS, lineMark, revokedLineId } from "./line.server";
+import { deleteRefreshLineAccessTokens, refreshReplayScope, stopRefreshLine } from "./refresh-revocation.server";
+import { logOAuthFailure, oauthMachineEndpoint, refreshReplayDescription } from "./oauth-log.server";
 import { isCredentialSessionFresh } from "~/lib/auth/credential-session.server";
 import { stripAccessTokenAuthorizationScheme } from "better-auth/oauth2";
 import { MetadataFetchBusy, withPreparedMetadata } from "./cimd.server";
@@ -50,41 +51,68 @@ export function oauthCandidateClientId(request: Request, form: FormData): string
 }
 
 export async function handleOAuthHttp(request: Request, db: Db, auth: McpAuth, baseURL: string) {
-  const bounded = await boundedOAuthRequest(request);
-  if (!bounded) return Response.json({ error: "request_too_large" }, { status: 413 });
   const path = new URL(request.url).pathname;
+  const endpoint = oauthMachineEndpoint(path);
+  const bounded = await boundedOAuthRequest(request);
+  if (!bounded) return logOAuthFailure(Response.json({ error: "request_too_large" }, { status: 413 }), endpoint);
   if (path === "/api/auth/.well-known/oauth-authorization-server") return mcpAuthorizationServerMetadata(auth, bounded);
-  if (path === "/api/auth/oauth2/token" || path === "/api/auth/oauth2/revoke") {
+  if (endpoint) {
     let form: FormData;
     try { form = await bounded.clone().formData(); }
-    catch { return Response.json({ error: "invalid_request" }, { status: 400 }); }
+    catch { return logOAuthFailure(Response.json({ error: "invalid_request" }, { status: 400 }), endpoint); }
+    // The provider trims grant_type before dispatching.
+    const grant = form.get("grant_type");
+    const grantType = typeof grant === "string" ? grant.trim() : undefined;
+    const invalidRequest = () => logOAuthFailure(Response.json({ error: "invalid_request" }, { status: 400 }), endpoint, grantType);
     // OAuth parameters may not repeat. Better Call otherwise keeps the last value while FormData.get keeps the first.
     const names = new Set<string>();
     for (const [name, value] of form) {
-      if (names.has(name) || typeof value !== "string") return Response.json({ error: "invalid_request" }, { status: 400 });
+      if (names.has(name) || typeof value !== "string") return invalidRequest();
       names.add(name);
     }
     const basic = /^Basic\s+/i.test(bounded.headers.get("authorization") ?? "");
-    if ((basic && (form.has("client_assertion") || form.has("client_secret"))) || (form.has("client_assertion") && form.has("client_secret"))) return Response.json({ error: "invalid_request" }, { status: 400 });
+    if ((basic && (form.has("client_assertion") || form.has("client_secret"))) || (form.has("client_assertion") && form.has("client_secret"))) return invalidRequest();
     const clientId = oauthCandidateClientId(bounded, form);
     const explicit = form.get("client_id");
-    if (basic && typeof explicit === "string" && explicit && explicit !== clientId) return Response.json({ error: "invalid_client" }, { status: 400 });
+    if (basic && typeof explicit === "string" && explicit && explicit !== clientId) {
+      return logOAuthFailure(Response.json({ error: "invalid_client" }, { status: 400 }), endpoint, grantType);
+    }
+    let registeredClientId: string | undefined;
     try {
-      return await withPreparedMetadata(authMetadataSources(auth), bounded.signal, (metadataSources, requirePrepared) => db.transaction(async tx => {
+      const result = await withPreparedMetadata(authMetadataSources(auth), bounded.signal, (metadataSources, requirePrepared) => db.transaction(async tx => {
         // The candidate id selects a mutex, never an authenticated identity. The provider still validates it.
-        await tx.select({ id: oauthClient.id }).from(oauthClient).where(eq(oauthClient.clientId, clientId)).for("no key update");
+        const [client] = await tx.select({ clientId: oauthClient.clientId }).from(oauthClient).where(eq(oauthClient.clientId, clientId)).for("no key update");
+        registeredClientId = client?.clientId;
         const transactional = bindAuthToDatabase(auth, tx, metadataSources);
         try {
-          return await processOAuthHttp(bounded, tx, auth, baseURL, transactional.handler);
+          const token = endpoint === "token" && grantType === "refresh_token" ? form.get("refresh_token") : null;
+          const sent = typeof token === "string" && token ? (await tx.select({
+            id: oauthRefreshToken.id, userId: oauthRefreshToken.userId, clientId: oauthRefreshToken.clientId,
+            authorizationCodeId: oauthRefreshToken.authorizationCodeId, rotatedAt: oauthRefreshToken.rotatedAt,
+          }).from(oauthRefreshToken).where(eq(oauthRefreshToken.token, hashMagicLinkToken(token))))[0] : undefined;
+          const replay: ReturnType<typeof refreshReplayScope.getStore> = sent ? { sent } : undefined;
+          const response = replay ? await refreshReplayScope.run(replay, () => transactional.handler(bounded.clone()))
+            : await processOAuthHttp(bounded, tx, auth, baseURL, transactional.handler);
+          return { response, replay: response.status === 400 ? replay?.outcome : undefined };
         } finally {
           // Provider discovery translates transport errors into OAuth responses. Check for a
           // deferred resource explicitly so that even those responses roll back this attempt.
           requirePrepared();
         }
       }));
+      let { response } = result;
+      if (result.replay) {
+        if ("lineMark" in result.replay) {
+          console.log(`[http] OAuth refresh replay revoked line ${JSON.stringify(result.replay)}`);
+          response = Response.json({ error: "invalid_grant", error_description: refreshReplayDescription }, { status: 400, headers: noStore });
+        } else {
+          console.log(`[http] OAuth refresh replay deleted all refresh tokens ${JSON.stringify(result.replay)}`);
+        }
+      }
+      return logOAuthFailure(response, endpoint, grantType, registeredClientId);
     } catch (error) {
       if (!(error instanceof MetadataFetchBusy)) throw error;
-      return Response.json({ error: "temporarily_unavailable" }, { status: 429, headers: { "Cache-Control": "no-store" } });
+      return logOAuthFailure(Response.json({ error: "temporarily_unavailable" }, { status: 429, headers: noStore }), endpoint, grantType, registeredClientId);
     }
   }
   return processOAuthHttp(bounded, db, auth, baseURL, auth.handler);
@@ -203,14 +231,9 @@ async function processOAuthHttp(bounded: Request, db: Db, auth: McpAuth, baseURL
 async function settleRefreshRevocation(db: Db, sent: typeof oauthRefreshToken.$inferSelect) {
   const [after] = await db.select({ revoked: oauthRefreshToken.revoked }).from(oauthRefreshToken).where(eq(oauthRefreshToken.id, sent.id));
   if (after?.revoked && sent.authorizationCodeId) {
-    const line = and(eq(oauthRefreshToken.userId, sent.userId), eq(oauthRefreshToken.clientId, sent.clientId), eq(oauthRefreshToken.authorizationCodeId, sent.authorizationCodeId))!;
-    await db.update(oauthRefreshToken).set({ revoked: after.revoked }).where(and(line, isNull(oauthRefreshToken.revoked)));
-    await db.update(oauthRefreshToken).set({ rotationReplayResponse: null }).where(line);
-    // Access tokens are self-contained; put the line on the revocation list for as long as any of its tokens can live.
-    const expiresAt = new Date(Date.now() + MCP_ACCESS_TOKEN_SECONDS * 1000);
-    await db.delete(mcpRevokedToken).where(lte(mcpRevokedToken.expiresAt, new Date()));
-    await db.insert(mcpRevokedToken).values({ id: revokedLineId(lineMark(sent.authorizationCodeId)), expiresAt }).onConflictDoUpdate({ target: mcpRevokedToken.id, set: { expiresAt } });
-    await db.delete(oauthAccessToken).where(and(eq(oauthAccessToken.userId, sent.userId), eq(oauthAccessToken.clientId, sent.clientId), eq(oauthAccessToken.authorizationCodeId, sent.authorizationCodeId)));
+    const line = { ...sent, authorizationCodeId: sent.authorizationCodeId };
+    await stopRefreshLine(db, line, after.revoked);
+    await deleteRefreshLineAccessTokens(db, line);
   }
   if (sent.revoked) await db.update(oauthRefreshToken).set({ revoked: sent.revoked }).where(eq(oauthRefreshToken.id, sent.id));
 }

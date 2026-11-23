@@ -115,8 +115,8 @@ export function authPlugins(sendMagicLink: SendMagicLink, opts: { baseURL: strin
       clientRegistrationDefaultApplicationType: "infer",
       // Access tokens last 15 minutes. withMcpAuth checks connection revocation on every request.
       // A suspended member can continue reading, and write requests are refused during suspension.
-      // A refresh token used a second time within 30 seconds (two processes sharing one credential, a retry after a lost reply) is tolerated; beyond that the
-      // library treats it as theft and ends every connection of that member and client.
+      // Within 30 seconds the provider can replay the previous rotation response.
+      // After that the token endpoint revokes the affected authorization line.
       accessTokenExpiresIn: MCP_ACCESS_TOKEN_SECONDS,
       refreshTokenReuseInterval: 30,
       storeTokens: { hash: async (token) => hashMagicLinkToken(token) },
