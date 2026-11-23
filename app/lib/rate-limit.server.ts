@@ -16,17 +16,20 @@ export type RateLimitRule = { limit: number; windowSeconds: number };
 // Shared member caps across browser, API and MCP: 600 reads/hour, 30 draft creations/hour.
 export const READ_RATE_LIMIT: RateLimitRule = { limit: 600, windowSeconds: 3600 };
 export const DRAFT_RATE_LIMIT: RateLimitRule = { limit: 30, windowSeconds: 3600 };
+export const MEMBER_CONTROL_READ_RATE_LIMIT: RateLimitRule = { limit: 120, windowSeconds: 3600 };
 
 // A page can run a layout and multiple loaders with the same Request. Count that
 // browser read once; the weak keys do not retain completed HTTP requests.
 const browserReads = new WeakMap<Request, Map<string, Promise<RateLimitResult>>>();
-export function hitBrowserReadLimit(db: Db, request: Request, userId: string): Promise<RateLimitResult> {
-  let members = browserReads.get(request);
-  if (!members) { members = new Map(); browserReads.set(request, members); }
-  let result = members.get(userId);
+export function hitBrowserReadLimit(db: Db, request: Request, userId: string, scope: "shared" | "control" = "shared"): Promise<RateLimitResult> {
+  const key = scope === "control" ? `read:member-control:${userId}` : `read:member:${userId}`;
+  const rule = scope === "control" ? MEMBER_CONTROL_READ_RATE_LIMIT : READ_RATE_LIMIT;
+  let reads = browserReads.get(request);
+  if (!reads) { reads = new Map(); browserReads.set(request, reads); }
+  let result = reads.get(key);
   if (!result) {
-    result = Promise.resolve(hitMemoryReadLimit(db, `read:member:${userId}`, READ_RATE_LIMIT));
-    members.set(userId, result);
+    result = Promise.resolve(hitMemoryReadLimit(db, key, rule));
+    reads.set(key, result);
   }
   return result;
 }

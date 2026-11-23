@@ -1,9 +1,12 @@
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { rateLimits, roles } from "~/lib/db/schema";
+import { oauthClient, oauthConsent, rateLimits, roles } from "~/lib/db/schema";
 import { createTopic } from "~/lib/entries.server";
 import { handleDraftCreate } from "~/lib/api/drafts-api.server";
-import { clearMemoryReadLimitsForTests, hitRateLimit, ANON_IP_LIMIT, AUTH_PAGE_IP_LIMIT, hitIpLimit, MEMBER_RATE_LIMITS, READ_RATE_LIMIT } from "~/lib/rate-limit.server";
+import { clearMemoryReadLimitsForTests, hitRateLimit, ANON_IP_LIMIT, AUTH_PAGE_IP_LIMIT, hitIpLimit, hitMemoryReadLimit, MEMBER_CONTROL_READ_RATE_LIMIT, MEMBER_RATE_LIMITS, READ_RATE_LIMIT } from "~/lib/rate-limit.server";
+import { getAuth } from "~/lib/auth/auth.server";
+import { requireMember } from "~/lib/auth/session.server";
+import { handleMcpRequest } from "~/lib/mcp/server.server";
 import { createApiToken } from "~/lib/tokens.server";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
 
@@ -13,6 +16,7 @@ const originalHops = process.env.TRUSTED_PROXY_HOPS;
 let h: RouteHarness;
 let readToken: string;
 let draftToken: string;
+let topicId: number;
 const fromIp = (ip: string) => ({ "x-forwarded-for": ip });
 
 beforeAll(async () => {
@@ -23,6 +27,7 @@ beforeAll(async () => {
   await h.db.insert(roles).values({ userId: h.ids.moriko, role: "moderator", lang: "ja" });
   const topic = await createTopic(h.db, h.ids.hana, { lang: "ja", title: "話題", body: "本文" });
   if (!topic.ok) throw new Error("topic failed");
+  topicId = topic.id;
   const read = await createApiToken(h.db, h.ids.hana, { name: "r", kind: "read" });
   const draft = await createApiToken(h.db, h.ids.hana, { name: "d", kind: "draft" });
   if (!read.ok || !draft.ok) throw new Error("token failed");
@@ -55,9 +60,66 @@ const countOf = async (key: string) => Number((await h.db.select({ c: rateLimits
 describe("the limits", () => {
   it("are the documented values", () => {
     expect(READ_RATE_LIMIT).toEqual({ limit: 600, windowSeconds: 3600 });
+    expect(MEMBER_CONTROL_READ_RATE_LIMIT).toEqual({ limit: 120, windowSeconds: 3600 });
     expect(ANON_IP_LIMIT).toEqual({ limit: 120, windowSeconds: 3600 });
     expect(AUTH_PAGE_IP_LIMIT).toEqual({ limit: 300, windowSeconds: 900 });
     for (const name of ["notifications", "mod", "mod-appeals"] as const) expect(MEMBER_RATE_LIMITS[name]).toEqual({ limit: 600, windowSeconds: 3600 });
+  });
+});
+
+describe("member control reads", () => {
+  it("lets a member revoke a connection and revalidate the screen with a separate read allowance", async () => {
+    const userId = h.ids.hana;
+    const now = new Date();
+    await h.db.insert(oauthClient).values({ id: "fixture-client", clientId: "fixture-client", redirectUris: ["https://client.example.org/callback"] });
+    await h.db.insert(oauthConsent).values({ id: "fixture-grant", clientId: "fixture-client", userId, scopes: ["read"], createdAt: now, updatedAt: now });
+    await fill(`read:member:${userId}`, READ_RATE_LIMIT);
+    for (let i = 0; i < MEMBER_CONTROL_READ_RATE_LIMIT.limit - 2; i++) {
+      hitMemoryReadLimit(h.db, `read:member-control:${userId}`, MEMBER_CONTROL_READ_RATE_LIMIT);
+    }
+
+    const connections = await import("~/routes/settings-connections");
+    const navigation = await import("~/routes/member-layout");
+    const pathname = "/settings/connections";
+    const page = h.request(pathname, { as: "hana" });
+    const [, first] = await Promise.all([navigation.loader({ request: page }), connections.loader(h.args(page))]);
+    expect(first.connections).toMatchObject([{ id: "fixture-grant" }]);
+
+    const topic = await import("~/routes/topic");
+    expect((await h.outcome(() => topic.loader(h.args(h.request(`/t/${topicId}`, { as: "hana" }), { id: String(topicId) })))).status).toBe(429);
+    const mcp = new Request(new URL("/mcp", page.url), {
+      method: "POST",
+      headers: { authorization: `Bearer ${readToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "ping", id: 1 }),
+    });
+    const limited = await handleMcpRequest(mcp, { db: h.db, auth: await getAuth(), baseURL: new URL(page.url).origin });
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("x-ratelimit-limit")).toBe(String(READ_RATE_LIMIT.limit));
+
+    const post = h.request(pathname, { as: "hana", form: { id: "fixture-grant" } });
+    expect(await connections.action(h.args(post))).toEqual({ revoked: true });
+    const revalidation = h.request(`${pathname}.data?_routes=routes%2Fsettings-connections`, { as: "hana" });
+    expect((await connections.loader(h.args(revalidation))).connections).toEqual([]);
+
+    const beyondLimit = h.request(pathname, { as: "hana" });
+    await expect(connections.loader(h.args(beyondLimit))).rejects.toMatchObject({
+      init: { status: 429, headers: { "X-RateLimit-Limit": "120", "Retry-After": expect.any(String) } },
+    });
+  });
+
+  it("assigns only the designated browser GETs to the control allowance", async () => {
+    await fill(`read:member:${h.ids.hana}`, READ_RATE_LIMIT);
+    for (const path of [
+      "/settings", "/settings/chat", "/settings/connections", "/settings/delete-account", "/settings/media", "/settings/stances", "/settings/tokens",
+      "/mcp/consent", "/mcp/entry-edits/1", "/mcp/entries/1/delete", "/drafts/1", "/drafts/1/preview", "/village-proposals/1", "/suspended", "/appeal/1", "/navigation-header",
+    ]) {
+      expect((await h.outcome(() => requireMember(h.request(path, { as: "hana" })))).status, path).toBe(200);
+    }
+    for (const path of ["/settings/export", "/drafts", "/mentions/suggest", "/notifications", "/t/1/edit"]) {
+      expect((await h.outcome(() => requireMember(h.request(path, { as: "hana" })))).status, path).toBe(429);
+    }
+    const head = new Request(h.request("/settings/connections", { as: "hana" }), { method: "HEAD" });
+    expect((await h.outcome(() => requireMember(head))).status).toBe(429);
   });
 });
 

@@ -49,6 +49,13 @@ export async function requireUser(request: Request): Promise<SessionUser> {
 type Member = { user: SessionUser; profile: Profile; db: Db };
 export type Reader = Member | { db: Db; user?: never; profile?: never };
 
+// Browser account controls, draft and proposal confirmation, and their document navigation.
+const memberControlPaths = [
+  /^\/settings(?:\/(?:chat|connections|delete-account|media|stances|tokens))?\/?$/i,
+  /^\/mcp\/(?:consent|entry-edits\/[^/]+|entries\/[^/]+\/delete)\/?$/i,
+  /^\/(?:drafts\/[^/]+(?:\/preview)?|village-proposals\/[^/]+|suspended|appeal\/[^/]+|navigation-header)\/?$/i,
+];
+
 // Only explicitly selected reading routes use this gate. Writers stay members-only.
 async function getReaderImplementation(request: Request, countPublicRead = true): Promise<Reader> {
   if (!publicReading() || await getSessionUser(request)) return requireMember(request);
@@ -73,7 +80,8 @@ async function requireMemberImplementation(request: Request): Promise<Member> {
     if (!selfService && !resource) throw redirect(`/onboarding?${new URLSearchParams({ next: url.pathname + url.search })}`);
   }
   if (request.method === "GET" || request.method === "HEAD") {
-    const rate = await hitBrowserReadLimit(db, request, user.id);
+    const control = request.method === "GET" && memberControlPaths.some(path => path.test(documentUrl(request).pathname));
+    const rate = await hitBrowserReadLimit(db, request, user.id, control ? "control" : "shared");
     if (!rate.allowed) throw data("Too many reads. Try again later.", { status: 429, headers: rateLimitHeaders(rate) });
   }
   // Insert operators (addresses in OPERATOR_EMAILS) into roles for queries and records. Determine operator status from the environment variable on every request.
