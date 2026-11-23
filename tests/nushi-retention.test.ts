@@ -105,6 +105,7 @@ it("renumbers successive erasures including a title-only source", async () => {
 it("clears a remaining translation fingerprint and records the source withdrawal", async () => {
   vi.stubEnv("VILLAGE_NUSHI", "1");
   vi.stubEnv("VILLAGES", "1");
+  vi.stubEnv("PUBLIC_READING", "1");
   const f = await fixture({ sourcePurged: true });
   await f.db.update(nushiSources).set({ author: "", sourceHash: "", textHash: null }).where(eq(nushiSources.entryId, f.source.id));
   expect(await readNushiAnswer(f.db, f.saved.id)).toMatchObject({ hidden: true, reason: "source_changed" });
