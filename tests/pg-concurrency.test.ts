@@ -698,21 +698,25 @@ describe.skipIf(!REAL_PG_URL)("two connections on PostgreSQL (TEST_DATABASE_URL)
       ]);
       try {
         const w = await world(dbBlock);
-        const asked = await createTopic(dbBlock, w.a, { lang: "ja", title: `固定された問い${w.n}`, body: "本文です。", asksStance: true });
+        const lang = "ja";
+        const asked = await createTopic(dbBlock, w.a, { lang, title: `固定された問い${w.n}`, body: "本文です。", asksStance: true });
         if (!asked.ok) throw new Error("question failed");
         const [row] = await dbBlock.select({ hash: entries.sourceHash }).from(entries).where(eq(entries.id, asked.id));
         await dbBlock.insert(translations).values({ entryId: asked.id, field: "body", lang: "th", kind: "primary", text: "[th] 本文です。", engine: "fake", model: "fake-1", sourceHash: row.hash });
         await addMember(dbBlock, `giver${w.n}`, `giv${w.n}`);
-        await addMember(dbBlock, `second${w.n}`, `snd${w.n}`);
+        const secondMember = `second${w.n}`;
+        await addMember(dbBlock, secondMember, `snd${w.n}`);
         expect((await setCurrentStance(dbBlock, `giver${w.n}`, { questionId: asked.id, position: "agree", expectedVersion: 0 }, { now: LATER })).ok).toBe(true);
         const made = await createTranslationReport(dbBlock, w.b, { entryId: asked.id, lang: "th" }, { now: LATER, llm: llm() });
         if (!made.ok || made.id === null) throw new Error("report failed");
         const before = await deadlocks();
         const holder = holdTx(dbBlock, (tx) => tx.select({ id: entries.id }).from(entries).where(eq(entries.id, asked.id)).for("update"));
         await holder.ready;
-        const fixing = fixEntry(dbFix, op(`op${w.n}`), { entryId: asked.id, title: `直した題${w.n}`, body: "直した本文です。", note: "誤字", sourceHash: row.hash }, { now: LATER });
+        const title = `直した題${w.n}`;
+        const body = "直した本文です。";
+        const fixing = fixEntry(dbFix, op(`op${w.n}`), { entryId: asked.id, title, body, note: "誤字", sourceHash: row.hash }, { now: LATER });
         await waitForLockWait(admin, "fix");
-        const registering = setStance(dbStance, `second${w.n}`, { questionId: asked.id, position: "disagree", expectedVersion: 0, questionSourceHash: row.hash }, { now: LATER });
+        const registering = setStance(dbStance, secondMember, { questionId: asked.id, position: "disagree", expectedVersion: 0, questionSourceHash: sourceHash(title, body, lang) }, { now: LATER });
         await waitForLockWait(admin, "stance");
         const running = runDueJobs(dbWorker, retryOnly(), { now: LATER, limit: 20, logger: quiet });
         await waitForLockWait(admin, "worker");
@@ -722,12 +726,19 @@ describe.skipIf(!REAL_PG_URL)("two connections on PostgreSQL (TEST_DATABASE_URL)
         await waitForLockWait(admin, "delete");
         await expectPending(fixing);
         await holder.commit();
-        const settled = await expectSettlesWithin(Promise.all([fixing, registering, running, humanFix, deleting]), 20_000, "the five that waited for the question's row");
-        expect(settled[0]).toMatchObject({ ok: true });
-        // A corrected question requires its current source, and a deleted question is unavailable.
-        expect(settled[1]).toEqual({ ok: false, error: expect.stringMatching(/^(question_changed|not_found)$/) });
-        expect(settled[4].ok).toBe(true);
-        expect(await dbBlock.select().from(stances).where(and(eq(stances.questionId, asked.id), eq(stances.userId, `second${w.n}`)))).toHaveLength(0);
+        const [fix, registration, , , deletion] = await expectSettlesWithin(Promise.all([fixing, registering, running, humanFix, deleting]), 20_000, "the five that waited for the question's row");
+        expect(fix.ok).toBe(true);
+        expect(deletion.ok).toBe(true);
+        if (registration.ok) {
+          expect(registration).toEqual({ ok: true, changed: true, position: "disagree", version: 1 });
+        } else {
+          // Deletion before registration yields not_found. Registration before the correction sees the previous source and yields question_changed.
+          expect(["not_found", "question_changed"]).toContain(registration.error);
+        }
+        const current = await dbBlock.select({ position: stances.position, version: stances.version }).from(stances).where(and(eq(stances.questionId, asked.id), eq(stances.userId, secondMember)));
+        const history = await dbBlock.select({ from: stanceChanges.fromPosition, to: stanceChanges.toPosition }).from(stanceChanges).where(and(eq(stanceChanges.questionId, asked.id), eq(stanceChanges.userId, secondMember)));
+        expect(current).toEqual(registration.ok ? [{ position: "disagree", version: 1 }] : []);
+        expect(history).toEqual(registration.ok ? [{ from: null, to: "disagree" }] : []);
         expect((await dbBlock.select({ deletedAt: entries.deletedAt }).from(entries).where(eq(entries.id, asked.id)))[0].deletedAt).toEqual(LATER);
         expect(await deadlocks()).toBe(before);
         // The correction revision remains, and the question stays locked.

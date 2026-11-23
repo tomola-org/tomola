@@ -131,10 +131,14 @@ export async function setStance(db: Db, userId: string, input: SetStanceInput, o
     }
     // 4. A new choice must match the locked question's source before checking the member's version.
     const changed = position !== currentPosition;
-    if (changed && position !== null && (questionSourceHash !== question.sourceHash || !questionSourceHash || !/^[0-9a-f]{64}$/.test(questionSourceHash))) {
+    if (
+      changed && position !== null &&
+      (!questionSourceHash || questionSourceHash !== question.sourceHash || !/^[0-9a-f]{64}$/.test(questionSourceHash))
+    ) {
       return { ok: false as const, error: "question_changed" as const };
     }
     if (position !== null && !hasStanceConsent(profile)) return { ok: false as const, error: "consent_required" as const };
+    // Return the same stance before comparing the member's version so a double press does not cause a conflict.
     if (!changed) return { ok: true as const, changed: false, position: currentPosition, version };
     // 5. Reject stale-screen submissions with current stance/version.
     if (input.expectedVersion !== version) return { ok: false as const, error: "conflict" as const, position: currentPosition, version };
