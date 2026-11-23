@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { expect, it } from "vitest";
 import { PG_MODE } from "./helpers/pg-test";
 import { setupRouteHarness } from "./helpers/route-harness";
@@ -40,6 +40,44 @@ it.skipIf(!PG_MODE)("waits for an original image reference before retaining acco
   }
   expect(await db.select().from(entryMedia)).toEqual([{ entryId: post.id, mediaId: image, isOwnerReference: true }]);
   expect(await canReadMedia(db, image, null)).toBe(true);
+});
+
+it.skipIf(!PG_MODE)("synchronizes two legacy image references during the uploader's account deletion", { tags: ["postgres"] }, async () => {
+  const db = await createTestDb();
+  const uploader = "quit-media-uploader", writer = "quit-media-editor";
+  await addMember(db, uploader, "quit_media_uploader");
+  await addMember(db, writer, "quit_media_editor");
+  const kept = "a".repeat(64), removed = "b".repeat(64);
+  const editedBody = `![diagram](/media/${kept}-1x1.webp)`;
+  await db.insert(media).values([kept, removed].map(id => ({ id, uploadedBy: uploader, bytes: Buffer.from([1]), byteSize: 1, mime: "image/webp", width: 1, height: 1 })));
+  const [post] = await db.insert(entries).values({
+    authorId: writer, kind: "topic", lang: "en", body: `${editedBody}\n\n![detail](/media/${removed}-1x1.webp)`,
+  }).returning({ id: entries.id });
+  await db.insert(entryMedia).values([kept, removed].map(mediaId => ({ entryId: post.id, mediaId })));
+  const requestId = await requestAccountDeletion(db, uploader, { confirmation: "quit_media_uploader", posts: "keep" });
+  const waiting = async () => {
+    const { rows } = await db.execute(sql`select count(*)::int as waiting from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and cardinality(pg_blocking_pids(pid)) > 0`) as { rows: { waiting: number }[] };
+    return rows[0].waiting;
+  };
+  const reference = (id: string) => and(eq(entryMedia.entryId, post.id), eq(entryMedia.mediaId, id));
+  let sync: Promise<void> | undefined, deletion: ReturnType<typeof completeAccountDeletion> | undefined;
+  try {
+    await db.transaction(async gate => {
+      await gate.select({ id: entryMedia.mediaId }).from(entryMedia).where(reference(kept)).for("no key update");
+      sync = db.transaction(tx => syncMediaReferences(tx, post.id, editedBody));
+      void sync.catch(() => {});
+      await expect.poll(waiting).toBe(1);
+      deletion = completeAccountDeletion(db, requestId);
+      void deletion.catch(() => {});
+      await expect.poll(waiting).toBe(2);
+      // Neither transaction locks a later reference while waiting for the first.
+      await gate.select({ id: entryMedia.mediaId }).from(entryMedia).where(reference(removed)).for("no key update", { noWait: true });
+    });
+  } finally {
+    await Promise.all([sync, deletion]);
+  }
+  expect(await db.select().from(entryMedia)).toEqual([{ entryId: post.id, mediaId: kept, isOwnerReference: false }]);
+  expect(await db.select().from(accountDeletions)).toMatchObject([{ id: requestId, state: "completed" }]);
 });
 
 it.skipIf(!PG_MODE)("prevents a request authenticated before deletion from minting credentials after its commit", { tags: ["postgres"] }, async () => {

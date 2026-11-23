@@ -1,6 +1,6 @@
 import { villagesEnabled } from "./villages-enabled.server";
 import { lockFigureMedia, queueEntryFigures } from "./figure-translation.server";
-import { and, eq, exists, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
+import { and, eq, exists, inArray, isNull, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Db, Tx } from "~/lib/db/client.server";
 import { appeals, entries, entryMedia, media, motionPairs, moderationActions, profiles, villages } from "~/lib/db/schema";
@@ -21,22 +21,35 @@ export async function syncMediaReferences(db: Tx, entryId: number, body: string,
   // Account deletion locks the author's entries before recording their remaining references.
   const [entry] = await db.select({ authorId: entries.authorId }).from(entries).where(eq(entries.id, entryId)).for("no key update");
   if (!entry) return;
-  const previous = await db.select({ id: entryMedia.mediaId }).from(entryMedia).where(eq(entryMedia.entryId, entryId));
-  const ids = referencedMediaIds(body), affected = [...new Set([...ids, ...previous.map(row => row.id)])];
+  const forEntry = eq(entryMedia.entryId, entryId);
+  const previous = await db.select({ id: entryMedia.mediaId, owner: entryMedia.isOwnerReference }).from(entryMedia).where(forEntry);
+  const previousOwners = new Map(previous.map(row => [row.id, row.owner]));
+  const ids = new Set(referencedMediaIds(body)), affected = [...new Set([...ids, ...previousOwners.keys()])];
   const motions = affected.length && entry.authorId !== DELETED_MEMBER_ID ? await db.select({ id: media.id }).from(media).where(and(or(
     inArray(media.id, affected),
     exists(db.select({ id: motionPairs.motionId }).from(motionPairs).where(and(eq(motionPairs.motionId, media.id), inArray(motionPairs.stillId, affected)))),
   ), eq(media.uploadedBy, entry.authorId), eq(media.animated, true), eq(media.avatar, false), isNull(media.villageId))) : [];
   if (motions.length) await lockFigureMedia(db);
-  if (previous.length) await db.delete(entryMedia).where(and(eq(entryMedia.entryId, entryId), ids.length ? notInArray(entryMedia.mediaId, ids) : undefined));
-  const stored = ids.length ? await db.select({ mediaId: media.id, isOwnerReference: matchingMediaOwner().mapWith(Boolean) }).from(media)
-    .innerJoin(entries, eq(entries.id, entryId)).where(inArray(media.id, ids)) : [];
-  // A reference still present in the body keeps its recorded ownership after anonymization.
-  if (stored.length) await db.insert(entryMedia).values(stored.map(row => ({ entryId, ...row }))).onConflictDoUpdate({
-    target: [entryMedia.entryId, entryMedia.mediaId],
-    set: { isOwnerReference: sql`excluded.is_owner_reference` },
-    setWhere: isNull(entryMedia.isOwnerReference),
-  });
+  const removed = [...previousOwners.keys()].filter(id => !ids.has(id));
+  const pending = [...ids].filter(id => previousOwners.get(id) === null);
+  const changed = [...removed, ...pending];
+  if (changed.length) {
+    // Lock removals and ownership updates together in the same order as account deletion.
+    await db.select({ id: entryMedia.mediaId }).from(entryMedia).where(and(forEntry, inArray(entryMedia.mediaId, changed)))
+      .orderBy(entryMedia.mediaId).for("no key update");
+  }
+  if (removed.length) await db.delete(entryMedia).where(and(forEntry, inArray(entryMedia.mediaId, removed)));
+  // A retained reference keeps its recorded ownership after anonymization.
+  if (pending.length) await db.update(entryMedia).set({ isOwnerReference: matchingMediaOwner() })
+    .from(media).innerJoin(entries, eq(entries.id, entryId))
+    .where(and(forEntry, isNull(entryMedia.isOwnerReference), eq(entryMedia.mediaId, media.id), inArray(entryMedia.mediaId, pending)));
+  const added = [...ids].filter(id => !previousOwners.has(id));
+  if (added.length) {
+    const stored = await db.select({ mediaId: media.id, isOwnerReference: matchingMediaOwner().mapWith(Boolean) }).from(media)
+      .innerJoin(entries, eq(entries.id, entryId)).where(inArray(media.id, added));
+    if (stored.length) await db.insert(entryMedia).values(stored.map(row => ({ entryId, ...row })))
+      .onConflictDoNothing({ target: [entryMedia.entryId, entryMedia.mediaId] });
+  }
   if (motions.length) {
     const motionIds = motions.map(row => row.id);
     // Rebuild the affected relationships from current original posts, preserving
@@ -59,7 +72,7 @@ export async function syncMediaReferences(db: Tx, entryId: number, body: string,
     await db.delete(motionPairs).where(inArray(motionPairs.motionId, motionIds));
     if (found.length) await db.insert(motionPairs).values(found).onConflictDoNothing();
   }
-  if (ids.length) await queueEntryFigures(db, entryId);
+  if (ids.size) await queueEntryFigures(db, entryId);
 }
 
 export async function canReadMedia(db: Db, id: string, viewer: Viewer | null): Promise<boolean> {

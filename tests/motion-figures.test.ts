@@ -17,7 +17,7 @@ import { canReadMedia, referencedMediaIds } from "~/lib/media-references.server"
 import { decorateMotionHtml, motionImages } from "~/lib/motion-display.server";
 import { prepareEntryFigureDisplay } from "~/lib/figure-display.server";
 import { publicFigureCondition } from "~/lib/figure-translation.server";
-import { createTopic, editEntry } from "~/lib/entries.server";
+import { createReply, createTopic, editEntry } from "~/lib/entries.server";
 import { entries, media, motionDelivery, motionPairs, profiles, villageMembers, villages } from "~/lib/db/schema";
 import { exportSite } from "~/lib/site-export.server";
 import { countMotionDelivery } from "~/lib/motion-delivery.server";
@@ -165,9 +165,11 @@ it("binds explicit authored pairs, visibility, translation exclusion, export and
   expect(await canReadMedia(db, motionId, null)).toBe(false);
   const created = await createTopic(db, "motion-author", { title: "Motion fixture", body, lang: "en" });
   if (!created.ok) throw new Error(created.error);
+  const reply = await createReply(db, "motion-other", created.id, { body, lang: "en" });
+  if (!reply.ok) throw new Error(reply.error);
   expect(await canReadMedia(db, motionId, null)).toBe(true);
   const html = await renderMarkdown(body);
-  const { images, ownedByEntry } = await motionImages(db, [{ id: created.id, html }]);
+  const { images, ownedByEntry } = await motionImages(db, [{ id: created.id, html }, { id: reply.id, html }]);
   const owned = ownedByEntry.get(created.id);
   expect(images.get(motionId)?.durationMs).toBe(rewritten.durationMs);
   expect(decorateMotionHtml(html, html, owned, images)).toContain(`data-motion-duration="${rewritten.durationMs}"`);
@@ -176,7 +178,8 @@ it("binds explicit authored pairs, visibility, translation exclusion, export and
   expect(passive).toContain(`href="${saved.url}"`);
   const repeated = await renderMarkdown(Array(16).fill(body).join("\n\n"));
   expect(decorateMotionHtml(repeated, repeated, owned, images).match(/data-motion-figure/g)).toHaveLength(15);
-  expect(decorateMotionHtml(html, html, undefined, images)).not.toContain("data-motion-figure");
+  expect(ownedByEntry.has(reply.id)).toBe(false);
+  expect(decorateMotionHtml(html, html, ownedByEntry.get(reply.id), images)).not.toContain("data-motion-figure");
   expect((await prepareEntryFigureDisplay(db, [created.id], "en"))(created.id, html)).toContain("data-motion-figure");
   const plain = await renderMarkdown(`![diagram](${saved.url})`);
   expect(decorateMotionHtml(plain, plain, owned, images)).not.toContain("<img");

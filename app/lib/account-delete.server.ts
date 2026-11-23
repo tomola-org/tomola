@@ -236,11 +236,14 @@ export async function completeAccountDeletion(db: Db, id: string, opts: { now?: 
     await tx.delete(schema.passkeyRecoveries).where(eq(schema.passkeyRecoveries.userId, userId));
     await deleteAllStanceRecords(tx, userId);
     await lockFigureMedia(tx);
-    // Record ownership before replacing the author's and uploader's identities.
-    await tx.execute(sql`update ${entryMedia} set is_owner_reference = ${matchingMediaOwner()}
-      from ${entries}, ${media}
-      where ${entryMedia.entryId} = ${entries.id} and ${entryMedia.mediaId} = ${media.id}
-        and ${entryMedia.isOwnerReference} is null and (${entries.authorId} = ${userId} or ${media.uploadedBy} = ${userId})`);
+    // Record ownership before anonymization, locking references in the same order as post edits.
+    const lockedReferences = tx.$with("locked_references").as(tx.select({
+      entryId: entryMedia.entryId, mediaId: entryMedia.mediaId, owner: matchingMediaOwner().as("owner_reference"),
+    }).from(entryMedia).innerJoin(entries, eq(entries.id, entryMedia.entryId)).innerJoin(media, eq(media.id, entryMedia.mediaId))
+      .where(and(isNull(entryMedia.isOwnerReference), or(eq(entries.authorId, userId), eq(media.uploadedBy, userId))))
+      .orderBy(entryMedia.entryId, entryMedia.mediaId).for("no key update", { of: entryMedia }));
+    await tx.with(lockedReferences).update(entryMedia).set({ isOwnerReference: sql`${lockedReferences.owner}` }).from(lockedReferences)
+      .where(and(eq(entryMedia.entryId, lockedReferences.entryId), eq(entryMedia.mediaId, lockedReferences.mediaId)));
     const retained = tx.select({ id: entries.id }).from(entryMedia).innerJoin(entries, eq(entries.id, entryMedia.entryId))
       .where(and(eq(entryMedia.mediaId, media.id), eq(entryMedia.isOwnerReference, true), isNull(entries.deletedAt)));
     await tx.update(media).set({ bytes: null, deletedAt: now }).where(and(eq(media.uploadedBy, userId), isNull(media.deletedAt), or(eq(media.avatar, true), sql`not exists (${retained})`)));
