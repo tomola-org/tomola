@@ -275,8 +275,17 @@ export async function verifySignedAssertion(tx: Tx, userId: string, challenge: s
 }
 
 type MutationResult = { ok: boolean; id?: number };
+const memberWriteLock = Symbol("memberWriteLock");
+export type LockedMemberWrite = {
+  readonly [memberWriteLock]: true;
+  readonly tx: Tx;
+  readonly userId: string;
+  readonly operation: WriteOperation;
+  readonly id: number | null;
+};
+
 // With a transactional database, the write boundary is a savepoint.
-export async function withMemberWrite<T extends MutationResult>(db: Db, userId: string, request: Request, form: FormData, mutate: (tx: Tx) => Promise<T>, opts: { now?: Date; prepareRender?: boolean } = {}): Promise<T> {
+export async function withMemberWrite<T extends MutationResult>(db: Db, userId: string, request: Request, form: FormData, mutate: (tx: Tx, write: LockedMemberWrite) => Promise<T>, opts: { now?: Date; prepareRender?: boolean } = {}): Promise<T> {
   try {
     // React Router uses the route's .data transport URL for hydrated submissions.
     const pathname = new URL(request.url).pathname.replace(/\.data$/, "");
@@ -285,9 +294,10 @@ export async function withMemberWrite<T extends MutationResult>(db: Db, userId: 
       await lockSigningMember(tx, userId);
       const [profile] = await tx.select({ userId: profiles.userId }).from(profiles).where(eq(profiles.userId, userId));
       if (!profile) throw new SigningError("not_a_member");
+      const perform = (writeTx: Tx) => mutate(writeTx, { [memberWriteLock]: true, tx: writeTx, userId, operation, id });
       return operation === "publish-draft"
-        ? publishReviewedDraft(tx, userId, id!, pathname.endsWith("/preview"), form, mutate, opts.now)
-        : mutate(tx);
+        ? publishReviewedDraft(tx, userId, id!, pathname.endsWith("/preview"), form, perform, opts.now)
+        : perform(tx);
     });
     return await (opts.prepareRender === false ? run() : prepareEntryRender(db, userId, operation, id, form, run));
   } catch (error) {

@@ -30,9 +30,10 @@ describe.skipIf(!REAL_PG_URL)("recent submissions on PostgreSQL", { tags: ["post
     form.set("body", input.body);
     form.set("lang", input.lang);
     const request = new Request(kind === "topic" ? "http://localhost/t/new" : `http://localhost/t/${thread}`, { method: "POST", body: form });
-    const opts = { beforeNewSubmission: async () => null };
-    const submit = (connection: Db) => withMemberWrite(connection, writer, request, form, tx =>
-      kind === "topic" ? createTopic(tx, writer, input, opts) : createReply(tx, writer, thread, input, opts));
+    const submit = (connection: Db) => withMemberWrite(connection, writer, request, form, (tx, memberWrite) => {
+      const opts = { directSubmission: { memberWrite, checkRepeat: async () => null, checkNew: async () => null } };
+      return kind === "topic" ? createTopic(tx, writer, input, opts) : createReply(tx, writer, thread, input, opts);
+    });
 
     const first = holdTx(db, submit);
     let second: ReturnType<typeof submit> | undefined;

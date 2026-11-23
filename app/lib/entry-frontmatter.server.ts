@@ -27,6 +27,16 @@ export function splitFrontmatter(text: string): Split {
   return { found: true, raw: rest.slice(0, close.index), body: rest.slice(close.index + close[0].length), closed: true };
 }
 
+function withoutLeadingBlankLines(body: string) {
+  return body.replace(/^(?:\r?\n)+/, "");
+}
+
+// Before parsing, either the entire text or the text after the closing delimiter might be the saved body.
+export function possiblePastedBodies(text: string): string[] {
+  const split = splitFrontmatter(text);
+  return split.found && split.closed ? [text, withoutLeadingBlankLines(split.body)] : [text];
+}
+
 export { type MappingResult } from "./entry-frontmatter-types";
 import type { MappingResult } from "./entry-frontmatter-types";
 
@@ -177,7 +187,7 @@ export async function extractFrontmatter(text: string, opts: { strict: boolean }
   if (!split.closed) return fail("invalid_frontmatter");
   const parsed = await parseMapping(split.raw);
   if (!parsed.ok) return fail(parsed.error);
-  return { ok: true, found: true, raw: split.raw, data: parsed.data, body: split.body.replace(/^(?:\r?\n)+/, "") };
+  return { ok: true, found: true, raw: split.raw, data: parsed.data, body: withoutLeadingBlankLines(split.body) };
 }
 
 // Keys identifying pasted frontmatter. A map with none of the keys used by entry frontmatter, including Markdown frontmatter,

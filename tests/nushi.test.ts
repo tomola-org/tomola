@@ -6,7 +6,7 @@ import { and, eq } from "drizzle-orm";
 import { afterEach, expect, it, vi } from "vitest";
 import { addMember, createTestDb } from "./helpers/db";
 import { createReply, createTopic } from "~/lib/entries.server";
-import { lockSigningMember } from "~/lib/signing.server";
+import { withMemberWrite } from "~/lib/signing.server";
 import { EMBEDDING_DIM, entries, entryEmbeddings, jobs, llmUsage, moderationActions, notifications, nushiAnswers, nushiReports, nushiRequests, nushiReservations, nushiSources, nushiTranslations, profiles, translations, villageMembers, villages } from "~/lib/db/schema";
 import { callsNushi } from "~/lib/nushi-call.server";
 import { NUSHI_PROMPT_VERSION, nushiEnabled, nushiInVillage, nushiLimits, nushiMonthlyBudgetMicro } from "~/lib/nushi-config.server";
@@ -217,10 +217,14 @@ it("includes the AI answer in a repeated reply's destination", async () => {
   const input = { body: "What changed about the timing?", lang: "en" };
   const attached = await createReply(f.db, writer, f.topic, { ...input, nushiParentId: answer.id });
   if (!attached.ok) throw new Error(attached.error);
-  const submit = (nushiParentId?: number) => f.db.transaction(async tx => {
-    await lockSigningMember(tx, writer);
-    return createReply(tx, writer, f.topic, { ...input, nushiParentId }, { beforeNewSubmission: async () => null });
-  });
+  const form = new FormData();
+  form.set("body", input.body);
+  form.set("lang", input.lang);
+  const request = new Request(`http://localhost/t/${f.topic}`, { method: "POST", body: form });
+  const submit = (nushiParentId?: number) => withMemberWrite(f.db, writer, request, form, (tx, memberWrite) =>
+    createReply(tx, writer, f.topic, { ...input, nushiParentId }, {
+      directSubmission: { memberWrite, checkRepeat: async () => null, checkNew: async () => null },
+    }));
   expect(await submit(answer.id)).toMatchObject({ ok: true, id: attached.id, reused: true });
   const detached = await submit();
   if (!detached.ok) throw new Error(detached.error);

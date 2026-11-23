@@ -124,7 +124,7 @@ export async function submitTopicForm<E extends string = never>(
   db: Db,
   member: { user: Pick<SessionUser, "id">; profile: Pick<Profile, "homeArea" | "readLangs"> },
   form: FormData,
-  opts: Pick<NonNullable<Parameters<typeof createTopic<E>>[3]>, "now" | "responseTo" | "beforeNewSubmission"> = {},
+  opts: Pick<NonNullable<Parameters<typeof createTopic<E>>[3]>, "now" | "responseTo" | "directSubmission"> = {},
 ) {
   const raw = readEntryForm(form);
   const pasted = (await applyPastedFrontmatter(raw, "topic", { defaultLang: defaultPostLang(member.profile) }));

@@ -89,6 +89,16 @@ describe("MCP post approvals through the browser routes", () => {
       .toEqual([{ id: published.id }]);
     const entryPath = threadId ? `/t/${threadId}#c-${published.id}` : `/t/${published.id}`;
     expect(await getClientDraftStatus(h.db, author, client, made.id)).toMatchObject({ status: "published", entryUrl: expect.stringContaining(entryPath) });
+
+    const pending = success(await createClientDraft(h.db, author, client, { kind, threadId, lang: "en", body }));
+    expect(pending.id).not.toBe(made.id);
+    const submitPending = (version: string) => h.outcome(() => action(h.args(h.request(editorPath, { as,
+      form: { body, lang: "en", fromDraft: String(pending.id), fromDraftVersion: version },
+    }), params)));
+    expect(await submitPending("1")).toMatchObject({ status: 409, value: { data: { error: "confirmation_required" } } });
+    expect(await submitPending("2")).toMatchObject({ status: 409, value: { data: { error: "draft_conflict" } } });
+    expect(await getClientDraftStatus(h.db, author, client, pending.id)).toMatchObject({ status: "pending", version: 1 });
+    expect(await h.db.select().from(entries).where(and(eq(entries.authorId, author), eq(entries.body, body)))).toEqual([published]);
   });
 
   it("keeps edit proposals private and binds the browser approval to the saved proposal", async () => {

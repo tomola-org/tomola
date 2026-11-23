@@ -3,7 +3,7 @@ import type { requireWriter } from "~/lib/auth/session.server";
 import { defaultPostLang } from "~/lib/profiles.server";
 import { applyPastedFrontmatter, formString, readEntryForm, readReplyParent } from "~/lib/entry-form.server";
 import { entryErrorMessage } from "~/lib/entry-error-message";
-import { createReply, deleteOwnEntry, isEntryInThread, replyLocation } from "~/lib/entries.server";
+import { createReply, deleteOwnEntry, hasRecentSubmissionBody, isEntryInThread, replyLocation } from "~/lib/entries.server";
 import { createDraft, deleteLinkedDraft, linkedDraftOf, checkLinkedClientDraft, updateDraft } from "~/lib/drafts.server";
 import { createReport } from "~/lib/moderation.server";
 import { createTranslationReport, updateTranslationReportDetails } from "~/lib/translation-reports.server";
@@ -116,13 +116,19 @@ export async function postTopicReply(context: TopicAction) {
   if (!pasted.ok) return pasted.response;
   const rate = await hitMemberLimit(db, "reply", user.id);
   const { body, lang, langCode, langSource, aiAssistance, stanceTag } = pasted.input;
+  const rateLimited = () => replyError(form, "rate_limited", 429, rateLimitHeaders(rate));
+  if (!rate.allowed && !await hasRecentSubmissionBody(db, user.id, "reply", [body])) return rateLimited();
   // The draft that "Write with AI" made is removed in the same transaction, so that a failure here cannot leave a reply made and the form still sendable.
-  const res = await withMemberWrite(db, user.id, request, form, async tx => {
+  const res = await withMemberWrite(db, user.id, request, form, async (tx, memberWrite) => {
     const created = await createReply(tx, user.id, threadId, {
       body, lang, langCode, langSource, aiAssistance, parentId: pasted.parentId, stanceTag,
       ...(form.has("nushiParentId") ? { nushiParentId: Number(form.get("nushiParentId")) } : {}),
     }, {
-      beforeNewSubmission: async write => rate.allowed ? checkLinkedClientDraft(write, user.id, form) : "rate_limited",
+      directSubmission: {
+        memberWrite,
+        checkRepeat: write => checkLinkedClientDraft(write, user.id, form, { allowConsumed: true }),
+        checkNew: async write => rate.allowed ? checkLinkedClientDraft(write, user.id, form) : "rate_limited",
+      },
     });
     if (created.ok && !created.reused) await deleteLinkedDraft(tx, user.id, form, { id: created.id, threadId });
     return created;
@@ -130,6 +136,6 @@ export async function postTopicReply(context: TopicAction) {
   if (res.ok) {
     throw redirect(postedLocation(await replyLocation(db, threadId, res.id, { lang: langCarry(request) }), res.id, res.followed));
   }
-  if (!rate.allowed) return replyError(form, "rate_limited", 429, rateLimitHeaders(rate));
-  return replyError(form, res.error, res.error === "draft_conflict" || res.error === "confirmation_required" ? 409 : 400);
+  if (res.error === "draft_conflict" || res.error === "confirmation_required") return replyError(form, res.error, 409);
+  return rate.allowed ? replyError(form, res.error) : rateLimited();
 }

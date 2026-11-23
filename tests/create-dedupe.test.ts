@@ -1,5 +1,6 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
+import * as aiVisibleText from "~/lib/ai-visible-text.server";
 import { drafts, entries, follows, jobs, notifications, postAiMaterials, profiles, rateLimits, villageMembers, villages } from "~/lib/db/schema";
 import { createDraft, publishDraft } from "~/lib/drafts.server";
 import { createReply, createTopic, editEntry, softDeleteEntry } from "~/lib/entries.server";
@@ -12,17 +13,21 @@ import { setupRouteHarness, type Outcome, type RouteHarness } from "./helpers/ro
 let h: RouteHarness;
 let writer: string;
 let thread: number;
+const queries: string[] = [];
 
 beforeAll(async () => {
-  h = await setupRouteHarness();
+  h = await setupRouteHarness({ logger: { logQuery: query => { queries.push(query); } } });
   writer = await h.signIn("repeat_writer", { homeArea: "en", readLangs: ["en", "ja"] });
   await h.signIn("repeat_reader");
   await h.signIn("repeat_neighbor");
   thread = idOf(await createTopic(h.db, h.ids.repeat_reader, { title: "Discussion", body: "A place for replies.", lang: "en", asksStance: true }));
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   await h.db.delete(rateLimits);
+  queries.length = 0;
 });
 afterAll(() => h.restore());
 
@@ -73,15 +78,37 @@ it.each(kinds)("reuses a %s across hydrated and native submission with one set o
 for (const kind of kinds) {
   const submit = kind === "topic" ? submitTopic : submitReply;
 
-  it.each(["different body", "past the window", "deleted", "edited"] as const)(`creates a new ${kind} with a nonmatching candidate (%s)`, async condition => {
+  it.each(["different body", "deleted", "edited"] as const)(`creates a new ${kind} with a nonmatching candidate (%s)`, async condition => {
     const form = { body: `${kind} comparison: ${condition}`, lang: "en" };
     const id = postedId(await submit(form));
-    if (condition === "past the window") {
-      await h.db.update(entries).set({ createdAt: sql`now() - interval '11 minutes'` }).where(eq(entries.id, id));
-    }
     if (condition === "deleted") expect(await softDeleteEntry(h.db, id)).toMatchObject({ ok: true });
     if (condition === "edited") expect(await editEntry(h.db, writer, id, { body: "A revised source." })).toMatchObject({ ok: true, changed: true });
     expect(postedId(await submit(condition === "different body" ? { ...form, body: "A different source." } : form))).not.toBe(id);
+  });
+
+  it(`matches a ${kind} through the exact ten-minute boundary`, async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const start = Date.now();
+    const form = { body: `A ${kind} at the edge of the window.`, lang: "en" };
+    const first = await submit(form);
+    const id = postedId(first);
+    vi.setSystemTime(start + 10 * 60 * 1000);
+    expect(await submit(form)).toMatchObject({ status: 302, location: first.location });
+    vi.setSystemTime(start + 10 * 60 * 1000 + 1);
+    expect(postedId(await submit(form))).not.toBe(id);
+  });
+
+  it.each([
+    { body: "Ο φίλος μου διαβάζει ένα μεγάλο βιβλίο.", code: "el" },
+    { body: "A brief note.", code: null },
+  ])(`matches a ${kind} with the same stored language code ($code)`, async ({ body, code }) => {
+    const form = { body, lang: "other" };
+    const id = postedId(await submit(form));
+    expect(await entryRows(kind, body)).toMatchObject([{ id, lang: "other", langCode: code }]);
+    await h.db.update(entries).set({ langCode: "hy" }).where(eq(entries.id, id));
+    const current = await submit(form);
+    expect(postedId(current)).not.toBe(id);
+    expect(await submit(form)).toMatchObject({ status: 302, location: current.location });
   });
 
   it(`opens the existing ${kind} for its author after automatic hiding`, async () => {
@@ -97,12 +124,20 @@ for (const kind of kinds) {
   });
 
   it(`keeps the success redirect for a ${kind} at the posting limit`, async () => {
-    const form = { body: `An accepted ${kind} at the limit.`, lang: "en" };
+    const form = { body: `---\ntype: ${kind}\nlang: en\n---\n\nAn accepted ${kind} at the limit.` };
     for (let count = 1; count < MEMBER_RATE_LIMITS[kind].limit; count++) await hitMemberLimit(h.db, kind, writer);
     const first = await submit(form);
     postedId(first);
+    queries.length = 0;
     expect(await submit(form)).toMatchObject({ status: 302, location: first.location });
-    expect(await submit({ ...form, body: `A new ${kind} over the limit.` })).toMatchObject({ status: 429, value: { data: { error: "rate_limited" } } });
+    expect(queries.some(query => query.includes("nextval("))).toBe(false);
+    queries.length = 0;
+    const response = await submit({ body: `A different ${kind} mentioning [the question](/t/${thread}).`, lang: "en",
+      ...(kind === "topic" ? { altOf: String(thread), title: "Another question", asksStance: "1" } : {}) });
+    expect(response).toMatchObject({ status: 429, value: { data: { error: "rate_limited" } } });
+    const entryQueries = queries.filter(query => query.includes('"entries"'));
+    expect(entryQueries).toEqual([expect.stringMatching(/^select "id" from "entries".*"author_id".*"created_at".*"deleted_at".*"kind".*"body".*limit/)]);
+    expect(queries.filter(query => /\bfor (?:no key )?update\b|^begin\b/i.test(query))).toEqual([]);
   });
 
   it(`opens the published ${kind} on a repeated submission from Write with AI`, async () => {
@@ -144,8 +179,17 @@ it("keeps response notifications on the first topic", async () => {
 
 it("keeps the original introduction and supplement on a repeat", async () => {
   const form = { title: "Introduction", body: "This is my introduction.", lang: "en" };
+  const parseStartingAt: number[] = [];
+  const parse = aiVisibleText.aiVisibleMarkdown;
+  vi.spyOn(aiVisibleText, "aiVisibleMarkdown").mockImplementation((...args) => {
+    parseStartingAt.push(queries.length);
+    return parse(...args);
+  });
+  queries.length = 0;
   const first = await submitTopic({ ...form, aiMaterial: "Original supplement." });
   const id = postedId(first);
+  expect(parseStartingAt).toHaveLength(1);
+  expect(queries.slice(0, parseStartingAt[0]).some(query => /^begin\b/i.test(query))).toBe(false);
   const laterIntro = postedId(await submitTopic({ ...form, intro: "1", body: "My current introduction." }));
   expect(await submitTopic({ ...form, intro: "1", aiMaterial: "Updated supplement." })).toMatchObject({ status: 302, location: first.location });
   expect(await h.db.select().from(postAiMaterials).where(eq(postAiMaterials.topicId, id))).toMatchObject([{ body: "Original supplement.", version: 1 }]);

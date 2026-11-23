@@ -1,5 +1,5 @@
 import { submitDraftPreview } from "~/lib/draft-preview-submit";
-import { preparePostAiMaterial, writePostAiMaterial } from "~/lib/post-ai-materials.server";
+import { preparePostAiMaterial, writePreparedPostAiMaterial } from "~/lib/post-ai-materials.server";
 import { POST_AI_MATERIAL_CHARS } from "~/lib/post-ai-materials";
 import { Textarea } from "~/components/ui/textarea";
 import { MarkdownBusyError, withMarkdownRead } from "~/lib/markdown-budget.server";
@@ -23,6 +23,8 @@ import { loadAltOrigin } from "~/lib/objections.server";
 import { parseIdOrNull } from "~/lib/params.server";
 import { ownTopicDraftIds, createDraft, deleteLinkedDraft, linkedDraftOf, checkLinkedClientDraft, updateDraft } from "~/lib/drafts.server";
 import { applyPastedFrontmatter, formString, readEntryForm, submitTopicForm } from "~/lib/entry-form.server";
+import { possiblePastedBodies } from "~/lib/entry-frontmatter.server";
+import { hasRecentSubmissionBody } from "~/lib/entries.server";
 import { DRAFT_RATE_LIMIT, hitRateLimit, hitMemberLimit, rateLimitHeaders } from "~/lib/rate-limit.server";
 import { postedLocation } from "~/lib/posted-ui";
 import { m } from "~/paraglide/messages.js";
@@ -148,19 +150,27 @@ export async function action({ request }: Route.ActionArgs) {
     }
     // Publishing counts against the topic limit; saving a draft does not.
     const rate = await hitMemberLimit(db, "topic", user.id);
+    const rateLimited = () => data({ error: "rate_limited", values }, { status: 429, headers: rateLimitHeaders(rate) });
+    if (!rate.allowed && !await hasRecentSubmissionBody(db, user.id, "topic", possiblePastedBodies(raw.body))) return rateLimited();
+    const hasSupplement = Boolean(supplement.trim());
+    const preparedSupplement = rate.allowed && hasSupplement ? await preparePostAiMaterial(supplement) : null;
     // The draft that "Write with AI" made is removed in the same transaction, so that a failure here cannot leave a post made and the form still sendable.
-    const res = await withMemberWrite(db, user.id, request, form, async tx => {
+    const res = await withMemberWrite(db, user.id, request, form, async (tx, memberWrite) => {
       const posted = await submitTopicForm(tx, { user, profile }, form, {
         responseTo: responsePostId(new URL(request.url).searchParams),
-        beforeNewSubmission: async write => {
-          if (!rate.allowed) return "rate_limited";
-          if (supplement.trim() && !await preparePostAiMaterial(supplement)) return "ai_material_invalid";
-          return checkLinkedClientDraft(write, user.id, form);
+        directSubmission: {
+          memberWrite,
+          checkRepeat: write => checkLinkedClientDraft(write, user.id, form, { allowConsumed: true }),
+          checkNew: async write => {
+            if (!rate.allowed) return "rate_limited";
+            if (hasSupplement && !preparedSupplement) return "ai_material_invalid";
+            return checkLinkedClientDraft(write, user.id, form);
+          },
         },
       });
       if (!posted.ok || posted.reused) return posted;
-      if (supplement.trim()) {
-        const saved = await writePostAiMaterial(tx, user.id, posted.id, { body: supplement, version: 0 });
+      if (preparedSupplement) {
+        const saved = await writePreparedPostAiMaterial(tx, user.id, posted.id, { prepared: preparedSupplement, version: 0 });
         if (!saved.ok) throw new Error("Supplement could not be saved");
       }
       await deleteLinkedDraft(tx, user.id, form, { id: posted.id, threadId: posted.id });
@@ -169,8 +179,8 @@ export async function action({ request }: Route.ActionArgs) {
     if (res.ok) {
       throw redirect(postedLocation(`/t/${res.id}`, res.id));
     }
-    if (!rate.allowed) return data({ error: "rate_limited", values }, { status: 429, headers: rateLimitHeaders(rate) });
     if (res.error === "draft_conflict" || res.error === "confirmation_required") return data({ error: res.error, values }, { status: 409 });
+    if (!rate.allowed) return rateLimited();
     return fail(res.error, res.village);
   }
   catch (error) {

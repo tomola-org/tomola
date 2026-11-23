@@ -488,16 +488,14 @@ export function linkedDraftOf(form: FormData): { id: number; version: number } |
 }
 
 // Linked client drafts use the draft form's confirmation and publication checks.
-export async function checkLinkedClientDraft(tx: Tx, authorId: string, form: FormData): Promise<"draft_conflict" | "confirmation_required" | null> {
+export async function checkLinkedClientDraft(tx: Tx, authorId: string, form: FormData, opts: { allowConsumed?: boolean } = {}): Promise<"draft_conflict" | "confirmation_required" | null> {
   const linked = linkedDraftOf(form);
   if (!linked) return null;
   if (villagesEnabled()) await lockVillageProfile(tx, authorId);
   const [draft] = await tx.select({ version: drafts.version }).from(drafts)
     .where(and(eq(drafts.id, linked.id), eq(drafts.authorId, authorId), or(eq(drafts.via, "api"), isNotNull(drafts.clientKey), isNotNull(drafts.clientId)))).for("update");
-  if (draft) {
-    if (draft.version !== linked.version) return "draft_conflict";
-    return "confirmation_required";
-  }
+  if (draft) return draft.version === linked.version ? "confirmation_required" : "draft_conflict";
+  if (opts.allowConsumed) return null;
   const [consumed] = await tx.select({ id: draftReceipts.draftId }).from(draftReceipts)
     .where(and(eq(draftReceipts.draftId, linked.id), eq(draftReceipts.authorId, authorId)));
   return consumed ? "draft_conflict" : null;

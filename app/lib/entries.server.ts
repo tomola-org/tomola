@@ -41,6 +41,7 @@ import {
   type RenderedEntry,
 } from "~/lib/markdown.server";
 import { sourceHash } from "~/lib/source-hash.server";
+import type { LockedMemberWrite } from "~/lib/signing.server";
 import { entryEditVersion } from "~/lib/entry-edit-version.server";
 import { matchMentions, type MentionTargets } from "~/lib/mentions-md.server";
 import { bindMentionSpellings, readMentionBindings, resolveSavedMentionsFor, storeMentionSnapshot } from "~/lib/mentions.server";
@@ -127,9 +128,11 @@ export type EditError = EntryError | "not_found" | "forbidden" | "locked" | "edi
 type CreateOptions<E extends string> = {
   now?: Date;
   via?: EntryVia;
-  // Only direct form submissions opt in, while holding the member write lock.
-  // These checks apply only when the submission needs a new entry.
-  beforeNewSubmission?: (tx: Tx) => Promise<E | null>;
+  directSubmission?: {
+    memberWrite: LockedMemberWrite;
+    checkRepeat: (tx: Tx) => Promise<E | null>;
+    checkNew: (tx: Tx) => Promise<E | null>;
+  };
 };
 type TopicCreateOptions<E extends string> = CreateOptions<E> & {
   asIntroduction?: boolean;
@@ -142,21 +145,39 @@ type CreateFailure<E extends string> = { ok: false; error: EntryError | E; villa
 
 const CREATE_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
 
+function recentSubmissionScope(authorId: string, now: Date) {
+  return and(
+    eq(entries.authorId, authorId),
+    gte(entries.createdAt, new Date(now.getTime() - CREATE_DEDUPE_WINDOW_MS)),
+    isNull(entries.deletedAt),
+  );
+}
+
+// The posting limit only needs a candidate. Full matching still runs under the member write lock.
+export async function hasRecentSubmissionBody(db: Db, authorId: string, kind: "topic" | "reply", bodies: string[]) {
+  const candidates = bodies.filter(body => !hasNul(body));
+  if (candidates.length === 0) return false;
+  const [row] = await db.select({ id: entries.id }).from(entries)
+    .where(and(recentSubmissionScope(authorId, new Date()), eq(entries.kind, kind), inArray(entries.body, candidates)))
+    .limit(1);
+  return row !== undefined;
+}
+
 function recentSubmission(tx: Tx, authorId: string, hash: string, now: Date, destination: SQL[]) {
   return tx.select({ id: entries.id, createdAt: entries.createdAt }).from(entries)
-    .where(and(
-      eq(entries.authorId, authorId),
-      gte(entries.createdAt, new Date(now.getTime() - CREATE_DEDUPE_WINDOW_MS)),
-      eq(entries.sourceHash, hash),
-      isNull(entries.deletedAt),
-      ...destination,
-    ))
+    .where(and(recentSubmissionScope(authorId, now), eq(entries.sourceHash, hash), ...destination))
     .orderBy(desc(entries.createdAt), desc(entries.id))
     .limit(1);
 }
 
 function sameNullable<T extends Column>(column: T, value: GetColumnData<T>) {
   return value === null ? isNull(column) : eq(column, value);
+}
+
+function assertDirectSubmission(write: LockedMemberWrite, db: Db, authorId: string, kind: "topic" | "reply", id: number | null) {
+  if (write.tx !== db || write.userId !== authorId || write.operation !== `create-${kind}` || write.id !== id) {
+    throw new Error("Direct submission requires the matching member write");
+  }
 }
 
 export const MAX_TITLE_LENGTH = 200;
@@ -263,18 +284,21 @@ async function createTopicImplementation<E extends string>(
   input: unknown,
   opts: TopicCreateOptions<E>,
 ): Promise<CreatedEntry | CreateFailure<E>> {
+  const { directSubmission } = opts;
+  if (directSubmission) assertDirectSubmission(directSubmission.memberWrite, db, authorId, "topic", null);
   const parsed = topicSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: fieldError(parsed.error.issues) };
   const invalidIntro = opts.asIntroduction && (parsed.data.asksStance || parsed.data.altOf != null);
-  if (invalidIntro && !opts.beforeNewSubmission) return { ok: false, error: "invalid_intro" };
+  if (invalidIntro && !directSubmission) return { ok: false, error: "invalid_intro" };
   const bodyError = await checkBodyBudget(parsed.data.body, authorId);
   if (bodyError) return { ok: false, error: bodyError };
   const renderInput = { kind: "topic" as const, body: parsed.data.body, lang: parsed.data.lang };
-  const preparedOutsideWrite = opts.beforeNewSubmission ? undefined : activeEntryRender(renderInput) ?? await prepareEntryRender(db, renderInput);
+  const preparedOutsideWrite = directSubmission ? undefined : activeEntryRender(renderInput) ?? await prepareEntryRender(db, renderInput);
   const now = opts.now ?? new Date();
   const hash = sourceHash(parsed.data.title, parsed.data.body, parsed.data.lang);
   const { asksStance } = parsed.data;
   const altOf = parsed.data.altOf ?? null;
+  const langCode = parsed.data.lang === "other" ? parsed.data.langCode ?? null : null;
   // Create the entry, render cache, sentence boundaries, and translation jobs in one transaction, avoiding an entry without queued translation.
   const created = await db.transaction(async (tx) => {
     await lockAbuseWriter(tx, authorId);
@@ -283,22 +307,27 @@ async function createTopicImplementation<E extends string>(
     // Alternative framing: read and lock the original question with FOR NO KEY UPDATE to serialize concurrent hiding/deletion, then check attribute combinations.
     const facts = await loadStanceAttrFacts(tx, { kind: "topic", altOf, lockAltTarget: true });
     const attrError = checkStanceAttributes({ kind: "topic", mode: "create", asksStance, altOf, stanceTag: parsed.data.stanceTag ?? null, ...facts });
-    if (attrError && !opts.beforeNewSubmission) return { ok: false as const, error: attrError };
+    if (attrError && !directSubmission) return { ok: false as const, error: attrError };
     const destination = villagesEnabled() ? await villageForTopic(tx, authorId, parsed.data.village, opts.villageId) : null;
     const villageId = destination?.id ?? null;
     if (villagesEnabled() && villageId === null) return { ok: false as const, error: "village_required" as const };
     if (destination && opts.villageDisplayed !== undefined && opts.villageDisplayed.trim().toLowerCase() !== destination.slug) {
       return { ok: false as const, error: "village_changed" as const, village: destination.slug ?? "" };
     }
-    if (opts.beforeNewSubmission) {
+    if (directSubmission) {
       const [recent] = await recentSubmission(tx, authorId, hash, now, [
         eq(entries.kind, "topic"),
         sameNullable(entries.villageId, villageId),
         sameNullable(entries.altOf, altOf),
         eq(entries.asksStance, asksStance),
+        sameNullable(entries.langCode, langCode),
       ]);
-      if (recent) return { ok: true as const, id: recent.id, reused: true as const };
-      const error = await opts.beforeNewSubmission(tx);
+      if (recent) {
+        const error = await directSubmission.checkRepeat(tx);
+        if (error) return { ok: false as const, error };
+        return { ok: true as const, id: recent.id, reused: true as const };
+      }
+      const error = await directSubmission.checkNew(tx);
       if (error) return { ok: false as const, error };
     }
     if (invalidIntro) return { ok: false as const, error: "invalid_intro" as const };
@@ -313,7 +342,7 @@ async function createTopicImplementation<E extends string>(
         kind: "topic",
         authorId,
         lang: parsed.data.lang,
-        langCode: parsed.data.lang === "other" ? parsed.data.langCode ?? null : null,
+        langCode,
         langSource: parsed.data.langSource ?? "explicit",
         title: parsed.data.title,
         body: parsed.data.body,
@@ -362,6 +391,8 @@ async function createReplyImplementation<E extends string>(
   input: unknown,
   opts: CreateOptions<E>,
 ): Promise<CreateFailure<E> | (CreatedEntry & { followed: boolean })> {
+  const { directSubmission } = opts;
+  if (directSubmission) assertDirectSubmission(directSubmission.memberWrite, db, authorId, "reply", threadId);
   const parsed = replySchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: fieldError(parsed.error.issues) };
   const bodyError = await checkBodyBudget(parsed.data.body, authorId);
@@ -369,30 +400,34 @@ async function createReplyImplementation<E extends string>(
   const parentId = parsed.data.parentId ?? null;
   const nushiParentId = parsed.data.nushiParentId ?? null;
   const stanceTag = parsed.data.stanceTag ?? null;
+  const langCode = parsed.data.lang === "other" ? parsed.data.langCode ?? null : null;
   const renderInput = { kind: "reply" as const, body: parsed.data.body, lang: parsed.data.lang };
-  const preparedOutsideWrite = opts.beforeNewSubmission ? undefined : activeEntryRender(renderInput) ?? await prepareEntryRender(db, renderInput);
+  const preparedOutsideWrite = directSubmission ? undefined : activeEntryRender(renderInput) ?? await prepareEntryRender(db, renderInput);
   const now = opts.now ?? new Date();
   const hash = sourceHash(null, parsed.data.body, parsed.data.lang);
   // Check topic/reply-target existence and undeleted status within the posting transaction, preventing a reply to a target deleted between validation and insertion.
   // Lock the topic row to serialize concurrent deletion (softDeleteEntry, recomputing topic aggregates) and replies.
   const created = await db.transaction(async (tx) => {
-    if (opts.beforeNewSubmission) {
+    if (directSubmission) {
       const [recent] = await recentSubmission(tx, authorId, hash, now, [
         eq(entries.kind, "reply"),
         eq(entries.threadId, threadId),
         sameNullable(entries.parentId, parentId),
         sameNullable(entries.nushiParentId, nushiParentId),
         sameNullable(entries.stanceTag, stanceTag),
+        sameNullable(entries.langCode, langCode),
         exists(tx.select({ id: rootTopic.id }).from(rootTopic)
           .where(and(eq(rootTopic.id, threadId), undeletedTopic(rootTopic), isNull(rootTopic.hiddenAt)))),
       ]);
       if (recent) {
+        const error = await directSubmission.checkRepeat(tx);
+        if (error) return { ok: false as const, error };
         // Creation gives an automatic follow the reply's creation time.
         const [follow] = await tx.select({ state: follows.state }).from(follows)
           .where(and(eq(follows.userId, authorId), eq(follows.threadId, threadId), eq(follows.createdAt, recent.createdAt)));
         return { ok: true as const, id: recent.id, reused: true as const, followed: follow?.state === "following" };
       }
-      const error = await opts.beforeNewSubmission(tx);
+      const error = await directSubmission.checkNew(tx);
       if (error) return { ok: false as const, error };
     }
     await lockAbuseWriter(tx, authorId);
@@ -442,7 +477,7 @@ async function createReplyImplementation<E extends string>(
         nushiParentId,
         authorId,
         lang: parsed.data.lang,
-        langCode: parsed.data.lang === "other" ? parsed.data.langCode ?? null : null,
+        langCode,
         langSource: parsed.data.langSource ?? "explicit",
         body: parsed.data.body,
         sourceHash: hash,

@@ -45,13 +45,18 @@ const fail = (error: "not_found" | "forbidden" | "invalid" | "conflict") => ({ o
 export async function writePostAiMaterial(db: Db, userId: string, topicId: number, input: { body: string; version: number; remove?: boolean }) {
   const prepared = input.remove ? null : await preparePostAiMaterial(input.body);
   if (!input.remove && !prepared) return fail("invalid");
+  return writePreparedPostAiMaterial(db, userId, topicId, { prepared, version: input.version });
+}
+
+export async function writePreparedPostAiMaterial(db: Db, userId: string, topicId: number, input: { prepared: Awaited<ReturnType<typeof preparePostAiMaterial>>; version: number }) {
+  const { prepared } = input;
   return db.transaction(async tx => {
     const [entry] = await tx.select().from(entries).where(eq(entries.id, topicId)).for("no key update");
     if (!entry || entry.kind !== "topic" || entry.deletedAt || !await materialTopic(tx, topicId)) return fail("not_found");
     if (entry.authorId !== userId) return fail("forbidden");
     const [old] = await tx.select().from(postAiMaterials).where(eq(postAiMaterials.topicId, topicId));
     if ((old?.version ?? 0) !== input.version) return fail("conflict");
-    if (input.remove) {
+    if (!prepared) {
       if (old?.hiddenAt) {
         // Retain the moderation gate after the author removes all content.
         await tx.delete(postAiMaterialVersions).where(eq(postAiMaterialVersions.topicId, topicId));
@@ -60,10 +65,10 @@ export async function writePostAiMaterial(db: Db, userId: string, topicId: numbe
       return { ok: true as const, warnings: [] as string[] };
     }
     const version = (old?.version ?? 0) + 1, now = new Date();
-    await tx.insert(postAiMaterials).values({ topicId, body: prepared!.body, version, updatedAt: now })
-      .onConflictDoUpdate({ target: postAiMaterials.topicId, set: { body: prepared!.body, version, updatedAt: now, ...(!old?.body ? { instanceId: randomUUID() } : {}) } });
-    await tx.insert(postAiMaterialVersions).values({ topicId, version, body: prepared!.body, actorId: userId, instructionWarnings: prepared!.warnings, createdAt: now });
-    return { ok: true as const, warnings: prepared!.warnings };
+    await tx.insert(postAiMaterials).values({ topicId, body: prepared.body, version, updatedAt: now })
+      .onConflictDoUpdate({ target: postAiMaterials.topicId, set: { body: prepared.body, version, updatedAt: now, ...(!old?.body ? { instanceId: randomUUID() } : {}) } });
+    await tx.insert(postAiMaterialVersions).values({ topicId, version, body: prepared.body, actorId: userId, instructionWarnings: prepared.warnings, createdAt: now });
+    return { ok: true as const, warnings: prepared.warnings };
   });
 }
 
