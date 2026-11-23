@@ -1,7 +1,7 @@
 {
   "name": "tomola",
   "description": "Multilingual forum software for long-form posts and AI-translated discussion.",
-  "repository": "https://github.com/ktakahashi74/tomola",
+  "repository": "https://github.com/tomola-org/tomola",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "type": "module",
