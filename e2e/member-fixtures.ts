@@ -244,6 +244,7 @@ export const MEMBER_FIXTURES: readonly SeedMember[] = [
   ...(["en", "ja"] as const).flatMap(locale => ["new", "edit", "draft"].map(surface => ({ email: `editor_switch_${surface}_${locale}@example.com`, handle: `editor_switch_${surface}_${locale}`, homeArea: "en" as const, uiLocale: locale }))),
   {"email": "rich_editor_modes@example.com", "handle": "rich_modes", "homeArea": "en", "uiLocale": "en"},
   {"email": "rich_editor_paste@example.com", "handle": "rich_paste", "homeArea": "en", "uiLocale": "en"},
+  {"email": "rich_editor_paste_at_selection@example.com", "handle": "rich_paste_at_selection", "homeArea": "en", "uiLocale": "en"},
   {"email": "rich_editor_edit@example.com", "handle": "rich_edit", "homeArea": "en", "uiLocale": "en"},
   {"email": "rich_editor_fallback@example.com", "handle": "rich_fallback", "homeArea": "en", "uiLocale": "en"},
   {"email": "rich_editor_early@example.com", "handle": "rich_early", "homeArea": "en", "uiLocale": "en"},

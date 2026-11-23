@@ -289,16 +289,37 @@ export function RichTextEditor({ invalid, describedBy, placeholder, tall = false
     body.addEventListener(EDITOR_BODY_REPLACED_EVENT, replaceBody);
     const paste = (view: EditorView, event: ClipboardEvent) => {
       const text = event.clipboardData?.getData("text/plain") ?? "";
-      if ((pasteFrontmatter && startsWithFrontmatter(text)) || text.includes("$")) {
+      const frontmatter = pasteFrontmatter && startsWithFrontmatter(text);
+      if (frontmatter || text.includes("$")) {
         event.preventDefault();
-        synchronize();
-        // Keep both the literal paste and the current body. Frontmatter must be
-        // first for the existing form's title/language handling to recognize it.
-        write(text + (body.value ? "\n\n" + body.value : ""));
+        const literal = text.replace(/\r\n?/g, "\n");
+        let value = literal;
+        let caret = literal.length;
+        if (body.value && frontmatter) {
+          // The form recognizes frontmatter at the start of the body.
+          value += "\n\n" + body.value;
+        } else if (body.value) {
+          // Serialize the selection replacement with a marker, then insert the
+          // clipboard text literally so Markdown escaping leaves it intact.
+          const current = editor.action(getMarkdown());
+          let prefix = "\uE000";
+          while (current.includes(prefix + "\uE001")) prefix += prefix;
+          const marker = prefix + "\uE001";
+          const marked = editor.action(ctx => ctx.get(serializerCtx)(view.state.tr.insertText(marker).doc));
+          const start = marked.indexOf(marker);
+          if (start >= 0) {
+            value = marked.slice(0, start) + literal + marked.slice(start + marker.length);
+            caret = start + literal.length;
+          } else {
+            value = body.value + "\n\n" + literal;
+            caret = value.length;
+          }
+        }
         initial = undefined;
         sync.current = null;
-        onFallback();
-        queueMicrotask(() => body.focus());
+        flushSync(() => { write(value); onFallback(); });
+        body.focus();
+        body.setSelectionRange(caret, caret);
         return true;
       }
       if (!event.clipboardData?.getData("text/html") && /!\[/.test(text)) {

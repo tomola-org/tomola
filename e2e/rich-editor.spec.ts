@@ -253,6 +253,29 @@ test("math and frontmatter stay in Markdown; native validation and a literal fro
   } finally { await context.close(); }
 });
 
+test("literal paste keeps its position when switching to Markdown", async ({ browser }) => {
+  const { context, page } = await member(browser, "paste_at_selection", 8);
+  try {
+    await newPost(page);
+    await mode(page, true);
+    await rich(page).focus();
+    await page.keyboard.type("Before replace after.");
+    await selectText(rich(page), "replace");
+    await paste(page, "", "$x$");
+    await expect(body(page)).toBeFocused();
+    await expect(body(page)).toHaveValue("Before $x$ after.\n");
+    await page.keyboard.type("!");
+    await expect(body(page)).toHaveValue("Before $x$! after.\n");
+
+    await body(page).fill("First paragraph.\n\n**Bold** and plain.");
+    await mode(page, true);
+    await selectText(rich(page), "plain");
+    await page.keyboard.press("ArrowRight");
+    await paste(page, "", " $5");
+    await expect(body(page)).toHaveValue("First paragraph.\n\n**Bold** and plain $5.\n");
+  } finally { await context.close(); }
+});
+
 test("native body edits before hydration survive switching to rich text", async ({ browser }) => {
   const { context, page } = await member(browser, "early", 5);
   let release!: () => void;
