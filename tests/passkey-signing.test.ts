@@ -131,7 +131,8 @@ describe("passkey lifecycle barriers", () => {
     const { userId, sessionId } = await member("login_only");
     const auth = await getAuth();
     const adapter = (await auth.$context).internalAdapter;
-    await adapter.createSession(userId);
+    const other = await h.issueLink("login_only@example.com");
+    expect((await auth.api.magicLinkVerify({ query: { token: other }, headers: new Headers(), asResponse: true })).status).toBe(200);
     const pending = await h.issueLink("login_only@example.com");
     const key = await signingCredential(h.db, userId);
     const rotate = (tx: Tx, at: Date) => issuePasskeySession(auth, tx, userId, at);

@@ -1,14 +1,14 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { and, eq, inArray, like, sql } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, like, sql } from "drizzle-orm";
 import type { Db } from "~/lib/db/client.server";
 import { account, profiles, user, verification } from "~/lib/db/schema";
 
 export type LoginMethod = "email_link" | "email_code" | "google" | "passkey" | "unknown";
 export type VerifiedLogin = { method: Exclude<LoginMethod, "unknown">; at: Date | null; credentialId?: string; backedUp?: boolean; googleSubject?: string; sourceSessionId?: string };
 const verified = new WeakMap<object, VerifiedLogin>();
-export const passkeyChallenges = new WeakMap<object, { userId: string; sessionId?: string }>();
+export const passkeyChallenges = new WeakMap<object, { userId: string; sessionId?: string; createdAt: Date }>();
 export const internalLogin = new AsyncLocalStorage<VerifiedLogin & { userId: string }>();
-export const verifiedEmailCode = new AsyncLocalStorage<boolean>();
+export const verifiedEmailCode = new AsyncLocalStorage<{ reauthentication?: { email: string; sessionId: string } }>();
 export const markVerifiedLogin = (context: object, login: VerifiedLogin) => verified.set(context, login);
 export function verifiedLogin(context: object | undefined, userId: string): VerifiedLogin | undefined {
   const issued = internalLogin.getStore();
@@ -58,4 +58,21 @@ export async function invalidateMemberLoginChallenges(db: Db, userId: string) {
     strpos(${verification.value}, ${`"reauthUserId":${id}`}) > 0
     or (strpos(${verification.value}, ${'"encryptedSessionToken":'}) > 0 and strpos(${verification.value}, ${`"userId":${id}`}) > 0)
   )`);
+}
+
+const passkeyRevocationId = (userId: string) => `passkey-revocation:${userId}`;
+
+export async function recordPasskeyRevocation(db: Db, userId: string, at: Date) {
+  // Discoverable passkey challenges have no member until an assertion identifies
+  // the credential. Keep the cutoff longer than the plugin's five-minute challenge TTL.
+  const id = passkeyRevocationId(userId);
+  const times = { createdAt: at, updatedAt: at, expiresAt: new Date(at.getTime() + 15 * 60_000) };
+  await db.insert(verification).values({ id, identifier: id, value: JSON.stringify(userId), ...times })
+    .onConflictDoUpdate({ target: verification.id, set: times });
+}
+
+export async function passkeyChallengeRevoked(db: Db, userId: string, createdAt: Date) {
+  const [row] = await db.select({ id: verification.id }).from(verification)
+    .where(and(eq(verification.id, passkeyRevocationId(userId)), gt(verification.expiresAt, new Date()), gte(verification.createdAt, createdAt)));
+  return !!row;
 }

@@ -4,6 +4,7 @@ import { action, loader } from "~/routes/settings-delete-account";
 import { setupRouteHarness, type RouteHarness, BASE } from "./helpers/route-harness";
 import { apiTokens, oauthClient, oauthConsent, oauthRefreshToken, memberSignatures, signingChallenges, passkey, profiles, user } from "~/lib/db/schema";
 import { getAuth } from "~/lib/auth/auth.server";
+import { completeMagicLink } from "~/lib/auth/complete-magic-link.server";
 import { createApiToken, authenticateToken } from "~/lib/tokens.server";
 import { signOpenInAiToken, verifyOpenInAiToken } from "~/lib/open-in-ai.server";
 import { authenticateRead } from "~/lib/api/read-auth.server";
@@ -36,6 +37,7 @@ it("lets a suspended member delete their account with a retired signing preferen
 
 it("invalidates the old session, PAT, read API, MCP bearer, OAuth consent/refresh and AI link", async () => {
   h = await setupRouteHarness(); const id = await h.signIn("quit_auth");
+  const pending = await h.issueLink("quit_auth@example.com");
   const token = await createApiToken(h.db, id, { name: "Old access", kind: "read" });
   if (!token.ok) throw new Error(token.error);
   const resource = `${BASE}/t/1.md`;
@@ -47,6 +49,8 @@ it("invalidates the old session, PAT, read API, MCP bearer, OAuth consent/refres
   const request = h.request("/settings/delete-account", { as: "quit_auth", form: { intent: "delete-account", confirmation: "quit_auth" } });
   expect((await h.outcome(() => action(h!.args(request)))).status).toBe(302);
   expect(await (await getAuth()).api.getSession({ headers: request.headers })).toBeNull();
+  const confirm = h.request("/auth/confirm", { form: { token: pending }, headers: { cookie: h.linkCookie(pending) } });
+  expect(await completeMagicLink(confirm, pending)).toEqual({ kind: "invalid" });
   expect(await authenticateToken(h.db, token.token)).toMatchObject({ ok: false });
   expect(await verifyOpenInAiToken(h.db, link, { resource })).toMatchObject({ ok: false });
   const bearer = new Request(resource, { headers: { authorization: `Bearer ${token.token}` } });

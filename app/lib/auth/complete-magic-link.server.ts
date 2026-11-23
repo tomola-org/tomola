@@ -17,6 +17,7 @@ import { clearInvitationCookie, readInvitationCookie } from "./invitation-cookie
 import { magicLinkInvitationContext, magicLinkInvitationIdentifier, parseInvitationRef, sameInvitation } from "./invitation-ref.server";
 import { usedSignupInvitation } from "./signup-invitation.server";
 import { lockSigningMember, SigningError } from "~/lib/signing.server";
+import { verifiedEmailCode } from "./login-method.server";
 import { hashMagicLinkToken } from "./plugins";
 export const LOGIN_HEADERS = { "Cache-Control": "no-store", "Referrer-Policy": "strict-origin", "X-Robots-Tag": "noindex" };
 export const magicLinkUsedIdentifier = (token: string) => `magic-link-used:${hashMagicLinkToken(token)}`;
@@ -58,6 +59,9 @@ async function verifyMagicLink(request: Request, token: string): Promise<Complet
   const [credential] = await db.select({ expiresAt: verification.expiresAt, value: verification.value }).from(verification)
     .where(eq(verification.identifier, `magic-link:${hashMagicLinkToken(token)}`));
   if (!credential || credential.expiresAt <= new Date()) return invalid;
+  const email = (JSON.parse(credential.value) as { email?: string }).email?.toLowerCase();
+  const reauthentication = verifiedEmailCode.getStore()?.reauthentication;
+  if (reauthentication && email !== reauthentication.email.toLowerCase()) return invalid;
   const identifier = magicLinkInvitationIdentifier(token);
   const [binding] = await db.select().from(verification).where(eq(verification.identifier, identifier));
   let ref = null;
@@ -74,7 +78,6 @@ async function verifyMagicLink(request: Request, token: string): Promise<Complet
   const auth = await getAuth();
   const verify = async (connection?: Db) => (connection ? bindAuthToDatabase(auth, connection) : auth).api.magicLinkVerify({ query: { token }, headers: request.headers, request, asResponse: true });
   const verifyWithMemberLock = async () => {
-    const email = (JSON.parse(credential.value) as { email?: string }).email?.toLowerCase();
     const [member] = email ? await db.select({ id: user.id }).from(user).where(eq(user.email, email)) : [];
     if (!member) return verify();
     return db.transaction(async tx => {

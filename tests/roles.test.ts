@@ -227,6 +227,8 @@ describe("revoking a member's tokens and Open-in-AI links (compromise response)"
     const { createApiToken, authenticateToken } = await import("~/lib/tokens.server");
     const { signOpenInAiToken, verifyOpenInAiToken } = await import("~/lib/open-in-ai.server");
     const { profiles: profilesTable, apiTokens } = await import("~/lib/db/schema");
+    const { completeMagicLink } = await import("~/lib/auth/complete-magic-link.server");
+    const pending = await h.issueLink("victim@example.com");
     const read = await createApiToken(h.db, h.ids.victim, { name: "r", kind: "read" });
     const draft = await createApiToken(h.db, h.ids.victim, { name: "d", kind: "draft" });
     const other = await createApiToken(h.db, h.ids.taro, { name: "o", kind: "read" });
@@ -242,6 +244,8 @@ describe("revoking a member's tokens and Open-in-AI links (compromise response)"
     expect(res).toMatchObject({ status: 302, location: "/admin/roles?q=victim&saved=tokens&n=2" });
     expect(await authenticateToken(h.db, read.token)).toEqual({ ok: false, error: "invalid" });
     expect(await authenticateToken(h.db, draft.token)).toEqual({ ok: false, error: "invalid" });
+    const confirm = h.request("/auth/confirm", { form: { token: pending }, headers: { cookie: h.linkCookie(pending) } });
+    expect(await completeMagicLink(confirm, pending)).toEqual({ kind: "invalid" });
     expect(await verifyOpenInAiToken(h.db, link, { resource: "/latest.md" })).toEqual({ ok: false, error: "revoked" });
     expect((await h.db.select().from(profilesTable).where(eq(profilesTable.userId, h.ids.victim)))[0].openInAiGeneration).toBe(1);
     // Other members' tokens stay unchanged.

@@ -395,6 +395,8 @@ describe("explicit Google reauthentication", () => {
     const result = await h.callback(flow);
     expect(result.headers.get("location")).toBe(next);
     const [created] = (await h.db.select().from(session)).filter(row => row.id !== h.origin.id);
+    expect(await h.auth.api.getSession({ headers: new Headers({ cookie: cookies(result, flow.cookie) }) })).toMatchObject({ session: { id: created.id } });
+    expect(await h.auth.api.getSession({ headers: new Headers({ cookie: h.cookie }) })).toBeNull();
     const recordedAt = new Date(now + recordedOffset * 1000);
     expect(created).toMatchObject({ userId: h.member.id, loginMethod: "google", reauthenticatedAt: recordedAt });
     const lastFresh = recordedAt.getTime() + 10 * 60_000;

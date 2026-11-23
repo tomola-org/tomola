@@ -91,8 +91,12 @@ test("passkey-only sign-in rejects a pending email code and accepts a verified p
     await expect(page.getByRole("heading", { name: m.reauth_title, exact: true })).toBeVisible();
     await expect(page.getByText(m.reauth_for_enable_passkey_only.replace("{who}", "@login_methods_flow"), { exact: true })).toBeVisible();
     await waitForClientRoute(page);
+    const sessionCookie = async () => (await member.cookies()).find(cookie => cookie.name.endsWith("better-auth.session_token"))?.value;
+    const originalSession = await sessionCookie();
+    expect(originalSession).toBeTruthy();
     await page.getByRole("button", { name: m.login_passkey, exact: true }).click();
     await expect(page).toHaveURL(url => url.pathname === "/settings" && url.hash === "#settings-login-methods");
+    expect(await sessionCookie()).not.toBe(originalSession);
     await waitForClientRoute(page);
     await setting.getByText(m.login_methods_review, { exact: true }).click();
     await setting.getByRole("button", { name: m.login_methods_enable, exact: true }).click();

@@ -1,4 +1,5 @@
 import { and, eq, gt } from "drizzle-orm";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { passkey, profiles, session } from "../db/schema";
 import { isDeletedIdentity } from "../deleted-member";
 import { randomUUID } from "node:crypto";
@@ -9,7 +10,7 @@ import { finishGoogleFlow, googleInvitationRef, prepareGoogleFlow, validateGoogl
 import { getDb, type Db, type Tx } from "~/lib/db/client.server";
 import { sessionAdapter, sessionWriteScope } from "./session-adapter.server";
 import { passkeySessionPlugin } from "./passkey-session.server";
-import { internalLogin, linkedGoogle, markVerifiedLogin, passkeyChallenges, protectedLogin, verifiedEmailCode, verifiedLogin } from "./login-method.server";
+import { internalLogin, linkedGoogle, markVerifiedLogin, passkeyChallengeRevoked, passkeyChallenges, verifiedEmailCode, verifiedLogin } from "./login-method.server";
 import { loginReauthentication } from "./login-reauthentication.server";
 import { enqueuePasskeyNotice } from "./passkeys.server";
 import { lockSigningMember, SigningError } from "~/lib/signing.server";
@@ -35,6 +36,7 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
   const metadataFetch = preparedMetadataFetch ?? sharedMetadataFetch(opts.metadataFetch);
   const signupGrants = new Map<string, SignupInvitationGrant>();
   const writes = sessionWriteScope(db);
+  const sessionCreation = new AsyncLocalStorage<{ sourceSessionId?: string }>();
   const clearGoogleTokens = { accessToken: null, refreshToken: null, idToken: null, accessTokenExpiresAt: null, refreshTokenExpiresAt: null };
   const confirmGoogleConnection = async (context: Parameters<typeof validateGoogleUser>[1] | null) => {
     const state = await getOAuthState();
@@ -76,15 +78,21 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
     } },
     hooks: { before: createAuthMiddleware(async ctx => {
       await prepareGoogleFlow(ctx, !!google, (userId, sessionId) => loginReauthentication(db, userId, sessionId));
-      if (ctx.path === "/magic-link/verify" && typeof ctx.query?.token === "string") {
-        const expected = `magic-link:${hashMagicLinkToken(ctx.query.token)}`;
+      const expected = ctx.path === "/magic-link/verify" && typeof ctx.query?.token === "string" ? `magic-link:${hashMagicLinkToken(ctx.query.token)}` : null;
+      const passkeyAuthentication = ctx.path === "/passkey/verify-authentication";
+      if (expected || passkeyAuthentication) {
         const adapter = ctx.context.internalAdapter;
         // The endpoint's atomic consume returns null for expired and already
         // consumed rows. Other verification deletes do not establish proof.
         ctx.context.internalAdapter = { ...adapter, consumeVerificationValue: async identifier => {
           const value = await adapter.consumeVerificationValue(identifier);
           if (identifier === expected && value?.identifier === expected && value.expiresAt.getTime() > Date.now()) {
-            markVerifiedLogin(ctx.context, { method: verifiedEmailCode.getStore() ? "email_code" : "email_link", at: new Date() });
+            const code = verifiedEmailCode.getStore();
+            markVerifiedLogin(ctx.context, { method: code ? "email_code" : "email_link", at: new Date(), sourceSessionId: code?.reauthentication?.sessionId });
+          }
+          if (passkeyAuthentication && value) {
+            const challenge = JSON.parse(value.value) as { type?: string; userData?: { id?: string }; sessionId?: string };
+            if (challenge.type === "authentication") passkeyChallenges.set(ctx.context, { userId: challenge.userData?.id ?? "", sessionId: challenge.sessionId, createdAt: value.createdAt });
           }
           return value;
         } };
@@ -103,12 +111,6 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
     advanced: { disableOriginCheck: false, ipAddress: { disableIpTracking: true } },
     databaseHooks: {
       verification: {
-        delete: { after: async (value, context) => {
-          if (context?.path === "/passkey/verify-authentication") {
-            const challenge = JSON.parse(value.value) as { userData?: { id?: string }; sessionId?: string };
-            if (challenge.userData?.id) passkeyChallenges.set(context.context, { userId: challenge.userData.id, sessionId: challenge.sessionId });
-          }
-        } },
         create: { before: async (value, context) => {
           if (context?.path === "/passkey/generate-authenticate-options" && context.context.session) {
             return { data: { ...value, value: JSON.stringify({ ...JSON.parse(value.value), sessionId: context.context.session.session.id }) } };
@@ -137,30 +139,32 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
           // Better Auth stores user agents in sessions without a setting to disable this. Omit them. The setting above omits IPs, which arrive as empty strings; normalize them to null.
           before: async (value, context) => {
             const tx = writes.transaction.getStore();
-            if (!tx) throw new Error("Session creation requires a transaction");
+            const creation = sessionCreation.getStore();
+            if (!tx || !creation) throw new Error("Session creation requires a transaction");
             const proof = verifiedLogin(context?.context, value.userId);
             const reject = () => new APIError("UNAUTHORIZED", { code: proof?.method === "google" ? "account_not_linked" : "INVALID_TOKEN", message: "Invalid account" });
+            if (!proof) throw reject();
             try { await lockSigningMember(tx, value.userId); }
             catch (error) { if (error instanceof SigningError) throw reject(); throw error; }
             const [profile] = await tx.select({ passkeyOnly: profiles.passkeyOnly }).from(profiles).where(eq(profiles.userId, value.userId));
-            if (profile?.passkeyOnly && proof?.method !== "passkey") throw reject();
-            if (proof?.method === "google" && !(await linkedGoogle(tx, value.userId, proof.googleSubject))) throw reject();
-            if (proof?.method === "google" && proof.sourceSessionId && profile && protectedLogin(profile)) throw reject();
-            const challenge = proof?.credentialId && context ? passkeyChallenges.get(context.context) : undefined;
-            if (challenge && challenge.userId !== value.userId) throw reject();
-            const sourceSessionId = challenge?.sessionId ?? proof?.sourceSessionId;
+            if (profile?.passkeyOnly && proof.method !== "passkey") throw reject();
+            if (proof.method === "google" && !(await linkedGoogle(tx, value.userId, proof.googleSubject))) throw reject();
+            const challenge = proof.credentialId && context ? passkeyChallenges.get(context.context) : undefined;
+            if (challenge && ((challenge.userId && challenge.userId !== value.userId) || await passkeyChallengeRevoked(tx, value.userId, challenge.createdAt))) throw reject();
+            const sourceSessionId = challenge?.sessionId ?? proof.sourceSessionId;
             if (sourceSessionId) {
               const now = new Date();
               const [origin] = await tx.select({ id: session.id }).from(session).where(and(eq(session.id, sourceSessionId), eq(session.userId, value.userId),
-                gt(session.expiresAt, now), gt(session.createdAt, new Date(now.getTime() - RETENTION.sessionAbsoluteDays * DAY_MS))));
+                gt(session.expiresAt, now), gt(session.createdAt, new Date(now.getTime() - RETENTION.sessionAbsoluteDays * DAY_MS)))).for("update");
               if (!origin) throw reject();
+              creation.sourceSessionId = sourceSessionId;
             }
-            if (proof?.credentialId) {
+            if (proof.credentialId) {
               const [key] = await tx.select({ id: passkey.id, userId: passkey.userId }).from(passkey).where(eq(passkey.credentialID, proof.credentialId));
               if (key?.userId !== value.userId) throw reject();
               if (proof.backedUp !== undefined) await tx.update(passkey).set({ backedUp: proof.backedUp }).where(eq(passkey.id, key.id));
             }
-            return { data: { ipAddress: null, userAgent: null, loginMethod: proof?.method ?? "unknown", reauthenticatedAt: proof?.at ?? null, reauthenticationMethod: proof?.at ? proof.method : null } };
+            return { data: { ipAddress: null, userAgent: null, loginMethod: proof.method, reauthenticatedAt: proof.at, reauthenticationMethod: proof.at ? proof.method : null } };
           },
         },
       },
@@ -196,7 +200,16 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
   void auth.$context.then(ctx => {
     const adapter = ctx.internalAdapter;
     const createSession = adapter.createSession;
-    adapter.createSession = (...args) => writes.run(ctx.adapter, () => createSession(...args));
+    adapter.createSession = (...args) => writes.run(ctx.adapter, () => {
+      const creation: { sourceSessionId?: string } = {};
+      return sessionCreation.run(creation, async () => {
+        const created = await createSession(...args);
+        if (created && creation.sourceSessionId) {
+          await writes.transaction.getStore()!.delete(session).where(and(eq(session.id, creation.sourceSessionId), eq(session.userId, created.userId)));
+        }
+        return created;
+      });
+    });
     const createAccount = adapter.createAccount;
     const updateAccount = adapter.updateAccount;
     adapter.createAccount = async (...args) => args[0].providerId === "google" && (await getOAuthState())?.link

@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { signingCredential } from "./helpers/signing";
+import { getAuth } from "~/lib/auth/auth.server";
 import { ALLOWED_AUTH_ENDPOINTS } from "~/lib/auth/endpoints.server";
 import { passkey, profiles, session, user } from "~/lib/db/schema";
 import { action as authAction, loader as authLoader } from "~/routes/api.auth";
@@ -113,6 +114,50 @@ describe("the open passkey endpoints", () => {
     expect((await verify(false)).status).toBe(401);
     expect((await verify(true)).status).toBe(200);
     expect(await h.db.select().from(session).where(and(eq(session.userId, userId), eq(session.loginMethod, "passkey")))).toMatchObject([{ reauthenticationMethod: "passkey", reauthenticatedAt: expect.any(Date) }]);
+  });
+
+  it("issues a new browser session after passkey reauthentication", async () => {
+    const as = "passkey_reauth";
+    const userId = await h.signIn(as);
+    const key = await signingCredential(h.db, userId);
+    const auth = await getAuth();
+    const oldHeaders = h.request("/", { as }).headers;
+    const source = (await auth.api.getSession({ headers: oldHeaders }))!.session.id;
+    const options = await call("GET", "/api/auth/passkey/generate-authenticate-options", { as });
+    const challengeCookie = options.headers.getSetCookie().find(value => value.startsWith("better-auth.better-auth-passkey="))!.split(";")[0];
+    const { challenge } = await options.json();
+    const response = await call("POST", "/api/auth/passkey/verify-authentication", {
+      body: { response: key.assert(challenge) }, headers: { cookie: oldHeaders.get("cookie") + "; " + challengeCookie },
+    });
+    expect(response.status).toBe(200);
+    const cookie = response.headers.getSetCookie().find(value => value.startsWith("better-auth.session_token="))!.split(";")[0];
+    const current = await auth.api.getSession({ headers: new Headers({ cookie }) });
+    expect(current).toMatchObject({ user: { id: userId } });
+    expect(current!.session.id).not.toBe(source);
+    expect(await auth.api.getSession({ headers: oldHeaders })).toBeNull();
+  });
+
+  it("requires fresh passkey options for a member after credential revocation", async () => {
+    const as = "passkey_revocation";
+    const id = await h.signIn(as);
+    const key = await signingCredential(h.db, id);
+    const prepare = async (member?: string) => {
+      const options = await call("GET", "/api/auth/passkey/generate-authenticate-options", { as: member });
+      const cookie = options.headers.getSetCookie().find(value => value.startsWith("better-auth.better-auth-passkey="))!.split(";")[0];
+      const { challenge } = await options.json();
+      return () => call("POST", "/api/auth/passkey/verify-authentication", { body: { response: key.assert(challenge) }, headers: { cookie } });
+    };
+    const withSession = await prepare(as);
+    const discoverable = await prepare();
+    const revoke = h.request("/settings", { as, form: { intent: "revoke-login-credentials" } });
+    expect(await h.outcome(() => settingsAction(h.args(revoke)))).toMatchObject({ status: 303, location: "/login" });
+    for (const verify of [withSession, discoverable]) {
+      const response = await verify();
+      expect(response.ok).toBe(false);
+      expect(response.headers.getSetCookie().some(cookie => cookie.includes("session_token="))).toBe(false);
+    }
+    expect(await h.db.select().from(session).where(eq(session.userId, id))).toEqual([]);
+    expect((await (await prepare())()).status).toBe(200);
   });
 
   it("refuse verification without a challenge cookie", async () => {

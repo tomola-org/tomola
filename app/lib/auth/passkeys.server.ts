@@ -9,7 +9,7 @@ import { enqueue } from "~/lib/jobs/queue.server";
 import { SEND_PASSKEY_NOTICE_JOB } from "~/lib/jobs/mail-kinds";
 import { isOperatorEmail } from "~/lib/operators.server";
 import { revokeAllCredentials } from "./revoke-credentials.server";
-import { hasBackupPasskeys, invalidateEmailLogins, invalidateMemberLoginChallenges, protectedLogin } from "./login-method.server";
+import { hasBackupPasskeys, invalidateEmailLogins, protectedLogin } from "./login-method.server";
 import { requireLoginReauthentication } from "./login-reauthentication.server";
 import { recoveryToken } from "./passkey-recovery-token.server";
 
@@ -214,14 +214,11 @@ export async function recoverPasskeys(db: Db, operator: OperatorIdentity, userId
     await requirePasskeyOperator(tx, operator, userId);
     await lockSigningMember(tx, userId);
     const checkedAt = now ?? new Date();
-    const [member] = await tx.select({ email: user.email, passkeyOnly: profiles.passkeyOnly, passkeyEnrolledAt: profiles.passkeyEnrolledAt }).from(profiles).innerJoin(user, eq(user.id, profiles.userId)).where(eq(profiles.userId, userId));
+    const [member] = await tx.select({ passkeyOnly: profiles.passkeyOnly, passkeyEnrolledAt: profiles.passkeyEnrolledAt }).from(profiles).where(eq(profiles.userId, userId));
     if (!member || !protectedLogin(member)) throw new SigningError("recovery_not_available", 409);
     const expiresAt = new Date(checkedAt.getTime() + 30 * 60 * 1000);
     await tx.delete(passkey).where(eq(passkey.userId, userId));
     await revokeAllCredentials(tx, userId, checkedAt);
-    await invalidateEmailLogins(tx, member.email);
-    await invalidateMemberLoginChallenges(tx, userId);
-    await tx.update(signingChallenges).set({ usedAt: checkedAt }).where(eq(signingChallenges.userId, userId));
     await tx.update(profiles).set({ passkeyEnrolledAt: member.passkeyEnrolledAt ?? checkedAt, passkeyRecoveryUntil: null }).where(eq(profiles.userId, userId));
     const [recovery] = await tx.insert(passkeyRecoveries).values({ userId, operatorId: operator.id, note: note.trim(), identityVerification: identityVerification.trim(), createdAt: checkedAt, expiresAt }).returning({ id: passkeyRecoveries.id });
     const permit = { recoveryId: recovery.id, tokenHash: hash(recoveryToken(userId, recovery.id)), expiresAt };
