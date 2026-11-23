@@ -17,10 +17,11 @@ export function usePrehydrationTextarea(id: string | undefined) {
     return value === undefined ? undefined : { field, value };
   });
   useLayoutEffect(() => {
-    // React can reset a prefilled textarea on hydration. Restore only that
-    // element's live value and leave the server default for form comparisons.
+    // React's reset and this effect must run synchronously during hydration.
+    // A boundary that hydrates later can allow input between them.
     const field = ref.current;
-    if (field && field === early?.field && field.value === field.defaultValue) field.value = early.value;
+    // The live value already uses LF; the default can still contain CRLF.
+    if (field && field === early?.field && field.value === field.defaultValue.replace(/\r\n?/g, "\n")) field.value = early.value;
   }, [early]);
   return ref;
 }

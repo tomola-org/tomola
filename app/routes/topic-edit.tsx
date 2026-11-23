@@ -128,12 +128,12 @@ export default function TopicEdit({ loaderData, actionData }: Route.ComponentPro
     return (
       <main className="space-y-4">
         <h1 className="text-2xl font-bold">{m.edit_locked_title()}</h1>
-        <p>{m.edit_locked_body()}</p>{materialLink}
+        <p role="alert">{m.edit_locked_body()}</p>{materialLink}
         {actionData?.error === "rate_limited" && <p role="alert" className="text-destructive">{m.error_rate_limited()}</p>}
         {submitted && <section className="space-y-2 rounded border p-3">
-          <h2 className="font-semibold">{m.edit_locked_unsaved()}</h2>
+          <h2 id="edit-locked-unsaved" className="font-semibold">{m.edit_locked_unsaved()}</h2>
           <p dir="auto" className="whitespace-pre-wrap wrap-anywhere font-medium">{submitted.title}</p>
-          <pre dir="auto" className="whitespace-pre-wrap wrap-anywhere">{submitted.body}</pre>
+          <textarea aria-labelledby="edit-locked-unsaved" dir="auto" readOnly value={submitted.body} className="w-full rounded border p-2" rows={6} onFocus={e => e.currentTarget.select()} />
         </section>}
         <p className="flex flex-wrap items-center gap-4">
           <Link to={`/t/${entry.id}#reply`} className="underline">

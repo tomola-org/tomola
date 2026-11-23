@@ -1,4 +1,7 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, type Page } from "@playwright/test";
+import { MEMBER_RATE_LIMITS } from "../app/lib/rate-limit.server";
 import { test } from "./editor-fixture";
 import { enMessages as en, state, titleField, useMember, waitForFormReady, waitForHydration } from "./helpers";
 import { beforeHydration } from "./support/prehydration";
@@ -38,8 +41,14 @@ test("the topic editor keeps text entered before hydration", async ({ page }) =>
   await waitForFormReady(editor(page));
   await expect(titleField(page)).toHaveValue("Revised heading");
   await expect(bodyField(page)).toHaveValue("Original text. An early addition.");
-  page.once("dialog", dialog => dialog.dismiss());
-  await page.getByRole("link", { name: en.cancel, exact: true }).click();
+  await Promise.all([
+    page.waitForEvent("dialog").then(async dialog => {
+      await dialog.dismiss();
+      expect(dialog.type()).toBe("confirm");
+      expect(dialog.message()).toBe(en.leave_unsaved_confirm);
+    }),
+    page.getByRole("link", { name: en.cancel, exact: true }).click(),
+  ]);
   await expect(page).toHaveURL(new URL(path, state().baseURL).href);
 });
 
@@ -67,8 +76,31 @@ test("a prefilled new topic keeps text entered before hydration", async ({ page 
   await expect(bodyField(page)).toHaveValue(body);
 });
 
+test("returned multiline AI material keeps text entered before hydration", async ({ page }) => {
+  await useMember(page, "edit_fields_early_material@example.com", "/t/new");
+  await waitForFormReady(editor(page));
+  const material = page.locator('textarea[name="aiMaterial"]');
+  const submitted = "First source.\nSecond source.";
+  const revised = `${submitted}\nThird source.`;
+  await page.locator("details", { has: material }).locator("summary").click();
+  await material.fill(submitted);
+
+  await beforeHydration(page, async () => {
+    const [response] = await Promise.all([
+      page.waitForResponse(res => res.request().isNavigationRequest() && res.request().method() === "POST"),
+      page.waitForEvent("framenavigated", frame => frame === page.mainFrame()),
+      editor(page).evaluate(form => (form as HTMLFormElement).submit()),
+    ]);
+    expect(response.status()).toBe(400);
+  }, async () => {
+    await expect(material).toHaveValue(submitted);
+    await material.fill(revised);
+  }, () => waitForHydration(page));
+  await expect(material).toHaveValue(revised);
+});
+
 for (const kind of ["topic", "reply"] as const) {
-  test(`${kind} edit keeps submitted values when the edit allowance is reached`, async ({ page }) => {
+  test(`${kind} edit keeps submitted values when the edit allowance is reached`, async ({ page }, info) => {
     await useMember(page, `edit_fields_${kind}_limit@example.com`, "/t/new");
     const topicPath = await createTopic(page);
     const path = kind === "topic" ? `${topicPath}/edit` : await createReply(page, topicPath);
@@ -76,13 +108,33 @@ for (const kind of ["topic", "reply"] as const) {
     await waitForFormReady(editor(page));
     if (kind === "topic") await titleField(page).fill("Retained heading");
     await bodyField(page).fill("Retained edit.");
-    const res = await save(page, path);
-    expect(res.status()).toBe(429);
-    expect(Number(res.headers()["retry-after"])).toBeGreaterThan(0);
-    await expect(page.getByRole("heading", { level: 1 })).toHaveText(kind === "topic" ? en.edit_topic_title : en.edit_reply_title);
-    await expect(page.getByRole("alert")).toContainText(en.error_rate_limited);
-    await expect(bodyField(page)).toHaveValue("Retained edit.");
-    if (kind === "topic") await expect(titleField(page)).toHaveValue("Retained heading");
+    const clock = join(state().dir, "server-clock.txt");
+    const previous = readFileSync(clock, "utf8");
+    const { limit, windowSeconds } = MEMBER_RATE_LIMITS.edit;
+    const windowMs = windowSeconds * 1000;
+    const untilReset = windowMs - (Date.now() + Number(previous)) % windowMs;
+    // Give the allowance setup and the browser submission the same window.
+    const nearReset = untilReset <= info.timeout;
+    if (nearReset) writeFileSync(clock, String(Number(previous) + untilReset + 1000));
+    try {
+      const headers = origin();
+      for (let attempt = 0; attempt < limit; attempt++) {
+        const response = await page.request.post(path, { headers, form: { body: "" }, maxRedirects: 0 });
+        const status = response.status();
+        await response.dispose();
+        if (status === 429) break;
+        expect(status).toBe(400);
+      }
+      const res = await save(page, path);
+      expect(res.status()).toBe(429);
+      expect(Number(res.headers()["retry-after"])).toBeGreaterThan(0);
+      await expect(page.getByRole("heading", { level: 1 })).toHaveText(kind === "topic" ? en.edit_topic_title : en.edit_reply_title);
+      await expect(page.getByRole("alert")).toContainText(en.error_rate_limited);
+      await expect(bodyField(page)).toHaveValue("Retained edit.");
+      if (kind === "topic") await expect(titleField(page)).toHaveValue("Retained heading");
+    } finally {
+      if (nearReset) writeFileSync(clock, previous);
+    }
   });
 }
 
@@ -101,7 +153,8 @@ for (const scenario of ["lock", "native"] as const) {
       await page.goto(path);
       if (!native) await waitForFormReady(editor(page));
       await titleField(page).fill("My revised question");
-      await bodyField(page).fill("My revised text.\n\nThe second paragraph.");
+      const revisedBody = "My revised text.\n\nThe second paragraph.";
+      await bodyField(page).fill(revisedBody);
       const deviceCopy = () => page.evaluate(suffix => Object.entries(localStorage).find(([key]) => key.startsWith("tomola:draft:") && key.endsWith(suffix))?.[1], `:edit:topic:${topicPath.split("/").at(-1)}`);
       if (!native) await expect.poll(deviceCopy).toContain("My revised text.");
 
@@ -116,10 +169,17 @@ for (const scenario of ["lock", "native"] as const) {
       expect(res.headers()["cache-control"]).toBe("private, no-store");
       await expect(page).toHaveURL(new URL(path, state().baseURL).href);
       await expect(page.getByRole("heading", { name: en.edit_locked_title })).toBeVisible();
-      await expect(page.getByText(en.edit_locked_body, { exact: true })).toBeVisible();
+      await expect(page.getByRole("alert")).toHaveText(en.edit_locked_body);
       await expect(page.getByRole("heading", { name: en.edit_locked_unsaved })).toBeVisible();
       await expect(page.getByText("My revised question", { exact: true })).toBeVisible();
-      await expect(page.getByText("My revised text. The second paragraph.", { exact: true })).toBeVisible();
+      const submittedBody = page.getByRole("textbox", { name: en.edit_locked_unsaved });
+      await expect(submittedBody).toHaveValue(revisedBody);
+      await expect(submittedBody).toHaveJSProperty("readOnly", true);
+      if (!native) {
+        await submittedBody.focus();
+        const selection = await submittedBody.evaluate((field: HTMLTextAreaElement) => [field.selectionStart, field.selectionEnd]);
+        expect(selection).toEqual([0, revisedBody.length]);
+      }
       await expect(page.getByRole("link", { name: en.edit_locked_reply, exact: true })).toHaveAttribute("href", `${topicPath}#reply`);
       await expect(page.getByRole("link", { name: en.objections_new_alt, exact: true })).toHaveAttribute("href", `/t/new?asks_stance=1&alt_of=${topicPath.split("/").at(-1)}`);
       if (otherPath) {

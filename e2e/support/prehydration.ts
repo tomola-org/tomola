@@ -1,7 +1,7 @@
 import { expect, type Page, type Route, type TestInfo } from "@playwright/test";
 import { enMessages as en, titleField, waitForClientRoute, waitForFormReady } from "../helpers";
 
-export async function beforeHydration(page: Page, path: string, input: () => Promise<void>, settled: () => Promise<void> = () => waitForClientRoute(page)) {
+export async function beforeHydration(page: Page, navigate: string | (() => Promise<void>), input: () => Promise<void>, settled: () => Promise<void> = () => waitForClientRoute(page)) {
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   let paused = true;
@@ -13,7 +13,8 @@ export async function beforeHydration(page: Page, path: string, input: () => Pro
   };
   await page.route("**/*", block);
   try {
-    await page.goto(path, { waitUntil: "commit" });
+    if (typeof navigate === "string") await page.goto(navigate, { waitUntil: "commit" });
+    else await navigate();
     await input();
     paused = false;
     release();
