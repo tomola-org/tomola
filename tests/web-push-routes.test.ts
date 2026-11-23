@@ -79,7 +79,7 @@ it("delivers a queued notification after reauthentication keeps its browser subs
   const [before] = await h.db.select().from(pushSubscriptions).where(eq(pushSubscriptions.id, other.id));
 
   const original = h.request("/", { as: "push_api_reader" }).headers;
-  const token = await h.issueLink("push_api_reader@example.com");
+  const token = await h.issueLink("push_api_reader@example.com", undefined, { reauthentication: true });
   const cookie = `${h.linkCookie(token)}; ${original.get("cookie")}`;
   const request = h.request("/auth/confirm", { form: { token }, headers: { cookie } });
   const response = await confirm(h.args(request)) as Response;
