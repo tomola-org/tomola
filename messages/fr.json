@@ -1346,6 +1346,7 @@
   "stance_note_short": "Ce n'est pas la conclusion du forum.",
   "stance_privacy_line": "Les positions sont comptabilisées de manière anonyme. Lorsque peu de personnes ont répondu, les variations des chiffres peuvent laisser deviner une position.",
   "stance_conflict": "Votre position a été modifiée ailleurs (dans un autre onglet ou sur un autre appareil). Votre position actuelle est affichée.",
+  "stance_question_changed": "La question a été modifiée. Relisez-la avant de choisir une position.",
   "stance_rate_limited": "Trop de modifications en peu de temps. Veuillez réessayer dans un instant.",
   "stance_error": "Votre position n'a pas pu être enregistrée.",
   "stance_closed": "Vous ne pouvez pas choisir de position sur cette question actuellement.",

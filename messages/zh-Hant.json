@@ -935,6 +935,7 @@
   "stance_note_short": "非本論壇的結論。",
   "stance_privacy_line": "立場是以無記名方式統計。當參與人數較少時，數字的變化可能會透露個人的立場。",
   "stance_conflict": "您的立場已在其他地方（其他分頁或裝置）被變更。目前顯示的是您現在的立場。",
+  "stance_question_changed": "問題的內容已變更。請重新閱讀後再選擇立場。",
   "stance_rate_limited": "短時間內變更次數過多。請稍後再試。",
   "stance_error": "無法儲存您的立場。",
   "stance_closed": "您目前無法對此問題選擇立場。",

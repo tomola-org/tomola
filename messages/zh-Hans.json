@@ -935,6 +935,7 @@
   "stance_note_short": "并非论坛结论。",
   "stance_privacy_line": "立场统计不显示姓名。当参与人数较少时，数字的变化可能会泄露立场。",
   "stance_conflict": "您的立场已在其他地方（其他标签页或设备）被更改。当前显示的是您最新的立场。",
+  "stance_question_changed": "问题的内容已更改。请重新阅读后再选择立场。",
   "stance_rate_limited": "短时间内更改次数过多。请稍后再试。",
   "stance_error": "无法保存您的立场。",
   "stance_closed": "您现在无法对此问题选择立场。",

@@ -1282,6 +1282,7 @@
   "stance_note_short": "Bukan kesimpulan forum.",
   "stance_privacy_line": "Sikap dihitung tanpa nama. Jika hanya sedikit orang yang menjawab, perubahan angka dapat memperlihatkan sikap seseorang.",
   "stance_conflict": "Sikap Anda diubah di tempat lain (di tab lain atau di perangkat lain). Sikap Anda saat ini ditampilkan.",
+  "stance_question_changed": "Pertanyaan telah berubah. Baca kembali sebelum memilih sikap.",
   "stance_rate_limited": "Terlalu banyak perubahan dalam waktu singkat. Coba lagi sebentar lagi.",
   "stance_error": "Sikap Anda tidak dapat disimpan.",
   "stance_closed": "Anda tidak dapat memilih sikap untuk pertanyaan ini sekarang.",

@@ -1282,6 +1282,7 @@
   "stance_note_short": "Không phải kết luận của diễn đàn.",
   "stance_privacy_line": "Lập trường được tính mà không hiển thị tên. Khi có ít người trả lời, sự thay đổi về số liệu có thể làm lộ lập trường.",
   "stance_conflict": "Lập trường của bạn đã được thay đổi ở nơi khác (trong một tab khác hoặc trên thiết bị khác). Lập trường hiện tại của bạn đang được hiển thị.",
+  "stance_question_changed": "Câu hỏi đã thay đổi. Vui lòng đọc lại trước khi chọn lập trường.",
   "stance_rate_limited": "Quá nhiều thay đổi trong thời gian ngắn. Vui lòng thử lại sau giây lát.",
   "stance_error": "Không thể lưu lập trường của bạn.",
   "stance_closed": "Hiện tại bạn không thể chọn lập trường cho câu hỏi này.",

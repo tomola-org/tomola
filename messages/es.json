@@ -1346,6 +1346,7 @@
   "stance_note_short": "No es la conclusión del foro.",
   "stance_privacy_line": "Las posturas se contabilizan de forma anónima. Cuando pocas personas han respondido, los cambios en las cifras pueden revelar una postura.",
   "stance_conflict": "Su postura se modificó en otro lugar (en otra pestaña o en otro dispositivo). Se muestra su postura actual.",
+  "stance_question_changed": "La pregunta ha cambiado. Léala de nuevo antes de elegir una postura.",
   "stance_rate_limited": "Demasiados cambios en poco tiempo. Inténtelo de nuevo en un momento.",
   "stance_error": "No se pudo guardar su postura.",
   "stance_closed": "No puede elegir una postura sobre esta pregunta en este momento.",
