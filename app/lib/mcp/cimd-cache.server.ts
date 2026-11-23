@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createCimdClientDiscovery, validateCimdMetadata } from "@better-auth/cimd";
 import type { ClientDiscovery } from "@better-auth/oauth-provider";
-import { MetadataFetchBusy, type MetadataFetch } from "./cimd.server";
+import type { MetadataFetch } from "./cimd.server";
 
 export const CIMD_CACHE = {
   defaultSeconds: 3600,
@@ -81,7 +81,7 @@ export function createCimdMetadataSources(fetch: MetadataFetch): MetadataSources
     } catch (error) {
       const failure = error as { name?: string; code?: string } | null;
       if (!request.signal.aborted && canUseStoredMetadata()
-          && (error instanceof MetadataFetchBusy || failure?.name === "TimeoutError" || transientCodes.has(failure?.code ?? ""))) throw new TemporarilyUnavailableCimd(canUseStoredMetadata);
+          && (failure?.name === "TimeoutError" || transientCodes.has(failure?.code ?? ""))) throw new TemporarilyUnavailableCimd(canUseStoredMetadata);
       throw error;
     }
     if ([500, 502, 503, 504].includes(response.status)) {

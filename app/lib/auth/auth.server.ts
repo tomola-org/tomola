@@ -234,7 +234,7 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadata?: Metadat
 export type Auth = ReturnType<typeof createAuth>;
 
 // Recreate plugins: OAuth discovery initialization mutates plugin options, so reusing plugin instances registers CIMD twice.
-export function bindAuthToDatabase(auth: Auth, db: Tx, metadataSources?: MetadataSources): Auth {
+export function bindAuthToDatabase(auth: Auth, db: Db, metadataSources?: MetadataSources): Auth {
   const opts = originalOptions.get(auth);
   if (!opts) throw new Error("Unknown authentication configuration");
   return createAuth(db, opts, metadataSources);

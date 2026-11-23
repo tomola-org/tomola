@@ -11,6 +11,7 @@ import { invitationRequired } from "./invitation-ref.server";
 import { redeemSignupInvitation, type SignupInvitationGrant } from "./signup-invitation.server";
 import { DCR_JWKS_DISCOVERY_ID } from "~/lib/mcp/cimd.server";
 
+// The OAuth provider must keep its default client model name, "oauthClient".
 const disabledClientLogout = {
   backchannelLogoutUri: null,
   backchannelLogoutSessionRequired: null,

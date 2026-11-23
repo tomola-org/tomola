@@ -171,7 +171,7 @@ async function register(metadata: object = {}) {
   for (const field of Object.keys(logoutMetadata)) expect(result).not.toHaveProperty(field);
   return result.client_id as string;
 }
-async function authorize(clientId: string, credentials: Record<string, string> = {}, scope = "read draft offline_access") {
+async function authorizeCode(clientId: string, scope: string) {
   const verifier = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij";
   const params = new URLSearchParams({ client_id: clientId, redirect_uri: `${base}/callback`, response_type: "code", scope, code_challenge_method: "S256", code_challenge: createHash("sha256").update(verifier).digest("base64url"), state: "fixture-state", resource: `${base}/mcp` });
   const response = await fetch(`${base}/api/auth/oauth2/authorize?${params}`, { headers: { cookie }, redirect: "manual" });
@@ -190,7 +190,11 @@ async function authorize(clientId: string, credentials: Record<string, string> =
   expect(callback.pathname).toBe("/callback");
   expect(callback.searchParams.get("iss")).toBe(`${base}/api/auth`);
   expect(callback.searchParams.get("state")).toBe("fixture-state");
-  const token = await formPost("/api/auth/oauth2/token", { grant_type: "authorization_code", ...(credentials.client_assertion ? {} : { client_id: clientId }), redirect_uri: `${base}/callback`, code: callback.searchParams.get("code")!, code_verifier: verifier, resource: `${base}/mcp`, ...credentials });
+  return { code: callback.searchParams.get("code")!, code_verifier: verifier, redirect_uri: `${base}/callback`, resource: `${base}/mcp` };
+}
+async function authorize(clientId: string, credentials: Record<string, string> = {}, scope = "read draft offline_access") {
+  const code = await authorizeCode(clientId, scope);
+  const token = await formPost("/api/auth/oauth2/token", { grant_type: "authorization_code", ...(credentials.client_assertion ? {} : { client_id: clientId }), ...code, ...credentials });
   expect(token.status, await token.clone().text()).toBe(200);
   return await token.json() as { access_token: string; refresh_token: string; scope: string };
 }
@@ -965,6 +969,31 @@ describe("OAuth registration and immediate revocation", () => {
     } finally { clock.restore(); }
   });
 
+  it("returns a retryable error when CIMD metadata fetch capacity is unavailable", async () => {
+    const clientId = "https://capacity-client.example.net/metadata.json";
+    const document = vi.fn(async () => cimdFixture(clientId, {}, { "Cache-Control": "max-age=1" }));
+    metadataFixtures.set(clientId, document);
+    const code = await authorizeCode(clientId, "read draft offline_access");
+    const exchange = () => formPost("/api/auth/oauth2/token", { grant_type: "authorization_code", client_id: clientId, ...code });
+    const expectBusy = async (request: () => Promise<Response>) => {
+      document.mockRejectedValueOnce(new MetadataFetchBusy("Metadata fetch budget exhausted"));
+      const response = await request();
+      expect(response.status, await response.clone().text()).toBe(429);
+      expect(await response.json()).toEqual({ error: "temporarily_unavailable" });
+    };
+    const clock = cimdClock();
+    try {
+      clock.advance(2_000);
+      await expectBusy(exchange);
+      const issued = await exchange();
+      expect(issued.status, await issued.clone().text()).toBe(200);
+      const { refresh_token: token } = await issued.json();
+      clock.advance(2_000);
+      await expectBusy(() => formPost("/api/auth/oauth2/token", { grant_type: "refresh_token", client_id: clientId, refresh_token: token }));
+      await expectBusy(() => formPost("/api/auth/oauth2/revoke", { client_id: clientId, token, token_type_hint: "refresh_token" }));
+    } finally { clock.restore(); }
+  });
+
   it.each([404, 410])("stops using stored CIMD metadata after HTTP %i", async status => {
     const clientId = `https://availability-client.example.net/${status}.json`;
     const document = vi.fn(async () => cimdFixture(clientId, {}, { "Cache-Control": "max-age=1" }));
@@ -975,7 +1004,7 @@ describe("OAuth registration and immediate revocation", () => {
     clock.advance(2_000);
     const warnings = vi.spyOn(console, "warn");
     try {
-      document.mockRejectedValueOnce(new MetadataFetchBusy("Metadata fetch budget exhausted"));
+      document.mockResolvedValueOnce(new Response(null, { status: 503 }));
       const continued = await refresh(issued.refresh_token);
       expect(continued.status, await continued.clone().text()).toBe(200);
       const { refresh_token: token } = await continued.json();
@@ -983,10 +1012,8 @@ describe("OAuth registration and immediate revocation", () => {
       expect((await refresh(token)).status).toBe(400);
       document.mockResolvedValueOnce(new Response(null, { status: 503 }));
       expect((await refresh(token)).status).toBe(400);
-      document.mockRejectedValueOnce(new MetadataFetchBusy("Metadata fetch budget exhausted"));
-      expect((await refresh(token)).status).toBe(429);
       expect(warnings.mock.calls.filter(args => args.some(value => String(value).includes("Using stored CIMD metadata")))).toHaveLength(1);
-      expect(document).toHaveBeenCalledTimes(5);
+      expect(document).toHaveBeenCalledTimes(4);
     } finally { clock.restore(); warnings.mockRestore(); }
   });
 
@@ -1035,7 +1062,9 @@ describe("OAuth registration and immediate revocation", () => {
       const updated = await refresh(refreshToken);
       expect(updated.status, await updated.clone().text()).toBe(200);
       expect(managedCimdFetches).toBe(2);
-      expect(await db.query.oauthClient.findFirst({ where: eq(oauthClient.clientId, managedCimdId) })).toMatchObject({ redirectUris: [base + managedCimdRedirect] });
+      expect(await db.query.oauthClient.findFirst({ where: eq(oauthClient.clientId, managedCimdId) })).toMatchObject({
+        redirectUris: [base + managedCimdRedirect], ...noClientLogout,
+      });
       const oldRedirect = new URLSearchParams({ client_id: managedCimdId, redirect_uri: `${base}/callback`, response_type: "code", scope: "read", code_challenge_method: "S256", code_challenge: "a".repeat(43) });
       const refused = await fetch(`${base}/api/auth/oauth2/authorize?${oldRedirect}`, { redirect: "manual", headers: { cookie } });
       expect(refused.status).toBe(400);
@@ -1058,6 +1087,42 @@ describe("OAuth registration and immediate revocation", () => {
       expect(await revokeConnection(db, "member", grant!.id)).toBe(true);
       expect((await refresh(last)).status).toBe(400);
     } finally { clock.restore(); warnings.mockRestore(); }
+  });
+
+  it("preserves stored logout settings and suppresses them in the result of a CIMD update", async () => {
+    const clientId = "https://client.example.net/metadata.json";
+    let name = "Original client";
+    metadataFixtures.set(clientId, async () => cimdFixture(clientId, {
+      client_name: name, post_logout_redirect_uris: [new URL("/new-sign-out", clientId).href],
+    }, { "Cache-Control": "max-age=1" }));
+    await authorize(clientId);
+    const storedLogout = { backchannelLogoutUri: logoutMetadata.backchannel_logout_uri, backchannelLogoutSessionRequired: true,
+      postLogoutRedirectUris: logoutMetadata.post_logout_redirect_uris, enableEndSession: true };
+    const where = eq(oauthClient.clientId, clientId);
+    await db.update(oauthClient).set(storedLogout).where(where);
+
+    const { adapter } = await auth.$context;
+    const transaction = adapter.transaction.bind(adapter);
+    const updates: unknown[] = [];
+    const observed = vi.spyOn(adapter, "transaction").mockImplementation(work => transaction(async tx => {
+      const update = vi.spyOn(tx, "update");
+      const result = await work(tx);
+      for (const [index, [query]] of update.mock.calls.entries()) {
+        if (query.model === "oauthClient") updates.push(await update.mock.results[index].value);
+      }
+      return result;
+    }));
+    const clock = cimdClock();
+    try {
+      clock.advance(2_000);
+      name = "Updated client";
+      const query = new URLSearchParams({ client_id: clientId, redirect_uri: `${base}/callback`, response_type: "code", scope: "read",
+        code_challenge_method: "S256", code_challenge: "a".repeat(43) });
+      const response = await fetch(`${base}/api/auth/oauth2/authorize?${query}`, { headers: { cookie }, redirect: "manual" });
+      expect(response.status, await response.clone().text()).toBe(302);
+      expect(await db.query.oauthClient.findFirst({ where })).toMatchObject({ name, ...storedLogout });
+      expect(updates).toEqual([expect.objectContaining({ name, ...noClientLogout })]);
+    } finally { clock.restore(); observed.mockRestore(); }
   });
 
   it("keeps unauthenticated authorization errors local for DCR and CIMD clients", async () => {
