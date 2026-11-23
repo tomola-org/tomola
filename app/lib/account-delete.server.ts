@@ -25,6 +25,7 @@ import { RETENTION, monthsBefore } from "./retention";
 import { suspendedEmailHash } from "./suspended-email.server";
 import { enqueue } from "./jobs/queue.server";
 import { SEND_ACCOUNT_DELETED_JOB } from "./jobs/mail-kinds";
+import { anonymizeNushiAnswers } from "./nushi-retention.server";
 
 export type AccountDeletionInput = { confirmation: string; posts?: "keep" | "delete"; villages?: Record<string, string> };
 export class AccountDeletionError extends Error {
@@ -247,7 +248,7 @@ export async function completeAccountDeletion(db: Db, id: string, opts: { now?: 
     const retained = tx.select({ id: entries.id }).from(entryMedia).innerJoin(entries, eq(entries.id, entryMedia.entryId))
       .where(and(eq(entryMedia.mediaId, media.id), eq(entryMedia.isOwnerReference, true), isNull(entries.deletedAt)));
     await tx.update(media).set({ bytes: null, deletedAt: now }).where(and(eq(media.uploadedBy, userId), isNull(media.deletedAt), or(eq(media.avatar, true), sql`not exists (${retained})`)));
-    await tx.update(nushiSources).set({ author: DELETED_MEMBER_HANDLE }).where(eq(nushiSources.authorId, userId));
+    await anonymizeNushiAnswers(tx, userId);
     // Evidence retains its passages, but material and citation labels follow withdrawal.
     for (const [path, idKey] of [["{materials}", "id"], ["{answer,citations}", "sourceId"]]) {
       await tx.update(nushiReports).set({ evidence: sql`jsonb_set(${nushiReports.evidence}, ${path}::text[], (
@@ -290,6 +291,10 @@ export async function completeAccountDeletion(db: Db, id: string, opts: { now?: 
     await tx.update(chatTranslationReports).set({ note: null }).where(eq(chatTranslationReports.reporterId, userId));
     await endPersonalVillage(tx, userId, now);
     await detachMember(tx, userId);
+    // Request and source owners have been detached before removing their quota keys.
+    const quotaKeys = [`member:${userId}`, `author:${userId}`];
+    await tx.delete(schema.nushiReservations).where(inArray(schema.nushiReservations.key, quotaKeys));
+    await tx.delete(schema.chatNushiReservations).where(inArray(schema.chatNushiReservations.key, quotaKeys));
     await tx.delete(memberFollows).where(or(eq(memberFollows.followerId, userId), eq(memberFollows.followedId, userId)));
     await tx.delete(user).where(eq(user.id, userId));
     await tx.update(accountDeletions).set({ userId: null, confirmation: null, villageDecisions: {}, state: "completed", noticeState: "pending", lastError: null, updatedAt: now, completedAt: now }).where(eq(accountDeletions.id, id));

@@ -3,6 +3,7 @@ import type { Db } from "~/lib/db/client.server";
 import { appeals, divergences, entries, entryEmbeddings, entryMedia, entryMentionSnapshots, entryReadingCounts, entryReferences, entryRevisions, memberSignatures, moderationActions, reports, segments, translationReports, translationRevisions, translations } from "~/lib/db/schema";
 import { RETENTION, RETENTION_BATCH_SIZE, PURGED_QUESTION_TITLE, daysBefore } from "~/lib/retention";
 import { deleteRetentionRows, updateRetentionRows, drainRetentionBatches, type RetentionResults } from "~/lib/retention-batch.server";
+import { pendingNushiEntryCopies, pruneNushiEntryCopies } from "~/lib/nushi-retention.server";
 
 export type EntryRetentionCounts = { entries: number; revisionsDeleted: number; revisionsPruned: number };
 
@@ -13,6 +14,7 @@ const pendingRevision = sql`(${entryRevisions.body} <> '' or ${entryRevisions.ti
 
 const sourcePending = sql`(${entries.body} <> '' or (${entries.title} is not null and ${entries.title} <> ${PURGED_QUESTION_TITLE}) or ${entries.sourceHash} is not null)`;
 const excerptPending = sql`${translationReports.excerpt} <> ''`;
+const nushiCopies = pendingNushiEntryCopies(entries.id);
 
 // Keep reversible operator-deleted source content under its existing policy.
 const canPurgeContent = and(isNull(entries.hiddenAt),
@@ -32,6 +34,7 @@ function eligible(now: Date): SQL {
       or exists (select 1 from ${entryRevisions} where ${entryRevisions.entryId} = ${entries.id} and ${pendingRevision})
       or exists (select 1 from ${translationReports} where ${translationReports.entryId} = ${entries.id} and ${excerptPending})
       or exists (select 1 from ${entryReferences} where ${entryReferences.sourceEntryId} = ${entries.id})
+      or ${sql.join(nushiCopies.map(({ table, where }) => sql`exists (select 1 from ${table} where ${where})`), sql` or `)}
       or ${sql.join(derivatives.map(table => sql`exists (select 1 from ${table} where ${table.entryId} = ${entries.id})`), sql` or `)})))`,
   )!;
 }
@@ -72,9 +75,11 @@ export async function pruneDeletedEntries(db: Db, now: Date, results?: Retention
       for (const table of derivatives) changed += await deleteRetentionRows(tx, table, eq(table.entryId, entry.id), RETENTION_BATCH_SIZE - changed);
       changed += await deleteRetentionRows(tx, entryReferences, eq(entryReferences.sourceEntryId, entry.id), RETENTION_BATCH_SIZE - changed);
       changed += await updateRetentionRows(tx, translationReports, and(eq(translationReports.entryId, entry.id), excerptPending)!, sql`excerpt = ''`, RETENTION_BATCH_SIZE - changed);
+      changed += await pruneNushiEntryCopies(tx, entry.id, RETENTION_BATCH_SIZE - changed);
       // Do not let locked copies fill the next candidate window. Retrying them
       // is safe on the next invocation; the pending count still includes them.
-      if (changed === before) blocked.add(entry.id);
+      // A Nushi answer and its source label can use the next batch's two slots.
+      if (changed === before && RETENTION_BATCH_SIZE - changed >= 2) blocked.add(entry.id);
     }
     // Commit counts only after all statements in this batch have succeeded.
     counts.entries += batchCounts.entries;
@@ -87,6 +92,7 @@ export async function pruneDeletedEntries(db: Db, now: Date, results?: Retention
       + (select count(*) from ${entryRevisions} where ${entryRevisions.entryId} = ${entries.id} and ${pendingRevision})
       + (select count(*) from ${entryReferences} where ${entryReferences.sourceEntryId} = ${entries.id})
       + (select count(*) from ${translationReports} where ${translationReports.entryId} = ${entries.id} and ${excerptPending})
+      + ${sql.join(nushiCopies.map(({ table, where, mutations }) => sql`(select count(*) * ${mutations}::int from ${table} where ${where})`), sql` + `)}
       + ${sql.join(derivatives.map(table => sql`(select count(*) from ${table} where ${table.entryId} = ${entries.id})`), sql` + `)}
     else (select count(*) from ${entryReadingCounts} where ${entryReadingCounts.entryId} = ${entries.id}) end
     ), 0)::int as count from ${entries} where ${condition}`) as { rows: { count: number }[] };

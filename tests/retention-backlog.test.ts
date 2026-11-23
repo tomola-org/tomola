@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { expect, it } from "vitest";
-import { aiQuestionReports, appeals, chatAccessLog, chatMessages, chatReportSnapshots, chatTranslationReports, entries, entryEditProposals, invitationNoteTranslations, invitations, jobs, llmUsage, media, moderationActions, notifications, nushiAnswers, nushiReports, nushiRequests, pushDeliveries, pushSubscriptions, oauthClient, oauthRefreshToken, rateLimits, reports, session, signingChallenges, suspendedEmailHashes, user, verification, villageProposals, villageReportSnapshots, villages } from "~/lib/db/schema";
+import { aiQuestionReports, appeals, chatAccessLog, chatMessages, chatNushiRequests, chatNushiReservations, chatReportSnapshots, chatTranslationReports, entries, entryEditProposals, invitationNoteTranslations, invitations, jobs, llmUsage, media, moderationActions, notifications, nushiAnswers, nushiReports, nushiRequests, nushiReservations, pushDeliveries, pushSubscriptions, oauthClient, oauthRefreshToken, rateLimits, reports, session, signingChallenges, suspendedEmailHashes, user, verification, villageProposals, villageReportSnapshots, villages } from "~/lib/db/schema";
 import { runMaintenanceCleanup } from "~/lib/jobs/maintenance-jobs.server";
 import { addMember, createTestDb } from "./helpers/db";
 import { auditRetentionTransactions, expectBoundedTransactions } from "./helpers/retention";
@@ -29,6 +29,7 @@ it("drains every maintenance category's 350-row backlog within one invocation", 
     createdAt: proposalCreated, expiresAt: OLD,
   })));
   const [request] = await db.insert(nushiRequests).values({ entryId: topic.id, threadId: topic.id, villageId: village.id, revision: 1, sourceHash: "fixture", expiresAt: NOW }).returning();
+  await db.insert(nushiReservations).values(each(i => ({ requestId: request.id, key: `member:fixture-${i}`, day: "2028-01-01" })));
   const [answer] = await db.insert(nushiAnswers).values({ requestId: request.id, answer: { status: "answered", readings: [], citations: [] }, scope: { posts: 0, from: null, to: null, truncated: false, materialLanguage: "en", answerLangCode: null, materialIndex: [] }, lang: "en", engine: "fake", model: "fake", promptVersion: "fixture" }).returning();
   for (const kind of ["error", "moderation"]) await db.insert(nushiReports).values(each(() => ({ answerId: answer.id, kind, reason: "other", evidence: kind === "error" ? { question: "Private question", answer: "Private answer" } : null, createdAt: OLD })));
   await db.insert(aiQuestionReports).values(each(() => ({
@@ -43,6 +44,8 @@ it("drains every maintenance category's 350-row backlog within one invocation", 
   await db.insert(villageReportSnapshots).values(villageReports.map(r => ({ reportId: r.id, name: "Private name", description: "Private description", slug: "old-name" })));
   const messageId = (i: number) => i.toString(16).padStart(32, "0");
   await db.insert(chatMessages).values(each(i => ({ id: messageId(i), villageId: village.id, authorId: "a", lang: "en", body: "Chat body", createdSeq: i + 1, changedSeq: i + 1 })));
+  const [chatRequest] = await db.insert(chatNushiRequests).values({ messageId: messageId(0), villageId: village.id, expiresAt: NOW }).returning();
+  await db.insert(chatNushiReservations).values(each(i => ({ requestId: chatRequest.id, key: `member:fixture-${i}`, day: "2028-01-01" })));
   await db.insert(reports).values(each(i => ({ chatMessageId: messageId(i), chatLang: "en", chatAuthorId: "a", reporterId: "a", reason: "other", status: "resolved", handledAt: OLD })));
   await db.insert(chatTranslationReports).values(each(i => ({ messageId: messageId(i), reporterId: "a", lang: "en", sourceLang: "en", sourceHash: "s", translationHash: `t${i}`, original: "Private original", translation: "Private translation", note: "Private note", createdSeq: i + 1, changedSeq: i + 1, status: "resolved" as const, handledAt: OLD })));
   await db.insert(chatReportSnapshots).values(each(i => ({ messageId: messageId(i), lang: "en", body: "Private evidence", authorHandle: "alice", messageCreatedAt: OLD, createdSeq: i + 1, changedSeq: i + 1 })));
@@ -77,7 +80,7 @@ it("drains every maintenance category's 350-row backlog within one invocation", 
   await db.insert(media).values(each(i => ({ id: villageImageId(i), avatar: true, villageId: village.id, bytes: Buffer.from("image"), mime: "image/webp", width: 256, height: 256, byteSize: 5, uploadedBy: "a", uploadedAt: OLD })));
   for (const [i, report] of villageReports.entries()) await db.update(reports).set({ iconMediaId: villageImageId(i) }).where(eq(reports.id, report.id));
   await db.insert(moderationActions).values(each(i => ({ action: "clear_village_icon", targetVillageId: village.id, iconMediaIdBefore: villageImageId(i), actorId: "a", reason: "other", createdAt: OLD })));
-  const tables = [nushiReports, aiQuestionReports, suspendedEmailHashes, rateLimits, verification, session, chatAccessLog, notifications, pushDeliveries, llmUsage, signingChallenges, jobs, villageReportSnapshots, chatReportSnapshots, chatTranslationReports, invitations, invitationNoteTranslations, oauthClient, oauthRefreshToken, moderationActions, reports, media, entryEditProposals, villageProposals];
+  const tables = [nushiReports, nushiReservations, chatNushiReservations, aiQuestionReports, suspendedEmailHashes, rateLimits, verification, session, chatAccessLog, notifications, pushDeliveries, llmUsage, signingChallenges, jobs, villageReportSnapshots, chatReportSnapshots, chatTranslationReports, invitations, invitationNoteTranslations, oauthClient, oauthRefreshToken, moderationActions, reports, media, entryEditProposals, villageProposals];
   await auditRetentionTransactions(db, tables);
 
   const results = await runMaintenanceCleanup(db, NOW);
