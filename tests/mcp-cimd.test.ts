@@ -33,6 +33,23 @@ it("keeps a bounded cache of CIMD documents and evicts the least recently used",
   expect(cache.isFresh(id(CIMD_CACHE.maxEntries))).toBe(true);
 });
 
+it.each([
+  ["Cache-Control", "max-age=60, no-store"],
+  ["Cache-Control", "max-age=60, private"],
+  ["Vary", "*"],
+])("does not store CIMD metadata with %s: %s", async (name, value) => {
+  const clientId = "https://metadata.example/cimd.json";
+  const upstream = vi.fn<MetadataFetch>(async () => Response.json({
+    client_id: clientId, client_name: "CIMD fixture", redirect_uris: ["https://metadata.example/callback"],
+  }, { headers: { [name]: value, ETag: '"fixture"' } }));
+  const cache = createCimdMetadataSources(upstream);
+  cache.confirm(clientId, await (await cache.document(clientId)).text());
+  expect(cache.isFresh(clientId)).toBe(false);
+  await cache.document(clientId);
+  expect(upstream).toHaveBeenCalledTimes(2);
+  expect(new Headers(upstream.mock.calls[1][1]?.headers).has("if-none-match")).toBe(false);
+});
+
 describe("shared CIMD transport admission", () => {
   it("shares a bounded in-flight fetch without sharing a subscriber's cancellation", async () => {
     const ready = deferred();

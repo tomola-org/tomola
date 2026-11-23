@@ -1,8 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createCimdClientDiscovery, validateCimdMetadata } from "@better-auth/cimd";
 import type { ClientDiscovery } from "@better-auth/oauth-provider";
-import type { MetadataFetch } from "./cimd.server";
-import { omitClientLogoutMetadata } from "./oauth-client-metadata.server";
+import { MetadataFetchBusy, type MetadataFetch } from "./cimd.server";
 
 export const CIMD_CACHE = {
   defaultSeconds: 3600,
@@ -49,12 +48,9 @@ function freshness(headers: Headers, now: number) {
   return { freshUntil, staleUntil };
 }
 
-function documentResponse(body: string, original: Headers) {
-  const headers = new Headers(original);
-  headers.delete("content-length");
+function documentResponse(body: string) {
   // The shared cache owns freshness and validators across database bindings.
-  headers.set("cache-control", "no-store");
-  return new Response(body, { headers });
+  return new Response(body, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
 }
 
 export function createCimdMetadataSources(fetch: MetadataFetch): MetadataSources {
@@ -72,7 +68,7 @@ export function createCimdMetadataSources(fetch: MetadataFetch): MetadataSources
     request.signal.throwIfAborted();
     const clientId = typeof input === "string" ? input : request.url;
     const previous = read(clientId);
-    if (previous && Date.now() < previous.freshUntil) return documentResponse(previous.body, previous.headers);
+    if (previous?.applied && Date.now() < previous.freshUntil) return documentResponse(previous.body);
     const headers = new Headers(request.headers);
     const etag = previous?.headers.get("etag");
     const modified = previous?.headers.get("last-modified");
@@ -85,14 +81,14 @@ export function createCimdMetadataSources(fetch: MetadataFetch): MetadataSources
     } catch (error) {
       const failure = error as { name?: string; code?: string } | null;
       if (!request.signal.aborted && canUseStoredMetadata()
-          && (failure?.name === "TimeoutError" || transientCodes.has(failure?.code ?? ""))) throw new TemporarilyUnavailableCimd(canUseStoredMetadata);
+          && (error instanceof MetadataFetchBusy || failure?.name === "TimeoutError" || transientCodes.has(failure?.code ?? ""))) throw new TemporarilyUnavailableCimd(canUseStoredMetadata);
       throw error;
     }
     if ([500, 502, 503, 504].includes(response.status)) {
       if (canUseStoredMetadata()) throw new TemporarilyUnavailableCimd(canUseStoredMetadata);
       return response;
     }
-    let next: { body: string; headers: Headers; validated: boolean } | undefined;
+    let next: { body: string; headers: Headers } | undefined;
     if (response.status === 304 && previous && (etag || modified)) {
       const merged = new Headers(previous.headers);
       for (const field of cacheHeaders) {
@@ -100,28 +96,32 @@ export function createCimdMetadataSources(fetch: MetadataFetch): MetadataSources
         if (value !== null) merged.set(field, value);
         else if (field === "date" || field === "age") merged.delete(field);
       }
-      next = { body: previous.body, headers: merged, validated: true };
+      next = { body: previous.body, headers: merged };
     } else if (response.status === 200 && jsonMediaType.test(response.headers.get("content-type") ?? "")) {
       const original = await response.clone().arrayBuffer();
-      // Leave the provider's original size limit in force even for stripped fields.
       if (original.byteLength <= maxDocumentBytes && Number(response.headers.get("content-length")) <= maxDocumentBytes) {
+        const body = new TextDecoder().decode(original);
         let document: unknown;
-        try { document = JSON.parse(new TextDecoder().decode(original)); }
+        try { document = JSON.parse(body); }
         catch { /* The provider reports invalid JSON using its usual error format. */ }
-        if (document && typeof document === "object" && !Array.isArray(document)) {
-          omitClientLogoutMetadata(document);
-          next = { body: JSON.stringify(document), headers: response.headers, validated: validateCimdMetadata(clientId, document, { metadataProfile: profile }).valid };
+        if (validateCimdMetadata(clientId, document, { metadataProfile: profile }).valid) {
+          const headers = new Headers();
+          for (const field of cacheHeaders) {
+            const value = response.headers.get(field);
+            if (value !== null) headers.set(field, value);
+          }
+          next = { body, headers };
         }
       }
     }
     entries.delete(clientId);
     if (!next) return response;
     const times = freshness(next.headers, Date.now());
-    if (next.validated && times) {
+    if (times) {
       entries.set(clientId, { body: next.body, headers: next.headers, ...times, applied: !!previous?.applied && previous.body === next.body });
       if (entries.size > CIMD_CACHE.maxEntries) entries.delete(entries.keys().next().value!);
     }
-    return documentResponse(next.body, next.headers);
+    return documentResponse(next.body);
   };
   return {
     document,

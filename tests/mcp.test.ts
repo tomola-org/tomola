@@ -37,6 +37,7 @@ import * as markdownBudget from "~/lib/markdown-budget.server";
 import { MarkdownBudgetError, MarkdownBusyError } from "~/lib/markdown-budget.server";
 import { handleOAuthHttp } from "~/lib/mcp/oauth-http.server";
 import { CIMD_CACHE } from "~/lib/mcp/cimd-cache.server";
+import { MetadataFetchBusy, type MetadataFetch } from "~/lib/mcp/cimd.server";
 import { mcpText, PRIVATE_RECORDS_RESPONSE, redactCredentialLinks } from "~/lib/mcp/output.server";
 import { loader as loginLoader, action as loginAction } from "~/routes/mcp-login";
 import { action as confirmAction } from "~/routes/auth-confirm";
@@ -73,6 +74,7 @@ const revalidatedCimdId = "https://revalidated-client.example.net/metadata.json"
 const firstCimdFetches = new Map<string, number>();
 const managedCimdId = "https://managed-client.example.net/metadata.json";
 const managedCimdMaxAge = 60;
+const metadataFixtures = new Map<string, MetadataFetch>();
 const logoutMetadata = {
   backchannel_logout_uri: "https://client.example.net/logout",
   backchannel_logout_session_required: true,
@@ -110,13 +112,16 @@ beforeAll(async () => {
   vi.stubEnv("BETTER_AUTH_URL", base);
   vi.stubEnv("ENABLED_LANGS", "ja,en");
   auth = createAuth(db, { baseURL: base, secret: "test-secret-0123456789abcdef0123456789abcdef", sendMagicLink: async ({ token, metadata }) => { sent.push({ token, metadata }); const outcome = magicLinkOutcome.getStore(); if (outcome) outcome.result = "sent"; }, metadataFetch: async (input, init) => {
+    const fixture = metadataFixtures.get(String(input));
+    if (fixture) return fixture(input, init);
     if (String(input) === cimdJwksUri) return Response.json({ keys: [cimdJwk] });
     if (String(input) === managedCimdId) {
       managedCimdFetches += 1;
       if (managedCimdStatus !== 200) return new Response(null, { status: managedCimdStatus });
       return Response.json({ client_id: managedCimdId, client_name: "Cache fixture", application_type: "native",
         redirect_uris: [base + managedCimdRedirect], grant_types: ["authorization_code", "refresh_token"],
-        token_endpoint_auth_method: "none", ...logoutMetadata }, { headers: { "Cache-Control": `max-age=${managedCimdMaxAge}` } });
+        token_endpoint_auth_method: "none", post_logout_redirect_uris: [new URL("/signed-out", managedCimdId).href] },
+      { headers: { "Cache-Control": `max-age=${managedCimdMaxAge}` } });
     }
     if (String(input) === cimdJwtId) {
       if (new Headers(init?.headers).get("if-none-match") === cimdJwtCacheHeaders.ETag) {
@@ -146,6 +151,19 @@ beforeAll(async () => {
 afterAll(async () => { http.closeAllConnections(); await new Promise<void>((resolve) => http.close(async () => resolve())); Object.assign(globals, saved); vi.unstubAllEnvs(); });
 
 const formPost = (path: string, params: Record<string, string>) => fetch(`${base}${path}`, { method: "POST", body: new URLSearchParams(params), redirect: "manual" });
+function cimdFixture(clientId: string, metadata: object = {}, headers?: HeadersInit) {
+  return Response.json({ client_id: clientId, client_name: "CIMD fixture", application_type: "native",
+    redirect_uris: [`${base}/callback`], grant_types: ["authorization_code", "refresh_token"], token_endpoint_auth_method: "none", ...metadata }, { headers });
+}
+function cimdClock() {
+  const original = Date;
+  let now = Date.now();
+  globalThis.Date = new Proxy(original, { get: (target, key) => key === "now" ? () => now : Reflect.get(target, key) });
+  return {
+    advance: (ms: number) => { now += ms; },
+    restore: () => { globalThis.Date = original; },
+  };
+}
 async function register(metadata: object = {}) {
   const response = await fetch(`${base}/api/auth/oauth2/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "Local fixture", application_type: "native", redirect_uris: [`${base}/callback`], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none", scope: "read draft offline_access", ...metadata }) });
   expect(response.status, await response.clone().text()).toBe(201);
@@ -856,27 +874,136 @@ describe("OAuth registration and immediate revocation", () => {
     }
 
     const { action: logout } = await import("~/routes/logout");
-    const { token } = sent.at(-1)!;
-    await auth.api.signInMagicLink({ body: { email: "other@example.com" }, headers: new Headers() });
-    const signedIn = await auth.api.magicLinkVerify({ query: { token: sent.at(-1)!.token }, headers: new Headers(), asResponse: true });
-    expect(sent.at(-1)!.token).not.toBe(token);
-    const logoutCookie = signedIn.headers.getSetCookie().map(value => value.split(";")[0]).join("; ");
-    const current = await auth.api.getSession({ headers: new Headers({ cookie: logoutCookie }) });
-    expect(current).not.toBeNull();
+    const { action: settings } = await import("~/routes/settings");
+    const signIn = async () => {
+      await auth.api.signInMagicLink({ body: { email: "other@example.com" }, headers: new Headers() });
+      const signedIn = await auth.api.magicLinkVerify({ query: { token: sent.at(-1)!.token }, headers: new Headers(), asResponse: true });
+      const headers = new Headers({ origin: base, cookie: signedIn.headers.getSetCookie().map(value => value.split(";")[0]).join("; ") });
+      const current = await auth.api.getSession({ headers });
+      expect(current?.user.id).toBe("other");
+      return { headers, sessionId: current!.session.id };
+    };
+    const other = await signIn();
+    const current = await signIn();
     await db.update(oauthClient).set({ backchannelLogoutUri: logoutMetadata.backchannel_logout_uri, backchannelLogoutSessionRequired: true,
       postLogoutRedirectUris: logoutMetadata.post_logout_redirect_uris, enableEndSession: true }).where(eq(oauthClient.clientId, clientId));
-    await db.insert(oauthRefreshToken).values({
-      id: "logout-fixture", token: "logout-fixture", clientId, userId: current!.user.id, sessionId: current!.session.id,
+    await db.insert(oauthRefreshToken).values([other, current].map(({ sessionId }) => ({
+      id: sessionId, token: sessionId, clientId, userId: "other", sessionId,
       createdAt: new Date(), expiresAt: new Date(Date.now() + 60_000), scopes: ["read"],
-    });
+    })));
+    const refreshRow = (id: string) => db.query.oauthRefreshToken.findFirst({ where: eq(oauthRefreshToken.id, id) });
     const outbound = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external fetch"));
     try {
-      const response = await logout({ request: new Request(`${base}/logout`, { method: "POST", body: new URLSearchParams(), headers: { origin: base, cookie: logoutCookie } }) } as never);
+      await expect(settings({ request: new Request(`${base}/settings`, { method: "POST", body: new URLSearchParams({ intent: "revoke-other-sessions" }), headers: current.headers }) }))
+        .rejects.toMatchObject({ status: 302 });
+      expect(outbound).not.toHaveBeenCalled();
+      expect(await refreshRow(other.sessionId)).toMatchObject({ revoked: expect.any(Date), sessionId: null });
+      expect(await refreshRow(current.sessionId)).toMatchObject({ revoked: null, sessionId: current.sessionId });
+      const response = await logout({ request: new Request(`${base}/logout`, { method: "POST", body: new URLSearchParams(), headers: current.headers }) } as never);
       expect(response.headers.get("location")).toMatch(/^\//);
       expect(outbound).not.toHaveBeenCalled();
     } finally { outbound.mockRestore(); }
-    expect(await db.query.oauthRefreshToken.findFirst({ where: eq(oauthRefreshToken.id, "logout-fixture") })).toMatchObject({ revoked: expect.any(Date), sessionId: null });
+    expect(await refreshRow(current.sessionId)).toMatchObject({ revoked: expect.any(Date), sessionId: null });
     expect(await client()).toMatchObject({ backchannelLogoutUri: logoutMetadata.backchannel_logout_uri });
+  });
+
+  it.each(["backchannel_logout_uri", "backchannel_logout_session_required", "enable_end_session"] as const)(
+    "uses provider validation for CIMD field %s", async field => {
+      const clientId = `https://metadata.example.net/${field}.json`;
+      metadataFixtures.set(clientId, async () => cimdFixture(clientId, { [field]: logoutMetadata[field] }));
+      const query = new URLSearchParams({ client_id: clientId, redirect_uri: `${base}/callback`, response_type: "code",
+        scope: "read", code_challenge_method: "S256", code_challenge: "a".repeat(43) });
+      const response = await fetch(`${base}/api/auth/oauth2/authorize?${query}`, { headers: { cookie }, redirect: "manual" });
+      expect(response.status, await response.clone().text()).toBe(400);
+      expect(await response.json()).toMatchObject({ error: "invalid_client" });
+      expect(await db.query.oauthClient.findFirst({ where: eq(oauthClient.clientId, clientId) })).toBeUndefined();
+    },
+  );
+
+  it("uses provider validation for DCR logout metadata", async () => {
+    const response = await fetch(`${base}/api/auth/oauth2/register`, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ application_type: "native", redirect_uris: [`${base}/callback`], token_endpoint_auth_method: "none",
+        backchannel_logout_session_required: "true" }) });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "invalid_client_metadata" });
+  });
+
+  it("revalidates CIMD metadata after a consent transaction rolls back", async () => {
+    const clientId = "https://consent-client.example.net/metadata.json";
+    let name = "Initial CIMD fixture";
+    const document = vi.fn(async () => cimdFixture(clientId, { client_name: name }, { "Cache-Control": "max-age=60" }));
+    metadataFixtures.set(clientId, document);
+    const issued = await authorize(clientId);
+    const query = new URLSearchParams({ client_id: clientId, redirect_uri: `${base}/callback`, response_type: "code",
+      scope: "read draft offline_access", code_challenge_method: "S256", code_challenge: "a".repeat(43), prompt: "consent" });
+    const authorization = await fetch(`${base}/api/auth/oauth2/authorize?${query}`, { headers: { cookie }, redirect: "manual" });
+    const consentUrl = new URL(authorization.headers.get("location")!, base);
+    expect(consentUrl.pathname).toBe("/mcp/consent");
+    expect(document).toHaveBeenCalledTimes(1);
+    const form = new URLSearchParams({ accept: "yes", oauth_query: consentUrl.searchParams.toString(), scope: "read" });
+    const transaction = db.transaction.bind(db);
+    const rollback = new Error("Abort consent fixture before commit");
+    const clock = cimdClock();
+    clock.advance(61_000);
+    name = "Updated CIMD fixture";
+    try {
+      const forcedRollback = vi.spyOn(db, "transaction").mockImplementationOnce((work, config) => transaction(async tx => {
+        await work(tx);
+        expect(await tx.query.oauthClient.findFirst({ where: eq(oauthClient.clientId, clientId) })).toMatchObject({ name });
+        throw rollback;
+      }, config));
+      try {
+        await expect(consentAction({ request: new Request(consentUrl, { method: "POST", headers: { cookie, origin: base }, body: form }) } as never))
+          .rejects.toBe(rollback);
+      } finally { forcedRollback.mockRestore(); }
+      expect(document).toHaveBeenCalledTimes(2);
+      expect(await db.query.oauthClient.findFirst({ where: eq(oauthClient.clientId, clientId) })).toMatchObject({ name: "Initial CIMD fixture" });
+      const refreshed = await formPost("/api/auth/oauth2/token", { grant_type: "refresh_token", client_id: clientId, refresh_token: issued.refresh_token });
+      expect(refreshed.status, await refreshed.clone().text()).toBe(200);
+      expect(document).toHaveBeenCalledTimes(3);
+      expect(await db.query.oauthClient.findFirst({ where: eq(oauthClient.clientId, clientId) })).toMatchObject({ name });
+    } finally { clock.restore(); }
+  });
+
+  it.each([404, 410])("stops using stored CIMD metadata after HTTP %i", async status => {
+    const clientId = `https://availability-client.example.net/${status}.json`;
+    const document = vi.fn(async () => cimdFixture(clientId, {}, { "Cache-Control": "max-age=1" }));
+    metadataFixtures.set(clientId, document);
+    const issued = await authorize(clientId);
+    const refresh = (token: string) => formPost("/api/auth/oauth2/token", { grant_type: "refresh_token", client_id: clientId, refresh_token: token });
+    const clock = cimdClock();
+    clock.advance(2_000);
+    const warnings = vi.spyOn(console, "warn");
+    try {
+      document.mockRejectedValueOnce(new MetadataFetchBusy("Metadata fetch budget exhausted"));
+      const continued = await refresh(issued.refresh_token);
+      expect(continued.status, await continued.clone().text()).toBe(200);
+      const { refresh_token: token } = await continued.json();
+      document.mockResolvedValueOnce(new Response(null, { status }));
+      expect((await refresh(token)).status).toBe(400);
+      document.mockResolvedValueOnce(new Response(null, { status: 503 }));
+      expect((await refresh(token)).status).toBe(400);
+      document.mockRejectedValueOnce(new MetadataFetchBusy("Metadata fetch budget exhausted"));
+      expect((await refresh(token)).status).toBe(429);
+      expect(warnings.mock.calls.filter(args => args.some(value => String(value).includes("Using stored CIMD metadata")))).toHaveLength(1);
+      expect(document).toHaveBeenCalledTimes(5);
+    } finally { clock.restore(); warnings.mockRestore(); }
+  });
+
+  it.each(["max-age=1, must-revalidate", "max-age=60, s-maxage=1"])("requires current CIMD metadata with %s", async cacheControl => {
+    const clientId = "https://policies-client.example.net/" + encodeURIComponent(cacheControl);
+    const document = vi.fn(async () => cimdFixture(clientId, {}, { "Cache-Control": cacheControl }));
+    metadataFixtures.set(clientId, document);
+    const issued = await authorize(clientId);
+    expect(document).toHaveBeenCalledOnce();
+    const clock = cimdClock();
+    clock.advance(2_000);
+    try {
+      document.mockResolvedValueOnce(new Response(null, { status: 503 }));
+      const refreshed = await formPost("/api/auth/oauth2/token", { grant_type: "refresh_token", client_id: clientId, refresh_token: issued.refresh_token });
+      expect(refreshed.status).toBe(400);
+      expect(document).toHaveBeenCalledTimes(2);
+    } finally { clock.restore(); }
   });
 
   it("shares validated CIMD metadata across authorization, refresh and revocation", async () => {
@@ -899,12 +1026,9 @@ describe("OAuth registration and immediate revocation", () => {
     expect(revocation.status, await revocation.clone().text()).toBe(200);
     expect(managedCimdFetches).toBe(1);
 
-    const now = Date.now();
-    const originalDate = Date;
+    const clock = cimdClock();
     const pastFreshness = (managedCimdMaxAge + 1) * 1000;
-    let advanced = now + pastFreshness;
-    // The test clock exposes Date.now through a proxy getter.
-    globalThis.Date = new Proxy(originalDate, { get: (target, key) => key === "now" ? () => advanced : Reflect.get(target, key) });
+    clock.advance(pastFreshness);
     const warnings = vi.spyOn(console, "warn");
     try {
       managedCimdRedirect = "/new-callback";
@@ -919,21 +1043,21 @@ describe("OAuth registration and immediate revocation", () => {
       expect(managedCimdFetches).toBe(2);
 
       const input = (await updated.json()).refresh_token as string;
-      advanced = now + 2 * pastFreshness;
+      clock.advance(pastFreshness);
       managedCimdStatus = 503;
       const continued = await refresh(input);
       expect(continued.status, await continued.clone().text()).toBe(200);
       expect(managedCimdFetches).toBe(3);
       expect(warnings.mock.calls.filter(args => args.some(value => String(value).includes("Using stored CIMD metadata")))).toHaveLength(1);
       expect((await fetch(`${base}/api/auth/oauth2/authorize?${oldRedirect}`, { redirect: "manual", headers: { cookie } })).status).toBe(400);
-      advanced += CIMD_CACHE.staleSeconds * 1000;
+      clock.advance(CIMD_CACHE.staleSeconds * 1000);
       const last = (await continued.json()).refresh_token as string;
       expect((await refresh(last)).status).toBe(400);
       managedCimdStatus = 200;
       const grant = await db.query.oauthConsent.findFirst({ where: eq(oauthConsent.clientId, managedCimdId) });
       expect(await revokeConnection(db, "member", grant!.id)).toBe(true);
       expect((await refresh(last)).status).toBe(400);
-    } finally { globalThis.Date = originalDate; warnings.mockRestore(); }
+    } finally { clock.restore(); warnings.mockRestore(); }
   });
 
   it("keeps unauthenticated authorization errors local for DCR and CIMD clients", async () => {

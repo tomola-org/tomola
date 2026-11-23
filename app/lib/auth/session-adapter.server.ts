@@ -10,7 +10,13 @@ import { RETENTION, DAY_MS } from "~/lib/retention";
 import { invitationRequired } from "./invitation-ref.server";
 import { redeemSignupInvitation, type SignupInvitationGrant } from "./signup-invitation.server";
 import { DCR_JWKS_DISCOVERY_ID } from "~/lib/mcp/cimd.server";
-import { disabledClientLogout } from "~/lib/mcp/oauth-client-metadata.server";
+
+const disabledClientLogout = {
+  backchannelLogoutUri: null,
+  backchannelLogoutSessionRequired: null,
+  postLogoutRedirectUris: null,
+  enableEndSession: null,
+};
 
 type Adapter = ReturnType<ReturnType<typeof drizzleAdapter>>;
 type SessionQuery = Parameters<Adapter["findOne"]>[0];
@@ -102,9 +108,17 @@ export function sessionAdapter(db: Db, signupGrants = new Map<string, SignupInvi
           const tx = scope.transaction.getStore();
           return tx && tx !== connection && (query.model === "session" || query.model === "account") ? makeAdapter(tx).create(query) : wrapped.create(query);
         },
-        update: query => {
+        update: async <R>(query: Parameters<Adapter["update"]>[0]) => {
+          if (query.model === "oauthClient") {
+            // The provider has validated the metadata. Preserve any existing
+            // logout columns while keeping them out of registration writes and results.
+            const { backchannelLogoutUri: _uri, backchannelLogoutSessionRequired: _required,
+              postLogoutRedirectUris: _redirects, enableEndSession: _endSession, ...update } = query.update;
+            const client = await wrapped.update<R>({ ...query, update });
+            return client && { ...client, ...disabledClientLogout };
+          }
           const tx = scope.transaction.getStore();
-          return query.model === "account" && tx && tx !== connection ? makeAdapter(tx).update(query) : wrapped.update(query);
+          return query.model === "account" && tx && tx !== connection ? makeAdapter(tx).update<R>(query) : wrapped.update<R>(query);
         },
         transaction: <R>(callback: (trx: Adapter) => Promise<R>) => connection.transaction(tx => callback(forConnection(tx))),
       };

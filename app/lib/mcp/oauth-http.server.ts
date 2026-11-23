@@ -11,7 +11,6 @@ import { stripAccessTokenAuthorizationScheme } from "better-auth/oauth2";
 import { MetadataFetchBusy, withPreparedMetadata } from "./cimd.server";
 import { AUTHORIZE_PATH, scopeWithOfflineAccess } from "./authorization-scopes.server";
 import { metadataResponse } from "@better-auth/oauth-provider";
-import { omitClientLogoutMetadata } from "./oauth-client-metadata.server";
 
 // Consume bounded machine bodies once. Reconstruct the request so provider parsing has no unchecked stream.
 export async function boundedOAuthRequest(request: Request): Promise<Request | null> {
@@ -51,19 +50,10 @@ export function oauthCandidateClientId(request: Request, form: FormData): string
 }
 
 export async function handleOAuthHttp(request: Request, db: Db, auth: McpAuth, baseURL: string) {
-  let bounded = await boundedOAuthRequest(request);
+  const bounded = await boundedOAuthRequest(request);
   if (!bounded) return Response.json({ error: "request_too_large" }, { status: 413 });
   const path = new URL(request.url).pathname;
   if (path === "/api/auth/.well-known/oauth-authorization-server") return mcpAuthorizationServerMetadata(auth, bounded);
-  if (path === "/api/auth/oauth2/register" && bounded.headers.get("content-type")?.split(";")[0].trim().toLowerCase() === "application/json") {
-    const metadata = await bounded.clone().json().catch(() => null);
-    if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
-      omitClientLogoutMetadata(metadata);
-      const headers = new Headers(bounded.headers);
-      headers.delete("content-length");
-      bounded = new Request(bounded, { headers, body: JSON.stringify(metadata) });
-    }
-  }
   if (path === "/api/auth/oauth2/token" || path === "/api/auth/oauth2/revoke") {
     let form: FormData;
     try { form = await bounded.clone().formData(); }
