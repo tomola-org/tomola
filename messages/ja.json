@@ -2376,6 +2376,7 @@
   "login_methods_revoke_help": "すべての端末からログアウトし、API トークン、MCP の接続、「AI で開く」のリンクを無効にします。",
   "login_methods_revoke_pending": "発行済みのログインコード、ログインリンク、進行中のパスキーの手続きも無効にします。",
   "login_methods_revoke_keep": "登録済みのパスキーと Google の連携は残ります。心当たりのないものは、次の設定で外せます。",
+  "login_methods_revoke_keep_passkeys": "登録済みのパスキーは残ります。心当たりのないパスキーは、パスキーの設定で外せます。",
   "login_methods_revoke": "すべて止める",
   "login_methods_notice_enabled": "{at}に「パスキーでだけログインする」を入にしました。心当たりがない場合は運営者に連絡してください。",
   "login_methods_notice_disabled": "{at}に「パスキーでだけログインする」を切にしました。心当たりがない場合は運営者に連絡してください。",

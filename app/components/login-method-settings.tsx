@@ -38,7 +38,7 @@ export function LoginMethodSettings({ login, googleAvailable, returnTo, error }:
       <summary className="cursor-pointer">{m.login_methods_compromise()}</summary>
       <p className="ui-help text-muted-foreground">{m.login_methods_revoke_help()}</p>
       <p className="ui-help text-muted-foreground">{m.login_methods_revoke_pending()}</p>
-      <p className="ui-help text-muted-foreground">{m.login_methods_revoke_keep()}</p>
+      <p className="ui-help text-muted-foreground">{googleAvailable ? m.login_methods_revoke_keep() : m.login_methods_revoke_keep_passkeys()}</p>
       <ul className="flex flex-wrap gap-x-4 gap-y-1 ui-help">
         <li><Link to={withSettingsReturn("/settings#settings-passkeys", returnTo)} className="underline">{m.settings_passkeys_heading()}</Link></li>
         {googleAvailable && <li><Link to={withSettingsReturn("/settings#settings-google", returnTo)} className="underline">{m.google_settings_heading()}</Link></li>}

@@ -101,7 +101,8 @@ test("credential revocation describes retained sign-in methods and links to pass
   const login = page.locator("#settings-login-methods");
   await login.getByText(en.login_methods_compromise, { exact: true }).click();
   await expect(login.getByText(en.login_methods_revoke_pending, { exact: true })).toBeVisible();
-  await expect(login.getByText(en.login_methods_revoke_keep, { exact: true })).toBeVisible();
+  await expect(login.getByText(en.login_methods_revoke_keep_passkeys, { exact: true })).toBeVisible();
+  await expect(login.getByRole("link", { name: en.google_settings_heading, exact: true })).toHaveCount(0);
   await login.getByRole("link", { name: en.settings_passkeys_heading, exact: true }).click();
   await expect(page).toHaveURL(url => url.hash === "#settings-passkeys");
   await expect(page.locator("#settings-passkeys-heading")).toBeInViewport();

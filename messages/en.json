@@ -3182,6 +3182,7 @@
   "login_methods_revoke_help": "End all sessions and revoke API tokens, MCP connections and Open in AI links.",
   "login_methods_revoke_pending": "This also invalidates outstanding email codes, sign-in links and passkey requests.",
   "login_methods_revoke_keep": "Registered passkeys and Google connections stay in place. Remove anything you do not recognize in these settings.",
+  "login_methods_revoke_keep_passkeys": "Registered passkeys stay in place. Remove any you do not recognize in passkey settings.",
   "login_methods_revoke": "Revoke all access",
   "login_methods_notice_enabled": "Passkey-only sign-in was turned on at {at}. Contact the operators if you did not make this change.",
   "login_methods_notice_disabled": "Passkey-only sign-in was turned off at {at}. Contact the operators if you did not make this change.",

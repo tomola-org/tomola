@@ -2377,6 +2377,7 @@
   "login_methods_revoke_help": "f4a4c338ad0a4e2e",
   "login_methods_revoke_pending": "4efc14a04516288d",
   "login_methods_revoke_keep": "78952ed373ecb908",
+  "login_methods_revoke_keep_passkeys": "cfebc7e28789a223",
   "login_methods_revoke": "bb589b985a279a6f",
   "login_methods_notice_enabled": "02a71ea9942fa359",
   "login_methods_notice_disabled": "4171381f5de11a36",
