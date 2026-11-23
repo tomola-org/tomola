@@ -241,6 +241,8 @@ export function connectSafetySection(plan: ConnectPlan = connectPlan()): string 
 export const WAIT_MINUTES = 5;
 
 // Public instructions only: no member content or credentials.
+export const OAUTH_REDIRECT_GUIDANCE = "OAuth uses exact matching of registered redirect URIs. For non-web clients, only the port of a registered HTTP loopback redirect URI may vary.";
+
 export function connectMarkdown(plan: ConnectPlan = connectPlan()): string {
   return `# Connect your AI to tomola
 
@@ -253,7 +255,7 @@ ${connectAccountSection(plan)}
 
 Use MCP over Streamable HTTP (POST to the chosen endpoint), rather than the site's browser session. Initialize with a supported protocol version and discover tools with \`tools/list\`. Send one JSON-RPC message per POST to either MCP endpoint, which rejects batch arrays.
 
-${plan.publicReading ? `The public endpoint ${plan.publicMcpUrl} requires no authentication. It offers only tomola_latest, tomola_thread and tomola_privacy. Do not start OAuth for it.\n\n` : ""}For the member endpoint ${plan.mcpUrl}, a 401 response advertises OAuth protected-resource metadata in WWW-Authenticate. Discover ${plan.origin}/.well-known/oauth-protected-resource/mcp, follow its authorization_servers, and read ${plan.origin}/.well-known/oauth-authorization-server/api/auth. Use the advertised endpoints and supported client registration (CIMD or DCR), exact registered redirect URI, S256 PKCE and resource ${plan.mcpUrl}. Request \`read\` and \`draft\`. Clients registered with the \`refresh_token\` grant and allowed \`offline_access\` are offered a persistent connection at consent even if they request only resource scopes. Do not invent authorization URLs or pass browser cookies as MCP credentials.
+${plan.publicReading ? `The public endpoint ${plan.publicMcpUrl} requires no authentication. It offers only tomola_latest, tomola_thread and tomola_privacy. Do not start OAuth for it.\n\n` : ""}For the member endpoint ${plan.mcpUrl}, a 401 response advertises OAuth protected-resource metadata in WWW-Authenticate. Discover ${plan.origin}/.well-known/oauth-protected-resource/mcp, follow its authorization_servers, and read ${plan.origin}/.well-known/oauth-authorization-server/api/auth. Use the advertised endpoints and supported client registration (CIMD or DCR), S256 PKCE and resource ${plan.mcpUrl}. ${OAUTH_REDIRECT_GUIDANCE} Request \`read\` and \`draft\`. Clients registered with the \`refresh_token\` grant and allowed \`offline_access\` are offered a persistent connection at consent even if they request only resource scopes. Do not invent authorization URLs or pass browser cookies as MCP credentials.
 
 Your user completes tomola login and the browser screen “${en.mcp_connect_title}”, checks that the screen is on ${plan.origin}, checks which AI is connecting and its requested abilities, and chooses “${en.mcp_allow}”. They can choose “${en.mcp_deny}”; if so, stop without repeating. Publishing remains their own action in the browser. Prepare them to finish within about ${WAIT_MINUTES} minutes; if the wait expires, repeat only the browser authentication step, not server registration. If the browser does not open, show its printed URL. Respect the user's chosen browser and environment.
 

@@ -108,7 +108,8 @@ export function authPlugins(sendMagicLink: SendMagicLink, opts: { baseURL: strin
       // A client that registers itself without saying what kind of client it is (Gemini CLI) is told apart by its redirect URI: plain http is accepted only for
       // a loopback address (localhost, 127.0.0.1, [::1]); any other host still needs https.
       clientRegistrationDefaultApplicationType: "infer",
-      // Access tokens last 15 minutes. Revoking a connection or suspending a member is checked on every request (withMcpAuth), so a longer token does not delay either.
+      // Access tokens last 15 minutes. withMcpAuth checks connection revocation on every request.
+      // A suspended member can continue reading, and write requests are refused during suspension.
       // A refresh token used a second time within 30 seconds (two processes sharing one credential, a retry after a lost reply) is tolerated; beyond that the
       // library treats it as theft and ends every connection of that member and client.
       accessTokenExpiresIn: MCP_ACCESS_TOKEN_SECONDS,

@@ -97,10 +97,10 @@ export function openApiDocument(): Record<string, unknown> {
         get: {
           summary: "The distribution of the stances on a question (also /t/{id}/stances.txt)",
           description:
-            "Totals only: total (members who chose a stance), counts (agree, disagree, neither) and total_langs (from how many languages those members come). No counts per language, and nobody's own stance. Available before the reader has a stance of their own; not part of the change feed or the manifest, so fetch it when needed. It is the number of members who chose a stance, not the conclusion of the forum. A hidden question answers hidden: true and no numbers; a deleted question or a topic that is not a question answers 404. Stances can only be written in the browser, never through the API.",
+            "Totals only: total (members who chose a stance), counts (agree, disagree, neither) and total_langs (from how many languages those members come). No counts per language, and nobody's own stance. Available before the reader has a stance of their own; not part of the change feed or the manifest, so fetch it when needed. It is the number of members who chose a stance, not the conclusion of the forum. A hidden question returns hidden: true and no numbers only to its author, moderators whose scope covers the question, and operators. Other members receive the same 404 response as for a missing question. Deleted questions and ordinary topics also return 404. Stances can only be written in the browser, never through the API.",
           security: readSecurity,
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer", minimum: 1 } }, kParam],
-          responses: { ...readResponses("A frontmatter block with the totals and a sentence."), "404": errorResponse("Not a question, or deleted.") },
+          responses: { ...readResponses("A frontmatter block with the totals and a sentence, or a hidden placeholder for a reader with access."), "404": errorResponse("Question not found or unavailable to the reader.") },
         },
       },
       "/latest.md": {

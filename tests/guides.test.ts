@@ -308,10 +308,10 @@ describe("the totals and the number of languages in the guides and the OpenAPI d
 describe("the guides name the languages of the site (ENABLED_LANGS)", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("explain mentions: the syntax, who is notified and how many, quotes, that it is not a link, the Markdown twins, and the draft", async () => {
+  it("explains mention syntax, notifications, member links, Markdown twins and drafts", async () => {
     const llms = await (await get("/llms.txt")).text();
     const section = llms.slice(llms.indexOf("## Mentions"), llms.indexOf("## Search"));
-    for (const needle of ["`@handle`", "`＠`", "display name", "unique without regard to case or width", "`@hanaさん`", "longest existing handle", "kind `mention`", "at most 10 members per post", "block quote", "suspended", "not a link", "no member pages", "Markdown twins give the body as it was written", "keeps `@handle` as written", "notifies nobody until a member publishes it"]) {
+    for (const needle of ["`@handle`", "`＠`", "display name", "unique without regard to case or width", "`@hanaさん`", "longest existing handle", "kind `mention`", "at most 10 members per post", "block quote", "suspended", "Resolved mentions in rendered posts link to the member's page", "`/u/<handle>`", "Markdown twins give the body as it was written", "keeps `@handle` as written", "notifies nobody until a member publishes it"]) {
       expect(section, needle).toContain(needle);
     }
     const help = await (await get("/help/ai.md")).text();
