@@ -47,4 +47,6 @@ pnpm check:focused tests/email.test.ts
 
 Use `pnpm check:focused --pg tests/<target>.test.ts` for affected real PostgreSQL paths, with a dedicated `TEST_DATABASE_URL` whose account can create disposable databases. Never point checks at a production or member database. Keep authentication, signing, private-data and concurrency regression coverage. Integration and release candidates use the broader checks documented in [docs/development.md](docs/development.md); they are not mandatory for every small change.
 
+For migrations, follow [Migration compatibility during deployment](docs/deploy.md#migration-compatibility-during-deployment) and run `node scripts/check-migration-compat.mjs`.
+
 Use fake model engines and local mail fixtures unless a task explicitly requires an approved real-service check. Keep secrets out of pull request descriptions and test output as well as source files.

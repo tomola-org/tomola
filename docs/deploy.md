@@ -406,7 +406,9 @@ While the app container is being replaced, Caddy can retry connection failures f
 During maintenance, AI-client reads over MCP and OAuth token refreshes are
 also unavailable for a few minutes because those operations use POST.
 
-1. Pin the approved source revision; inspect changed migrations and section 8.
+1. Pin the approved source revision and inspect changed migrations against
+   [Migration compatibility during deployment](#migration-compatibility-during-deployment)
+   and the pre-checks in section 8.
 2. Place the read-only flag in the **running old container**:
    `docker compose exec app touch /tmp/tomola-maintenance` (use the configured
    `MAINTENANCE_FLAG_FILE` path if different). Unsafe methods, including login
@@ -445,8 +447,9 @@ workers, keep it stopped. A database hold alone cannot protect against old code.
 See [older-image recovery](runbooks/retention.md#rolling-back-to-an-image-without-preservation-support)
 for status checks and the separate no-preservation cleanup path.
 
-If **no migration changed the database**, select the previous image by its
-recorded SHA (and keep its matching configuration):
+If the previous image can read and write the current database, including after a
+compatible migration, select it by its recorded SHA and keep its matching
+configuration:
 
 ```sh
 export TOMOLA_REVISION=<previous-full-SHA>
@@ -457,8 +460,9 @@ curl --fail https://forum.example.org/readyz
 ```
 
 Migrations move forward only. If a migration changed the schema or data,
-switching the image does not undo it. Stop writes and the app, restore the
-pre-update dump into a separate empty recovery database, and validate it offline
+switching the image does not undo it. If the previous image cannot read and
+write the changed database, stop writes and the app. Restore the pre-update
+dump into a separate empty recovery database and validate it offline
 with operator commands from the matching old image, keeping the application and
 workers stopped, before selecting that database through a Compose
 configuration override of `DATABASE_URL`. Do not run the current migration
@@ -528,6 +532,50 @@ changing a tag without its digest does not update the pinned image. Changing
 Passkeys are bound to the host name where members registered them. Before enabling member access, check passkey login in a real browser with a certificate that matches the host name. Keep that host name across deployment changes. If it must change, plan how members will register replacement keys. Members with another sign-in method can use it on the new host. For passkey-only members without a usable key, follow [manual passkey recovery](runbooks/passkey-recovery.md).
 
 ## 8. Database
+
+### Migration compatibility during deployment
+
+During a rolling deployment, the previous and new application versions can read
+and write the same database after the new version applies its migrations. A
+code-only rollback also runs the previous version against that migrated database.
+Apply migrations only when the previous version can keep reading and writing
+without application changes.
+
+- **Additions and relaxed constraints.** Add tables, nullable columns, columns
+  with compatible defaults, and non-unique indexes. Relax constraints while
+  preserving the previous version's reads and writes.
+- **Changes that require two deployments.** Defer removals, renames, narrower
+  types, new required fields, stricter constraints, and deletes or rewrites of
+  rows the previous version still writes. In the first deployment, move the
+  application off the old column, object, or data representation. Apply the
+  database change in a later deployment once every version that depends on the
+  old form has stopped serving and is no longer a rollback target.
+- **Functions and triggers.** Keep existing function definitions while the
+  previous version can run, and add changed functions under new names. Switch
+  the triggers to the new functions after the dependent version has stopped
+  serving and is no longer a rollback target. Trigger and function definitions
+  persist in the database after a code-only rollback.
+- **Background jobs.** Use a new job `kind` when the payload shape changes. A
+  worker claims only kinds for which it has a registered handler, so an old
+  worker leaves the new payloads for a worker that understands them.
+
+Starting at migration `0132`, the lint flags table, column and type drops,
+table, column and constraint renames, column type changes, `SET NOT NULL`, added
+`NOT NULL` columns without defaults, `ADD CONSTRAINT`, `DROP CONSTRAINT`, unique indexes, dropped
+defaults, row updates, deletes and truncations, replaced or dropped functions,
+and added or dropped triggers. Constraints, unique indexes and trigger creation
+on a table created earlier in the same migration are allowed. The lint also
+flags the constraint statements used to relax an existing constraint, so explain
+how the previous version's writes still work in that case.
+
+Place `-- compat: <one English sentence explaining why the previous release can still read and write>`
+on its own line immediately above each flagged statement. The note applies to
+one statement. Review the reason against the read and write paths of the versions
+that can run during deployment or after rollback.
+
+Run `node scripts/check-migration-compat.mjs` from the repository root. The lint
+also runs in `pnpm test:fast`, `pnpm check:focused`, `pnpm check:integration` and
+`pnpm check:release`.
 
 ### Retiring per-post signing
 

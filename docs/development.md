@@ -110,6 +110,8 @@ A date-only `--since` value means midnight UTC. Prefer a timestamp with an expli
 
 ## Deployment checks and concurrent development
 
+For migrations, follow [Migration compatibility during deployment](deploy.md#migration-compatibility-during-deployment) and run `node scripts/check-migration-compat.mjs`. The migration lint also runs in focused, integration and release checks.
+
 Before admitting members or changing a main journey, identify the deployment features and clients being tested. Check the journey from an invitation through sign-in, posting, replying and reading a translation. For an isolated screen change, prioritize that interaction. Verify actual client connections and devices separately; automated test counts do not establish usability or deployment readiness. Record changes to that scope for the people responsible for the deployment.
 
 Use separate working trees and generated outputs for concurrent changes. Do not run browser tests against outputs being rewritten by type generation or another build. When reusing results from another checkout, confirm that its inputs match the release candidate. Review and publish changes through the repository's contribution process.

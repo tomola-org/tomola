@@ -11,6 +11,7 @@ Keep changes within the requested scope. Read the relevant code and current docu
 | Pure functions | Run the affected tests; use `pnpm test:fast` for a broader no-database check |
 | Application behavior | Run affected unit tests, necessary browser paths and type checks; `pnpm check:focused tests/<target>.test.ts` requires explicit files |
 | Database, locks, authentication, draft confirmation or permissions | Keep boundary and regression coverage; use a dedicated database with `pnpm check:focused --pg tests/<target>.test.ts` for real PostgreSQL paths |
+| Migrations | Follow [Migration compatibility during deployment](docs/deploy.md#migration-compatibility-during-deployment) and run `node scripts/check-migration-compat.mjs` |
 | Integration or deployment candidates | Verify the fixed candidate with `pnpm check:integration` or `pnpm check:release` as appropriate |
 
 Use regression tests when they can detect new behavior or a bug. Documentation, comments and mechanical moves do not require newly failing tests. Broaden verification when shared behavior, integration or unresolved failures justify it. Do not repeat unchanged successful checks without a reason.
