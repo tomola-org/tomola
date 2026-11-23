@@ -77,6 +77,86 @@ test('classifies trigger and function definitions at the statement level', () =>
   `), ['CREATE OR REPLACE FUNCTION', 'DROP FUNCTION', 'DROP TRIGGER', 'CREATE TRIGGER', 'CREATE TRIGGER']);
 });
 
+for (const [kind, sql] of [
+  ['DROP INDEX', 'DrOp INDEX CONCURRENTLY IF EXISTS "inventory"."Lookup";'],
+  ['ALTER TABLE SET SCHEMA', 'ALTER TABLE IF EXISTS ONLY "inventory"."Items" SET SCHEMA archive;'],
+  ['ALTER TYPE RENAME TO', 'ALTER TYPE "inventory"."Status" RENAME TO state;'],
+  ['ALTER TYPE RENAME VALUE', "ALTER TYPE status RENAME VALUE 'draft' TO 'pending';"],
+  ['ALTER FUNCTION RENAME', 'ALTER FUNCTION "inventory"."Lookup"(numeric(10, 2))\nRENAME TO find_item;'],
+  ['ALTER INDEX RENAME', 'ALTER INDEX IF EXISTS "inventory"."Lookup" RENAME TO item_lookup;'],
+  ['ALTER TABLE DISABLE TRIGGER', 'ALTER TABLE items ADD COLUMN info text, DISABLE TRIGGER "sync";'],
+  ['DROP VIEW', 'DROP VIEW IF EXISTS "inventory"."Item List";'],
+  ['DROP MATERIALIZED VIEW', 'DROP MATERIALIZED\nVIEW IF EXISTS item_totals;'],
+  ['DROP PROCEDURE', 'DROP PROCEDURE IF EXISTS refresh_items(integer);'],
+  ['CREATE OR REPLACE VIEW', 'CREATE OR\nREPLACE VIEW item_list AS SELECT id FROM items;'],
+  ['CREATE OR REPLACE PROCEDURE', 'CREATE OR REPLACE PROCEDURE refresh_items() LANGUAGE sql AS $$ DELETE FROM history; $$;'],
+  ['INSERT ON CONFLICT DO UPDATE', `
+    WITH incoming AS (SELECT id, label FROM staging), "rows" AS (SELECT * FROM incoming)
+    INSERT INTO items (id, label) SELECT id, label FROM "rows"
+    ON CONFLICT (id) DO UPDATE SET label = excluded.label;
+  `],
+  ['MERGE', 'MERGE INTO items USING staging ON items.id = staging.id WHEN MATCHED THEN DELETE;'],
+  ['ADD COLUMN PRIMARY KEY without DEFAULT', 'ALTER TABLE items ADD COLUMN IF NOT EXISTS "Key" int PRIMARY KEY;'],
+]) {
+  test(`requires a compatibility note for ${kind}`, () => {
+    assert.deepEqual(kinds(sql), [kind]);
+  });
+}
+
+test('checks every dropped index against earlier index creation in the same migration', () => {
+  const sql = `
+    CREATE TABLE inventory.items (id int);
+    CREATE INDEX CONCURRENTLY temporary_lookup ON items (label);
+    CREATE UNIQUE INDEX "Temporary Key" ON inventory.items (id);
+    DROP INDEX IF EXISTS temporary_lookup, inventory."Temporary Key";
+    DROP INDEX IF EXISTS temporary_lookup;
+    CREATE INDEX shared_lookup ON items (label);
+    -- compat: The previous release does not use either index.
+    DROP INDEX shared_lookup, existing_lookup;
+    DROP INDEX IF EXISTS shared_lookup;
+    CREATE INDEX IF NOT EXISTS existing_lookup ON items (label);
+    DROP INDEX existing_lookup;
+    DROP INDEX later_lookup;
+    CREATE INDEX later_lookup ON items (label);
+    CREATE INDEX scoped_lookup ON inventory.items (id);
+    DROP INDEX archive.scoped_lookup;
+    ALTER INDEX inventory.scoped_lookup RENAME TO "New Lookup";
+    DROP INDEX inventory."New Lookup";
+  `;
+  assert.deepEqual(migrationRisks(sql).map(({ kind, start }) => [kind, start]), [
+    ['DROP INDEX', 'DROP INDEX IF EXISTS temporary_lookup'],
+    ['DROP INDEX', 'DROP INDEX IF EXISTS shared_lookup'],
+    ['DROP INDEX', 'DROP INDEX existing_lookup'],
+    ['DROP INDEX', 'DROP INDEX later_lookup'],
+    ['DROP INDEX', 'DROP INDEX archive.scoped_lookup'],
+    ['ALTER INDEX RENAME', 'ALTER INDEX inventory.scoped_lookup RENAME TO "New Lookup"'],
+  ]);
+  assert.deepEqual(kinds('CREATE INDEX local_lookup ON items (id); DROP INDEX local_lookup, existing_lookup;'), ['DROP INDEX']);
+});
+
+test('checks view replacements with optional modifiers and direct conflict updates', () => {
+  assert.deepEqual(kinds(`
+    CREATE OR REPLACE TEMP RECURSIVE VIEW item_numbers (n) AS
+    SELECT 1 UNION ALL SELECT n + 1 FROM item_numbers WHERE n < 5;
+    INSERT INTO items (id) VALUES (1) ON CONFLICT ON CONSTRAINT items_pkey DO UPDATE SET label = 'sample';
+    WITH merge AS (SELECT 1 AS id) SELECT id FROM merge;
+  `), ['CREATE OR REPLACE VIEW', 'INSERT ON CONFLICT DO UPDATE']);
+});
+
+test('keeps compatibility notes scoped to the selected schema and write forms', () => {
+  assert.deepEqual(kinds(`
+    ALTER TABLE items ENABLE TRIGGER ALL;
+    ALTER TYPE status ADD VALUE 'pending';
+    ALTER FUNCTION lookup() SET search_path TO inventory;
+    ALTER INDEX item_lookup SET TABLESPACE fast_space;
+    CREATE VIEW item_list AS SELECT id FROM items;
+    CREATE PROCEDURE refresh_items() LANGUAGE sql AS $$ DELETE FROM history; $$;
+    INSERT INTO items VALUES (1) ON CONFLICT (id) DO NOTHING;
+    INSERT INTO items VALUES ('ON CONFLICT (id) DO UPDATE SET label = excluded.label');
+    ALTER TABLE items ADD COLUMN id int DEFAULT 1 PRIMARY KEY;
+  `), []);
+});
+
 test('recognizes new tables in statement order and within one migration', () => {
   const sql = `
     CREATE TABLE inventory."New Items" (id int PRIMARY KEY);

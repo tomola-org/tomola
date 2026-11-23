@@ -363,7 +363,8 @@ test("focused requires explicit files and cannot accept traversal or arbitrary V
     assert.throws(() => planChecks(["focused", ...args], root, {}));
   }
   const plan = planChecks(["focused", "tests/email.test.ts"], root, {});
-  const unit = plan.steps.find(step => step.name === "focused unit");
+  assert.deepEqual(plan.steps.map(step => step.name), ["migration compatibility lint", "focused unit"]);
+  const [, unit] = plan.steps;
   assert.equal(unit.args.at(-1), "tests/email.test.ts");
   assert.ok(unit.args.includes("vitest.fast.config.ts"));
 });
@@ -594,7 +595,9 @@ test("release runs all PGlite files and only database files on PostgreSQL", (t) 
   const root = fixture(t);
   fs.writeFileSync(path.join(root, "tests/db-client.test.ts"), "// database fixture\n");
   for (const args of [["focused", "tests/email.test.ts", "tests/db-client.test.ts"], ["focused", "--pg", "tests/email.test.ts"]]) {
-    const unit = planChecks(args, root, pgEnv).steps.find(step => step.name === "focused unit");
+    const { steps } = planChecks(args, root, pgEnv);
+    assert.deepEqual(steps.map(step => step.name), ["migration compatibility lint", "focused unit"]);
+    const [, unit] = steps;
     assert.ok(!unit.args.includes("vitest.fast.config.ts"));
   }
 });
@@ -632,7 +635,8 @@ test('focused changed selects only modified tests, and accepts an empty selectio
   assert.deepEqual(planChecks(['focused', '--changed', '--base=HEAD'], root, {}).steps.map(step => step.name), ['migration compatibility lint']);
   fs.appendFileSync(path.join(root, 'tests/email.test.ts'), '// changed\n');
   const plan = planChecks(['focused', '--changed', '--base=HEAD'], root, {});
-  assert.equal(plan.steps.find(step => step.name === 'focused unit').args.at(-1), 'tests/email.test.ts');
+  assert.deepEqual(plan.steps.map(step => step.name), ['migration compatibility lint', 'focused unit']);
+  assert.equal(plan.steps[1].args.at(-1), 'tests/email.test.ts');
   assert.equal(plan.selection.base, 'HEAD');
   assert.match(plan.selection.mergeBase, /^[a-f0-9]{40}$/);
   assert.deepEqual(plan.selection.changedFiles, ['tests/email.test.ts']);

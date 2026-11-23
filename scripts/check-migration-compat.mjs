@@ -96,7 +96,7 @@ function startsWith(tokens, words, offset = 0) {
 
 const isIdentifier = token => /^[a-z_\u0080-\uffff"]/i.test(token ?? '');
 
-function tableName(tokens, offset) {
+function qualifiedName(tokens, offset) {
   if (tokens[offset] === 'only') offset++;
   const parts = [];
   while (isIdentifier(tokens[offset])) {
@@ -105,7 +105,18 @@ function tableName(tokens, offset) {
     if (tokens[offset] !== '.') break;
     offset++;
   }
-  return { name: parts.length ? JSON.stringify(parts) : undefined, end: offset };
+  return { parts, name: parts.length ? JSON.stringify(parts) : undefined, end: offset };
+}
+
+function* droppedIndexes(tokens) {
+  let offset = tokens[2] === 'concurrently' ? 3 : 2;
+  if (startsWith(tokens, ['if', 'exists'], offset)) offset += 2;
+  while (offset < tokens.length) {
+    const { name, end } = qualifiedName(tokens, offset);
+    yield name;
+    if (tokens[end] !== ',') return;
+    offset = end + 1;
+  }
 }
 
 function* topLevel(tokens) {
@@ -130,6 +141,8 @@ function* alterTableActions(tokens) {
 function alterTableRisk(action, newTable) {
   const [verb, object] = action;
   if (verb === 'rename') return 'RENAME';
+  if (startsWith(action, ['set', 'schema'])) return 'ALTER TABLE SET SCHEMA';
+  if (startsWith(action, ['disable', 'trigger'])) return 'ALTER TABLE DISABLE TRIGGER';
   if (verb === 'drop') {
     if (object === 'constraint') return newTable ? undefined : 'DROP CONSTRAINT';
     if (isIdentifier(object)) return 'DROP COLUMN';
@@ -147,8 +160,9 @@ function alterTableRisk(action, newTable) {
     let column = object === 'column' ? 2 : 1;
     if (startsWith(action, ['if', 'not', 'exists'], column)) column += 3;
     const options = [...topLevel(action)].filter(index => index > column);
-    if (!options.some(index => action[index] === 'default') && options.some(index => startsWith(action, ['not', 'null'], index))) {
-      return 'ADD COLUMN NOT NULL without DEFAULT';
+    if (!options.some(index => action[index] === 'default')) {
+      if (options.some(index => startsWith(action, ['not', 'null'], index))) return 'ADD COLUMN NOT NULL without DEFAULT';
+      if (options.some(index => startsWith(action, ['primary', 'key'], index))) return 'ADD COLUMN PRIMARY KEY without DEFAULT';
     }
   }
 }
@@ -157,6 +171,14 @@ function* rowChanges(tokens) {
   if (startsWith(tokens, ['delete', 'from'])) yield 'DELETE FROM';
   if (tokens[0] === 'update' && [...topLevel(tokens)].some(index => tokens[index] === 'set')) yield 'UPDATE SET';
   if (tokens[0] === 'truncate') yield 'TRUNCATE';
+  if (startsWith(tokens, ['merge', 'into'])) yield 'MERGE';
+  if (startsWith(tokens, ['insert', 'into'])) {
+    const positions = [...topLevel(tokens)];
+    const conflict = positions.find(index => startsWith(tokens, ['on', 'conflict'], index));
+    if (conflict !== undefined && positions.some(index => index > conflict && startsWith(tokens, ['do', 'update', 'set'], index))) {
+      yield 'INSERT ON CONFLICT DO UPDATE';
+    }
+  }
   if (tokens[0] !== 'with') return;
 
   // Inspect the statements in CTEs and the command that follows them.
@@ -167,44 +189,92 @@ function* rowChanges(tokens) {
         yield* rowChanges(tokens.slice(position + 1, positions[index + 1]));
       }
     }
-    if (['select', 'insert', 'update', 'delete', 'merge'].includes(tokens[position])) {
+    const command = tokens[position];
+    const next = tokens[position + 1];
+    if (command === 'select'
+      || (command === 'update' && next !== 'as' && next !== '(')
+      || (command === 'delete' && next === 'from')
+      || (['insert', 'merge'].includes(command) && next === 'into')) {
       yield* rowChanges(tokens.slice(position));
       return;
     }
   }
 }
 
-function* statementRisks(tokens, newTables) {
+function* statementRisks(tokens, newTables, newIndexes) {
   const [verb, object] = tokens;
-  if (verb === 'drop' && ['table', 'type', 'function', 'trigger'].includes(object)) yield `DROP ${object.toUpperCase()}`;
+  if (verb === 'drop' && ['table', 'type', 'function', 'trigger', 'view', 'procedure'].includes(object)) yield `DROP ${object.toUpperCase()}`;
+  if (startsWith(tokens, ['drop', 'materialized', 'view'])) yield 'DROP MATERIALIZED VIEW';
+  if (startsWith(tokens, ['drop', 'index'])) {
+    const indexes = [...droppedIndexes(tokens)];
+    const createdHere = indexes.filter(name => newIndexes.delete(name));
+    if (!indexes.length || createdHere.length !== indexes.length) yield 'DROP INDEX';
+  }
   if (startsWith(tokens, ['alter', 'table'])) {
-    const target = tableName(tokens, startsWith(tokens, ['if', 'exists'], 2) ? 4 : 2);
+    const target = qualifiedName(tokens, startsWith(tokens, ['if', 'exists'], 2) ? 4 : 2);
     const actions = tokens.slice(target.end + Number(tokens[target.end] === '*'));
     for (const action of alterTableActions(actions)) {
       const risk = alterTableRisk(action, newTables.has(target.name));
       if (risk) yield risk;
     }
   }
+  if (verb === 'alter' && ['type', 'function', 'index'].includes(object)) {
+    const target = qualifiedName(tokens, object === 'index' && startsWith(tokens, ['if', 'exists'], 2) ? 4 : 2);
+    let action = target.end;
+    if (object === 'function' && tokens[action] === '(') {
+      const signatureEnd = [...topLevel(tokens)].find(index => index > action && tokens[index] === ')');
+      if (signatureEnd !== undefined) action = signatureEnd + 1;
+    }
+    if (startsWith(tokens, ['rename', 'to'], action)) {
+      yield object === 'type' ? 'ALTER TYPE RENAME TO' : `ALTER ${object.toUpperCase()} RENAME`;
+      if (object === 'index' && newIndexes.delete(target.name)) {
+        const { parts } = qualifiedName(tokens, action + 2);
+        newIndexes.add(JSON.stringify([...target.parts.slice(0, -1), ...parts]));
+      }
+    }
+    if (object === 'type' && startsWith(tokens, ['rename', 'value'], action)) yield 'ALTER TYPE RENAME VALUE';
+  }
   yield* rowChanges(tokens);
-  if (startsWith(tokens, ['create', 'or', 'replace', 'function'])) yield 'CREATE OR REPLACE FUNCTION';
+  if (verb !== 'create') return;
   const createObject = startsWith(tokens, ['or', 'replace'], 1) ? 3 : 1;
+  if (createObject === 3) {
+    const replaced = tokens[3];
+    const viewOption = 3 + Number(['temp', 'temporary'].includes(replaced));
+    const view = tokens[viewOption + Number(tokens[viewOption] === 'recursive')] === 'view';
+    if (view) yield 'CREATE OR REPLACE VIEW';
+    if (['function', 'procedure'].includes(replaced)) yield `CREATE OR REPLACE ${replaced.toUpperCase()}`;
+  }
   const constraint = tokens[createObject] === 'constraint';
-  const trigger = verb === 'create' && tokens[createObject + Number(constraint)] === 'trigger';
+  const trigger = tokens[createObject + Number(constraint)] === 'trigger';
   const uniqueIndex = startsWith(tokens, ['create', 'unique', 'index']);
-  if (trigger || uniqueIndex) {
+  const index = uniqueIndex || object === 'index';
+  if (trigger || index) {
     const on = tokens.indexOf('on', createObject + 1);
-    if (on >= 0 && !newTables.has(tableName(tokens, on + 1).name)) {
+    if (on < 0) return;
+    const target = qualifiedName(tokens, on + 1);
+    if ((trigger || uniqueIndex) && !newTables.has(target.name)) {
       yield trigger ? 'CREATE TRIGGER' : 'CREATE UNIQUE INDEX';
+    }
+    if (index) {
+      const first = uniqueIndex ? 3 : 2;
+      const nameOffset = first + Number(tokens[first] === 'concurrently');
+      // An unnamed index or IF NOT EXISTS does not establish a newly created name.
+      if (on === nameOffset + 1 && target.name) {
+        const { parts } = qualifiedName(tokens, nameOffset);
+        if (parts.length) newIndexes.add(JSON.stringify([...target.parts.slice(0, -1), ...parts]));
+      }
     }
   }
 }
 
 export function migrationRisks(sql) {
   const newTables = new Set();
+  const newIndexes = new Set();
   const findings = [];
   for (const { tokens, offset, end, annotated } of statements(sql)) {
-    if (!annotated) {
-      for (const kind of new Set(statementRisks(tokens, newTables))) {
+    const risks = new Set(statementRisks(tokens, newTables, newIndexes));
+    if (!annotated && risks.size) {
+      for (const kind of risks) {
         const line = sql.slice(0, offset).split(/\r\n|\r|\n/).length;
         const start = sql.slice(offset, end).split(/\r\n|\r|\n/, 1)[0].trimEnd().slice(0, 120);
         findings.push({ line, kind, start });
@@ -212,7 +282,7 @@ export function migrationRisks(sql) {
     }
     const table = ['temp', 'temporary', 'unlogged'].includes(tokens[1]) ? 2 : 1;
     if (tokens[0] === 'create' && tokens[table] === 'table' && tokens[table + 1] !== 'if') {
-      const { name } = tableName(tokens, table + 1);
+      const { name } = qualifiedName(tokens, table + 1);
       if (name) newTables.add(name);
     }
   }
