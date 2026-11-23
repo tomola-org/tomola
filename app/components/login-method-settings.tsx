@@ -4,8 +4,9 @@ import { loginMethodReauthenticationPath } from "~/lib/reauth";
 import { withSettingsReturn } from "~/lib/settings-return";
 import { m } from "~/paraglide/messages.js";
 
-export function LoginMethodSettings({ login, returnTo, error }: {
+export function LoginMethodSettings({ login, googleAvailable, returnTo, error }: {
   login: { passkeyFresh: boolean; passkeyOnly: boolean; canEnable: boolean; remaining: { tokens: number; connections: number } };
+  googleAvailable: boolean;
   returnTo?: string | null;
   error?: string;
 }) {
@@ -36,6 +37,12 @@ export function LoginMethodSettings({ login, returnTo, error }: {
     <details className="space-y-2">
       <summary className="cursor-pointer">{m.login_methods_compromise()}</summary>
       <p className="ui-help text-muted-foreground">{m.login_methods_revoke_help()}</p>
+      <p className="ui-help text-muted-foreground">{m.login_methods_revoke_pending()}</p>
+      <p className="ui-help text-muted-foreground">{m.login_methods_revoke_keep()}</p>
+      <ul className="flex flex-wrap gap-x-4 gap-y-1 ui-help">
+        <li><Link to={withSettingsReturn("/settings#settings-passkeys", returnTo)} className="underline">{m.settings_passkeys_heading()}</Link></li>
+        {googleAvailable && <li><Link to={withSettingsReturn("/settings#settings-google", returnTo)} className="underline">{m.google_settings_heading()}</Link></li>}
+      </ul>
       <Form method="post" action={path} reloadDocument>
         <input type="hidden" name="intent" value="revoke-login-credentials" />
         <Button type="submit" variant="destructive">{m.login_methods_revoke()}</Button>

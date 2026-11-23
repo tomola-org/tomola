@@ -95,6 +95,18 @@ test("an invalid handle remains at its section with the error in view", async ()
   await expect(handle.getByLabel(en.onboarding_handle, { exact: true })).toHaveValue("invalid!handle");
 });
 
+test("credential revocation describes retained sign-in methods and links to passkey settings", async () => {
+  await page.goto("/settings#settings-login-methods");
+  await waitForClientRoute(page);
+  const login = page.locator("#settings-login-methods");
+  await login.getByText(en.login_methods_compromise, { exact: true }).click();
+  await expect(login.getByText(en.login_methods_revoke_pending, { exact: true })).toBeVisible();
+  await expect(login.getByText(en.login_methods_revoke_keep, { exact: true })).toBeVisible();
+  await login.getByRole("link", { name: en.settings_passkeys_heading, exact: true }).click();
+  await expect(page).toHaveURL(url => url.hash === "#settings-passkeys");
+  await expect(page.locator("#settings-passkeys-heading")).toBeInViewport();
+});
+
 test("advanced section fragments open on arrival and after hash changes", async () => {
   for (const id of ["settings-tokens", "settings-share"]) {
     await page.goto(`/settings#${id}`);

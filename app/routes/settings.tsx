@@ -546,7 +546,7 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
         <h2 id="settings-login-heading" className="text-xl font-semibold">{m.settings_login_heading()}</h2>
         {actionData?.intent === "delete-passkey" && <p role="alert" className="text-destructive">{m.signing_failed()}</p>}
         <PasskeySettings passkeys={passkeys} login={loaderData.login} saved={saved === "passkey-removed" ? saved : null} returnTo={returnTo} />
-        <LoginMethodSettings login={loaderData.login} returnTo={returnTo}
+        <LoginMethodSettings login={loaderData.login} googleAvailable={!!loaderData.google} returnTo={returnTo}
           error={actionData?.intent === "passkey-only" || actionData?.intent === "revoke-login-credentials" ? actionData.error : undefined} />
         {loaderData.google && <section id="settings-google" aria-labelledby="settings-google-heading" className="scroll-mt-4 space-y-3">
           <h3 id="settings-google-heading" className="text-lg font-semibold">{m.google_settings_heading()}</h3>
