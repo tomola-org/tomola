@@ -3,8 +3,8 @@ import { recomputeHandleKeys, type RecomputedHandleKeys } from "~/lib/handle-key
 import { closeDb, openPgDb, openPgliteDb, type DbConfig } from "./client.server";
 
 // Apply migrations (`pnpm db:migrate`, scripts/migrate.ts). For PostgreSQL:
-//   1. Acquire an advisory lock (pg_advisory_lock) on a dedicated connection. If two processes start together (for example, two Docker entrypoints applying migrations on deployment),
-//      the second waits until the first finishes. Drizzle migrations have no lock of their own; concurrent runs would execute each statement twice and fail.
+//   1. Acquire an advisory lock (pg_advisory_lock) on a dedicated connection. A concurrent process waits up to 10 seconds for the lock and fails if that wait expires.
+//      Retry startup after the first migration finishes. The lock serializes migrations because Drizzle does not acquire its own.
 //   2. Run migrations.
 //   3. Recompute profiles.handle_key using the app's handleKey, since backfill 0025 uses collation-dependent lower (app/lib/handle-keys.server.ts).
 //      Fail on collisions and report the conflicting names.
