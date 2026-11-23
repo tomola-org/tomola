@@ -115,18 +115,21 @@ export async function postTopicReply(context: TopicAction) {
   const pasted = await replyInput(context);
   if (!pasted.ok) return pasted.response;
   const rate = await hitMemberLimit(db, "reply", user.id);
-  if (!rate.allowed) return replyError(form, "rate_limited", 429, rateLimitHeaders(rate));
   const { body, lang, langCode, langSource, aiAssistance, stanceTag } = pasted.input;
   // The draft that "Write with AI" made is removed in the same transaction, so that a failure here cannot leave a reply made and the form still sendable.
   const res = await withMemberWrite(db, user.id, request, form, async tx => {
-    const error = await checkLinkedClientDraft(tx, user.id, form);
-    if (error) return { ok: false as const, error };
-    const created = await createReply(tx, user.id, threadId, { body, lang, langCode, langSource, aiAssistance, parentId: pasted.parentId, stanceTag, ...(form.has("nushiParentId") ? { nushiParentId: Number(form.get("nushiParentId")) } : {}) });
-    if (created.ok) await deleteLinkedDraft(tx, user.id, form, { id: created.id, threadId });
+    const created = await createReply(tx, user.id, threadId, {
+      body, lang, langCode, langSource, aiAssistance, parentId: pasted.parentId, stanceTag,
+      ...(form.has("nushiParentId") ? { nushiParentId: Number(form.get("nushiParentId")) } : {}),
+    }, {
+      beforeNewSubmission: async write => rate.allowed ? checkLinkedClientDraft(write, user.id, form) : "rate_limited",
+    });
+    if (created.ok && !created.reused) await deleteLinkedDraft(tx, user.id, form, { id: created.id, threadId });
     return created;
-  });
+  }, { prepareRender: rate.allowed });
   if (res.ok) {
     throw redirect(postedLocation(await replyLocation(db, threadId, res.id, { lang: langCarry(request) }), res.id, res.followed));
   }
+  if (!rate.allowed) return replyError(form, "rate_limited", 429, rateLimitHeaders(rate));
   return replyError(form, res.error, res.error === "draft_conflict" || res.error === "confirmation_required" ? 409 : 400);
 }

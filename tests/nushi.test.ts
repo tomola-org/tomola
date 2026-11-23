@@ -6,6 +6,7 @@ import { and, eq } from "drizzle-orm";
 import { afterEach, expect, it, vi } from "vitest";
 import { addMember, createTestDb } from "./helpers/db";
 import { createReply, createTopic } from "~/lib/entries.server";
+import { lockSigningMember } from "~/lib/signing.server";
 import { EMBEDDING_DIM, entries, entryEmbeddings, jobs, llmUsage, moderationActions, notifications, nushiAnswers, nushiReports, nushiRequests, nushiReservations, nushiSources, nushiTranslations, profiles, translations, villageMembers, villages } from "~/lib/db/schema";
 import { callsNushi } from "~/lib/nushi-call.server";
 import { NUSHI_PROMPT_VERSION, nushiEnabled, nushiInVillage, nushiLimits, nushiMonthlyBudgetMicro } from "~/lib/nushi-config.server";
@@ -209,6 +210,21 @@ it("supports follow-up replies while keeping the previous AI output out of evide
   expect(materials?.materials.sources.every(source => /^e-\d+-/.test(source.id))).toBe(true);
   const invalid = await createReply(f.db, "nushi-caller", f.source, { body: "Wrong thread", lang: "en", nushiParentId: answer.id });
   expect(invalid).toMatchObject({ ok: false, error: "parent_not_in_thread" });
+});
+it("includes the AI answer in a repeated reply's destination", async () => {
+  const f = await nushiFixture(), answer = await published(f);
+  const writer = "nushi-caller";
+  const input = { body: "What changed about the timing?", lang: "en" };
+  const attached = await createReply(f.db, writer, f.topic, { ...input, nushiParentId: answer.id });
+  if (!attached.ok) throw new Error(attached.error);
+  const submit = (nushiParentId?: number) => f.db.transaction(async tx => {
+    await lockSigningMember(tx, writer);
+    return createReply(tx, writer, f.topic, { ...input, nushiParentId }, { beforeNewSubmission: async () => null });
+  });
+  expect(await submit(answer.id)).toMatchObject({ ok: true, id: attached.id, reused: true });
+  const detached = await submit();
+  if (!detached.ok) throw new Error(detached.error);
+  expect(detached.id).not.toBe(attached.id);
 });
 it("expires requests and enforces member, topic, village and cited-author allowances", async () => {
   const f = await nushiFixture();

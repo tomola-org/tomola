@@ -12,7 +12,7 @@ import { syncMediaReferences } from "~/lib/media-references.server";
 import { decorateMotionHtml, motionImages } from "./motion-display.server";
 import { activeEntryRender, prepareEntryRender, renderEntryForWrite, type PreparedEntryRender } from "./entry-render-preparation.server";
 import { withMarkdownScope, withMarkdownRead, MarkdownBudgetError } from "./markdown-budget.server";
-import { and, count, desc, eq, exists, inArray, isNotNull, isNull, max, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, exists, gte, inArray, isNotNull, isNull, max, ne, notInArray, or, sql, type Column, type GetColumnData, type SQL } from "drizzle-orm";
 import { villagesEnabled } from "~/lib/villages-enabled.server";
 import { activePublicPostVillageCondition, activeSharedVillageCondition, lockVillageProfile, villageForTopic } from "~/lib/villages.server";
 import { z } from "zod";
@@ -124,8 +124,40 @@ export type EntryError =
 // Edit errors beyond invalid input. not_found: absent, deleted, or wrong kind (topic/reply). forbidden: not the author.
 // locked: attempted title/body change on a question pinned by a stance. Add details in replies; create an alternative framing to change the proposition or conditions.
 export type EditError = EntryError | "not_found" | "forbidden" | "locked" | "edit_conflict";
-type Result = { ok: true; id: number } | { ok: false; error: EntryError; village?: string };
+type CreateOptions<E extends string> = {
+  now?: Date;
+  via?: EntryVia;
+  // Only direct form submissions opt in, while holding the member write lock.
+  // These checks apply only when the submission needs a new entry.
+  beforeNewSubmission?: (tx: Tx) => Promise<E | null>;
+};
+type TopicCreateOptions<E extends string> = CreateOptions<E> & {
+  asIntroduction?: boolean;
+  villageId?: string | null;
+  villageDisplayed?: string;
+  responseTo?: number | null;
+};
+type CreatedEntry = { ok: true; id: number; reused?: true };
+type CreateFailure<E extends string> = { ok: false; error: EntryError | E; village?: string };
 
+const CREATE_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
+
+function recentSubmission(tx: Tx, authorId: string, hash: string, now: Date, destination: SQL[]) {
+  return tx.select({ id: entries.id, createdAt: entries.createdAt }).from(entries)
+    .where(and(
+      eq(entries.authorId, authorId),
+      gte(entries.createdAt, new Date(now.getTime() - CREATE_DEDUPE_WINDOW_MS)),
+      eq(entries.sourceHash, hash),
+      isNull(entries.deletedAt),
+      ...destination,
+    ))
+    .orderBy(desc(entries.createdAt), desc(entries.id))
+    .limit(1);
+}
+
+function sameNullable<T extends Column>(column: T, value: GetColumnData<T>) {
+  return value === null ? isNull(column) : eq(column, value);
+}
 
 export const MAX_TITLE_LENGTH = 200;
 
@@ -225,19 +257,20 @@ export async function checkEntryInput(kind: "topic" | "reply", input: unknown, m
   return checkBodyBudget(parsed.data.body, member);
 }
 
-async function createTopicImplementation(
+async function createTopicImplementation<E extends string>(
   db: Db,
   authorId: string,
   input: unknown,
-  opts: { now?: Date; via?: EntryVia; asIntroduction?: boolean; villageId?: string | null; villageDisplayed?: string; responseTo?: number | null } = {},
-): Promise<Result> {
+  opts: TopicCreateOptions<E>,
+): Promise<CreatedEntry | CreateFailure<E>> {
   const parsed = topicSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: fieldError(parsed.error.issues) };
-  if (opts.asIntroduction && (parsed.data.asksStance || parsed.data.altOf != null)) return { ok: false, error: "invalid_intro" };
+  const invalidIntro = opts.asIntroduction && (parsed.data.asksStance || parsed.data.altOf != null);
+  if (invalidIntro && !opts.beforeNewSubmission) return { ok: false, error: "invalid_intro" };
   const bodyError = await checkBodyBudget(parsed.data.body, authorId);
   if (bodyError) return { ok: false, error: bodyError };
   const renderInput = { kind: "topic" as const, body: parsed.data.body, lang: parsed.data.lang };
-  const prepared = activeEntryRender(renderInput) ?? await prepareEntryRender(db, renderInput);
+  const preparedOutsideWrite = opts.beforeNewSubmission ? undefined : activeEntryRender(renderInput) ?? await prepareEntryRender(db, renderInput);
   const now = opts.now ?? new Date();
   const hash = sourceHash(parsed.data.title, parsed.data.body, parsed.data.lang);
   const { asksStance } = parsed.data;
@@ -247,17 +280,31 @@ async function createTopicImplementation(
     await lockAbuseWriter(tx, authorId);
     if (villagesEnabled()) await lockVillageProfile(tx, authorId);
     await lockReferenceTopics(tx, { body: parsed.data.body });
-    const bindings = await bindMentionSpellings(tx, parsed.data.body);
     // Alternative framing: read and lock the original question with FOR NO KEY UPDATE to serialize concurrent hiding/deletion, then check attribute combinations.
     const facts = await loadStanceAttrFacts(tx, { kind: "topic", altOf, lockAltTarget: true });
     const attrError = checkStanceAttributes({ kind: "topic", mode: "create", asksStance, altOf, stanceTag: parsed.data.stanceTag ?? null, ...facts });
-    if (attrError) return { ok: false as const, error: attrError };
+    if (attrError && !opts.beforeNewSubmission) return { ok: false as const, error: attrError };
     const destination = villagesEnabled() ? await villageForTopic(tx, authorId, parsed.data.village, opts.villageId) : null;
     const villageId = destination?.id ?? null;
     if (villagesEnabled() && villageId === null) return { ok: false as const, error: "village_required" as const };
     if (destination && opts.villageDisplayed !== undefined && opts.villageDisplayed.trim().toLowerCase() !== destination.slug) {
       return { ok: false as const, error: "village_changed" as const, village: destination.slug ?? "" };
     }
+    if (opts.beforeNewSubmission) {
+      const [recent] = await recentSubmission(tx, authorId, hash, now, [
+        eq(entries.kind, "topic"),
+        sameNullable(entries.villageId, villageId),
+        sameNullable(entries.altOf, altOf),
+        eq(entries.asksStance, asksStance),
+      ]);
+      if (recent) return { ok: true as const, id: recent.id, reused: true as const };
+      const error = await opts.beforeNewSubmission(tx);
+      if (error) return { ok: false as const, error };
+    }
+    if (invalidIntro) return { ok: false as const, error: "invalid_intro" as const };
+    if (attrError) return { ok: false as const, error: attrError };
+    const prepared = preparedOutsideWrite ?? activeEntryRender(renderInput) ?? await prepareEntryRender(tx, renderInput);
+    const bindings = await bindMentionSpellings(tx, parsed.data.body);
     const [row] = await tx
       .insert(entries)
       .overridingSystemValue()
@@ -308,28 +355,48 @@ async function createTopicImplementation(
   return created;
 }
 
-async function createReplyImplementation(
+async function createReplyImplementation<E extends string>(
   db: Db,
   authorId: string,
   threadId: number,
   input: unknown,
-  opts: { now?: Date; via?: EntryVia } = {},
-): Promise<Extract<Result, { ok: false }> | { ok: true; id: number; followed: boolean }> {
+  opts: CreateOptions<E>,
+): Promise<CreateFailure<E> | (CreatedEntry & { followed: boolean })> {
   const parsed = replySchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: fieldError(parsed.error.issues) };
   const bodyError = await checkBodyBudget(parsed.data.body, authorId);
   if (bodyError) return { ok: false, error: bodyError };
   const parentId = parsed.data.parentId ?? null;
+  const nushiParentId = parsed.data.nushiParentId ?? null;
+  const stanceTag = parsed.data.stanceTag ?? null;
   const renderInput = { kind: "reply" as const, body: parsed.data.body, lang: parsed.data.lang };
-  const prepared = activeEntryRender(renderInput) ?? await prepareEntryRender(db, renderInput);
+  const preparedOutsideWrite = opts.beforeNewSubmission ? undefined : activeEntryRender(renderInput) ?? await prepareEntryRender(db, renderInput);
   const now = opts.now ?? new Date();
   const hash = sourceHash(null, parsed.data.body, parsed.data.lang);
   // Check topic/reply-target existence and undeleted status within the posting transaction, preventing a reply to a target deleted between validation and insertion.
   // Lock the topic row to serialize concurrent deletion (softDeleteEntry, recomputing topic aggregates) and replies.
   const created = await db.transaction(async (tx) => {
+    if (opts.beforeNewSubmission) {
+      const [recent] = await recentSubmission(tx, authorId, hash, now, [
+        eq(entries.kind, "reply"),
+        eq(entries.threadId, threadId),
+        sameNullable(entries.parentId, parentId),
+        sameNullable(entries.nushiParentId, nushiParentId),
+        sameNullable(entries.stanceTag, stanceTag),
+        exists(tx.select({ id: rootTopic.id }).from(rootTopic)
+          .where(and(eq(rootTopic.id, threadId), undeletedTopic(rootTopic), isNull(rootTopic.hiddenAt)))),
+      ]);
+      if (recent) {
+        // Creation gives an automatic follow the reply's creation time.
+        const [follow] = await tx.select({ state: follows.state }).from(follows)
+          .where(and(eq(follows.userId, authorId), eq(follows.threadId, threadId), eq(follows.createdAt, recent.createdAt)));
+        return { ok: true as const, id: recent.id, reused: true as const, followed: follow?.state === "following" };
+      }
+      const error = await opts.beforeNewSubmission(tx);
+      if (error) return { ok: false as const, error };
+    }
     await lockAbuseWriter(tx, authorId);
     await lockReferenceTopics(tx, { threadId, body: parsed.data.body });
-    const bindings = await bindMentionSpellings(tx, parsed.data.body);
     // Lock the topic with FOR NO KEY UPDATE, serializing reply creation and deletion recounts without conflicting with foreign-key KEY SHARE checks.
     // Cannot reply to deleted or hidden topics. Keep hidden topics from sustaining discussion while their content is unavailable.
     const [topic] = await tx
@@ -338,12 +405,11 @@ async function createReplyImplementation(
       .where(and(eq(entries.id, threadId), eq(entries.kind, "topic"), isNull(entries.deletedAt), isNull(entries.hiddenAt)))
       .for("no key update");
     if (!topic) return { ok: false as const, error: "thread_not_found" as const };
-    if (parsed.data.nushiParentId !== undefined) {
-      const answer = await readNushiAnswer(tx, parsed.data.nushiParentId);
+    if (nushiParentId !== null) {
+      const answer = await readNushiAnswer(tx, nushiParentId);
       if (!answer || answer.hidden || answer.threadId !== threadId) return { ok: false as const, error: "parent_not_in_thread" as const };
     }
     // Reply labels apply only to replies to questions. Validate asks_stance read under the topic-row lock.
-    const stanceTag = parsed.data.stanceTag ?? null;
     const attrError = checkStanceAttributes({
       kind: "reply",
       mode: "create",
@@ -363,6 +429,8 @@ async function createReplyImplementation(
       if (!parent) return { ok: false as const, error: "parent_not_in_thread" as const };
       parentAuthorId = parent.authorId;
     }
+    const prepared = preparedOutsideWrite ?? activeEntryRender(renderInput) ?? await prepareEntryRender(tx, renderInput);
+    const bindings = await bindMentionSpellings(tx, parsed.data.body);
     const [row] = await tx
       .insert(entries)
       .overridingSystemValue()
@@ -371,7 +439,7 @@ async function createReplyImplementation(
         kind: "reply",
         threadId,
         parentId,
-        nushiParentId: parsed.data.nushiParentId,
+        nushiParentId,
         authorId,
         lang: parsed.data.lang,
         langCode: parsed.data.lang === "other" ? parsed.data.langCode ?? null : null,
@@ -1183,16 +1251,16 @@ export async function listTopics(
   };
 }
 
-export async function createTopic(...args: Parameters<typeof createTopicImplementation>): Promise<Awaited<ReturnType<typeof createTopicImplementation>>> {
-  return withMarkdownScope("write", args[1], async () => {
-    try { return await createTopicImplementation(...args); }
+export async function createTopic<E extends string = never>(db: Db, authorId: string, input: unknown, opts: TopicCreateOptions<E> = {}): Promise<CreatedEntry | CreateFailure<E>> {
+  return withMarkdownScope("write", authorId, async () => {
+    try { return await createTopicImplementation(db, authorId, input, opts); }
     catch (error) { if (error instanceof MarkdownBudgetError) return { ok: false, error: "body_too_complex" }; throw error; }
   });
 }
 
-export async function createReply(...args: Parameters<typeof createReplyImplementation>): Promise<Awaited<ReturnType<typeof createReplyImplementation>>> {
-  return withMarkdownScope("write", args[1], async () => {
-    try { return await createReplyImplementation(...args); }
+export async function createReply<E extends string = never>(db: Db, authorId: string, threadId: number, input: unknown, opts: CreateOptions<E> = {}): Promise<CreateFailure<E> | (CreatedEntry & { followed: boolean })> {
+  return withMarkdownScope("write", authorId, async () => {
+    try { return await createReplyImplementation(db, authorId, threadId, input, opts); }
     catch (error) { if (error instanceof MarkdownBudgetError) return { ok: false, error: "body_too_complex" }; throw error; }
   });
 }

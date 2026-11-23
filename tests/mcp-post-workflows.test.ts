@@ -68,8 +68,8 @@ describe("MCP post approvals through the browser routes", () => {
     const editorPath = threadId ? `/t/${threadId}` : "/t/new";
     const params = threadId ? { id: String(threadId) } : undefined;
     const made = success(await createClientDraft(h.db, author, client, { kind, threadId, lang: "en", body }));
-    const submit = () => h.outcome(() => action(h.args(h.request(editorPath, { as,
-      form: { body, lang: "en", fromDraft: String(made.id), fromDraftVersion: "1" },
+    const submit = (text = body) => h.outcome(() => action(h.args(h.request(editorPath, { as,
+      form: { body: text, lang: "en", fromDraft: String(made.id), fromDraftVersion: "1" },
     }), params)));
     expect(await submit()).toMatchObject({ status: 409, value: { data: { error: "confirmation_required" } } });
     expect(await getClientDraftStatus(h.db, author, client, made.id)).toMatchObject({ status: "pending", version: 1 });
@@ -80,8 +80,13 @@ describe("MCP post approvals through the browser routes", () => {
     const { confirmation } = await previewDraftPublication(h.db, author, path, await h.request(path, { form }).formData());
     const approval = h.request(path, { as, form: { ...form, confirmation: confirmation! } });
     expect(await h.outcome(() => draftAction(h.args(approval, { id: String(made.id) })))).toMatchObject({ status: 302 });
-    expect(await submit()).toMatchObject({ status: 409 });
+    expect(await submit("A distinct source.")).toMatchObject({ status: 409, value: { data: { error: "draft_conflict" } } });
     const [published] = await h.db.select().from(entries).where(and(eq(entries.authorId, author), eq(entries.body, body)));
+    const replay = await submit();
+    expect(replay.status).toBe(302);
+    expect(new URL(replay.location!, "http://localhost").searchParams.get("posted")).toBe(String(published.id));
+    expect(await h.db.select({ id: entries.id }).from(entries).where(and(eq(entries.authorId, author), eq(entries.body, body))))
+      .toEqual([{ id: published.id }]);
     const entryPath = threadId ? `/t/${threadId}#c-${published.id}` : `/t/${published.id}`;
     expect(await getClientDraftStatus(h.db, author, client, made.id)).toMatchObject({ status: "published", entryUrl: expect.stringContaining(entryPath) });
   });

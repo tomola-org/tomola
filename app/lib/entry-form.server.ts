@@ -2,7 +2,7 @@ import { MarkdownBudgetError, withMarkdownRead } from "./markdown-budget.server"
 import type { AiAssistance } from "~/lib/ai-assistance";
 import type { SessionUser } from "~/lib/auth/session.server";
 import type { Db } from "~/lib/db/client.server";
-import { createTopic, type EntryError } from "~/lib/entries.server";
+import { createTopic } from "~/lib/entries.server";
 import { extractPasted, interpretFrontmatter, type Declared } from "~/lib/entry-frontmatter.server";
 import { defaultPostLang, type Profile } from "~/lib/profiles.server";
 import { resolvePostLanguage, type LanguageDecision } from "~/lib/lang-detect";
@@ -119,16 +119,15 @@ export async function applyPastedFrontmatter(
 
 // Posts a topic from the /t/new form. Read frontmatter pasted at the start of the body (applyPastedFrontmatter), then call createTopic.
 // The form has no field about how the post was written: record ai_assistance from pasted frontmatter, otherwise null.
-// The title may be empty (a topic without a title); "ask for stances" without a title is invalid_title. The limit of posts per hour is counted by the caller (the route), before this.
-export async function submitTopicForm(
+// The title may be empty (a topic without a title); "ask for stances" without a title is invalid_title.
+export async function submitTopicForm<E extends string = never>(
   db: Db,
   member: { user: Pick<SessionUser, "id">; profile: Pick<Profile, "homeArea" | "readLangs"> },
   form: FormData,
-  opts: { now?: Date; responseTo?: number | null } = {},
-): Promise<{ ok: true; id: number } | { ok: false; error: EntryError | PastedError; village?: string }> {
+  opts: Pick<NonNullable<Parameters<typeof createTopic<E>>[3]>, "now" | "responseTo" | "beforeNewSubmission"> = {},
+) {
   const raw = readEntryForm(form);
   const pasted = (await applyPastedFrontmatter(raw, "topic", { defaultLang: defaultPostLang(member.profile) }));
-  if (!pasted.ok) return { ok: false, error: pasted.error };
-  const res = await createTopic(db, member.user.id, pasted.input, { now: opts.now, responseTo: opts.responseTo, asIntroduction: formString(form, "intro") === "1", ...(villagesEnabled() ? { villageDisplayed: raw.villageDisplayed ?? "" } : {}) });
-  return res.ok ? { ok: true, id: res.id } : { ok: false, error: res.error, ...(res.village === undefined ? {} : { village: res.village }) };
+  if (!pasted.ok) return { ok: false as const, error: pasted.error, village: undefined };
+  return createTopic(db, member.user.id, pasted.input, { ...opts, asIntroduction: formString(form, "intro") === "1", ...(villagesEnabled() ? { villageDisplayed: raw.villageDisplayed ?? "" } : {}) });
 }

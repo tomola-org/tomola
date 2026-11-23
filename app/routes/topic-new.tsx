@@ -121,8 +121,8 @@ export async function action({ request }: Route.ActionArgs) {
     const fail = (error: string, village?: string) => data({ error, ...(preview ? { previewFailed: true } : {}), values: { ...values, ...(village === undefined ? {} : { village }) } }, { status: 400 });
     if (preview && (formString(form, "ownerId") !== user.id || (!raw.title.trim() && !raw.body.trim()))) return data({ error: "invalid_draft", previewFailed: true, values }, { status: 400 });
     const supplement = formString(form, "aiMaterial");
-    if (supplement.trim() && (!await preparePostAiMaterial(supplement) || (intent === "draft" || preview))) return fail("ai_material_invalid");
     if (intent === "draft" || preview) {
+      if (supplement.trim()) return fail("ai_material_invalid");
       const rate = await hitRateLimit(db, { key: `draft:member:${user.id}`, ...DRAFT_RATE_LIMIT });
       if (!rate.allowed) return data({ error: "rate_limited", previewFailed: preview, values }, { status: 429, headers: rateLimitHeaders(rate) });
       const pasted = (await applyPastedFrontmatter(raw, "topic", { defaultLang: defaultPostLang(profile), allowComplex: true }));
@@ -148,22 +148,28 @@ export async function action({ request }: Route.ActionArgs) {
     }
     // Publishing counts against the topic limit; saving a draft does not.
     const rate = await hitMemberLimit(db, "topic", user.id);
-    if (!rate.allowed) return data({ error: "rate_limited", values }, { status: 429, headers: rateLimitHeaders(rate) });
     // The draft that "Write with AI" made is removed in the same transaction, so that a failure here cannot leave a post made and the form still sendable.
     const res = await withMemberWrite(db, user.id, request, form, async tx => {
-      const error = await checkLinkedClientDraft(tx, user.id, form);
-      if (error) return { ok: false as const, error, village: undefined };
-      const posted = await submitTopicForm(tx, { user, profile }, form, { responseTo: responsePostId(new URL(request.url).searchParams) });
-      if (posted.ok && supplement.trim()) {
+      const posted = await submitTopicForm(tx, { user, profile }, form, {
+        responseTo: responsePostId(new URL(request.url).searchParams),
+        beforeNewSubmission: async write => {
+          if (!rate.allowed) return "rate_limited";
+          if (supplement.trim() && !await preparePostAiMaterial(supplement)) return "ai_material_invalid";
+          return checkLinkedClientDraft(write, user.id, form);
+        },
+      });
+      if (!posted.ok || posted.reused) return posted;
+      if (supplement.trim()) {
         const saved = await writePostAiMaterial(tx, user.id, posted.id, { body: supplement, version: 0 });
         if (!saved.ok) throw new Error("Supplement could not be saved");
       }
-      if (posted.ok) await deleteLinkedDraft(tx, user.id, form, { id: posted.id, threadId: posted.id });
+      await deleteLinkedDraft(tx, user.id, form, { id: posted.id, threadId: posted.id });
       return posted;
-    });
+    }, { prepareRender: rate.allowed });
     if (res.ok) {
       throw redirect(postedLocation(`/t/${res.id}`, res.id));
     }
+    if (!rate.allowed) return data({ error: "rate_limited", values }, { status: 429, headers: rateLimitHeaders(rate) });
     if (res.error === "draft_conflict" || res.error === "confirmation_required") return data({ error: res.error, values }, { status: 409 });
     return fail(res.error, res.village);
   }
