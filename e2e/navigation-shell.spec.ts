@@ -45,7 +45,7 @@ test("the places list supports native navigation, chat marks and current section
   } finally { await context.close(); }
 });
 
-test("the header writes into the joined village and names its invitation-based public destination", async ({ page }) => {
+test("the header writes into the joined village and shows only its name in the destination", async ({ page }) => {
   await useMember(page, "nav_shell_context@example.com", "/v/nav-shell-invited"); await waitForClientRoute(page);
   for (const route of ["/v/nav-shell-invited", "/v/nav-shell-invited/chat"]) {
     await page.goto(route); await waitForClientRoute(page);
@@ -53,7 +53,7 @@ test("the header writes into the joined village and names its invitation-based p
     await expect(post).toHaveAttribute("href", "/t/new?village=nav-shell-invited"); await post.click();
     await expect(page.locator('input[name="village"]')).toHaveValue("nav-shell-invited");
     await openPostSettings(page);
-    await expect(page.getByRole("button", { name: new RegExp(`^${m.field_village}\\b`) })).toContainText(m.village_invite_public);
+    await expect(page.getByRole("button", { name: `${m.field_village} Navigation invited village`, exact: true })).toBeVisible();
   }
   await page.goto("/v/nav-shell-reading");
   await expect(page.locator("header").getByRole("link", { name: m.nav_new_topic, exact: true })).toHaveAttribute("href", "/t/new");

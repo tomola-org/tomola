@@ -103,7 +103,7 @@ export function VillageTarget({ posting, selected = posting.selected, explicitSe
     <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
       <span id={labelId}>{label}</span>
       <DropdownMenu>
-        <DropdownMenuTrigger aria-invalid={Boolean(targetError) || undefined} aria-labelledby={`${labelId} ${valueId}`} aria-describedby={[reachId, targetError ? errorId : undefined].filter(Boolean).join(" ")} render={<Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal" />}><span id={valueId} className="min-w-0 [overflow-wrap:anywhere]">{name}{village?.kind === "invite_public" && <> · {m.village_invite_public()}</>}</span><span aria-hidden="true">▾</span></DropdownMenuTrigger>
+        <DropdownMenuTrigger aria-invalid={Boolean(targetError) || undefined} aria-labelledby={`${labelId} ${valueId}`} aria-describedby={[reachId, targetError ? errorId : undefined].filter(Boolean).join(" ")} render={<Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal" />}><span id={valueId} className="min-w-0 [overflow-wrap:anywhere]">{name}</span><span aria-hidden="true">▾</span></DropdownMenuTrigger>
         <DropdownMenuContent className="max-w-[calc(100vw-2rem)]">
           <DropdownMenuRadioGroup value={displayed} onValueChange={choose}>
             {posting.choices.filter(row => row.slug).map(row => <DropdownMenuRadioItem key={row.slug} value={row.slug!} closeOnClick onClick={() => choose(row.slug!)}>{postingVillageName(row, posting.ownHandle)}</DropdownMenuRadioItem>)}

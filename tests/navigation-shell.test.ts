@@ -99,9 +99,9 @@ it("uses the ordinary writing destination outside a joined village", async () =>
   for (const path of ["/", "/v/not-joined", "/t/1"]) expect(await member(path)).toContain('href="/t/new"');
 });
 
-it("labels a selected destination with its actual village type", async () => {
+it("shows only the village name as the selected destination", async () => {
   const html = await renderInRouter(() => createElement(VillageTarget, { posting: { choices: [village], selected: village.slug, explicit: true, changed: false, error: null, ownHandle: null } }));
-  expect(html).toContain(m.village_invite_public());
+  expect(html).toContain(`>${village.name}</span>`);
 });
 
 

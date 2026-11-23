@@ -1836,7 +1836,7 @@
   "villages_title": "Villages",
   "villages_joined_heading": "Joined",
   "village_language_name": "{language} village",
-  "village_open": "Open village",
+  "village_open": "Public · open to join",
   "village_members": [
     {
       "declarations": [
@@ -1870,8 +1870,8 @@
   "village_changed": "The destination differs from the one shown. Check the destination and submit again.",
   "village_create": "Create a village",
   "village_kind": "Village type",
-  "village_invite_public": "Invite-only village",
-  "village_kind_fixed": "Members post and chat. Reading and replying don't require joining. You can't change this later.",
+  "village_invite_public": "Public · members post",
+  "village_kind_fixed": "Members post and chat. Anyone can read, and any member can reply. You can't change this later.",
   "village_name_field": "Village name",
   "village_slug_field": "Address name (slug)",
   "village_slug_help": "Example: ai-art (address /v/ai-art). Lowercase letters, numbers and hyphens, up to 63 characters. Some words, such as ja and new, are reserved.",
@@ -2407,8 +2407,8 @@
       }
     }
   ],
-  "village_invite_only": "Invite-only",
-  "village_invite_only_help": "Only invited people can join. Reading and replying don't require joining.",
+  "village_invite_only": "Public · members post",
+  "village_invite_only_help": "Only invited members can post and chat. Anyone can read, and any member can reply.",
   "village_kind_open_option": "Anyone can join",
   "village_kind_invite_option": "Only people you invite can join",
   "village_language_description": "A village for people whose main language is {language}. Members start here when they join. Posts can be read in any language.",

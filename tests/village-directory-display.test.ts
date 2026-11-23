@@ -22,6 +22,16 @@ it("lists joined villages first and the rest under one heading, villages people 
   expect(html.indexOf('href="/v/another-club"')).toBeLessThan(html.indexOf('href="/v/ja"'));
   for (const village of villages) expect(html.split(`href="/v/${village.slug}"`)).toHaveLength(2);
 });
+it("shows the posting badge only on the invitation-based public village row", async () => {
+  const invited = { slug: "invited-club", language: null, name: "Invited club", description: "", kind: "invite_public" as const, joined: false };
+  const html = await renderInRouter(() => routeElement(Villages, { loaderData: { member: true, invites: [], villages: [...villages, invited] } }));
+  const rows = html.match(/<li\b[^>]*>[\s\S]*?<\/li>/g) ?? [];
+  const invitedRow = rows.find(row => row.includes('href="/v/invited-club"'));
+  const badge = `>${m.village_invite_only()}</span>`;
+  expect(invitedRow).toContain(`title="${m.village_invite_only_help()}"`);
+  expect(rows.filter(row => row.includes(badge))).toEqual([invitedRow]);
+  expect(html).not.toContain(`>${m.village_open()}</span>`);
+});
 it("puts human villages before language villages for guests, under the heading of the screen alone and without membership controls", async () => {
   const html = await renderInRouter(() => routeElement(Villages, { loaderData: { member: false, invites: [], villages: villages.map(({ joined, ...village }) => village) } }));
   expect(html).not.toContain(`>${m.villages_joined_heading()}</h2>`);
