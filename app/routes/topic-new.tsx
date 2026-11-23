@@ -33,6 +33,7 @@ import { EntryForm, SendButton } from "~/components/entry-form";
 import { baseOf, orBlank, type LocalDraft } from "~/lib/local-draft";
 import { newPostDraftStore } from "~/lib/new-post-draft";
 import { sharePrefill } from "~/lib/share-prefill";
+import { usePrehydrationTextarea } from "~/lib/prehydration-input";
 import { assertSameOrigin } from "~/lib/http/csrf.server";
 import { AiEditorTools } from "~/components/ai-editor-tools";
 import { villagesEnabled } from "~/lib/villages-enabled.server";
@@ -226,6 +227,7 @@ export const handle = { writing: true };
 
 function TopicNewForm({ loaderData, actionData }: Route.ComponentProps) {
   const location = useLocation();
+  const aiMaterialRef = usePrehydrationTextarea(actionData?.values?.aiMaterial ? "new-ai-material" : undefined);
   const screen = loaderData.draftScope;
   const [store, setStore] = useState<ReturnType<typeof newPostDraftStore>>();
   const [recovery, setRecovery] = useState<{ record: LocalDraft | null; round: number }>();
@@ -274,7 +276,7 @@ function TopicNewForm({ loaderData, actionData }: Route.ComponentProps) {
         >
           <details open={!!actionData?.values?.aiMaterial}><summary className="ui-meta">{loaderData.aiMaterialLabels.add}</summary>
             <label className="block" htmlFor="new-ai-material">{loaderData.aiMaterialLabels.title}</label>
-            <Textarea id="new-ai-material" name="aiMaterial" rows={8} maxLength={POST_AI_MATERIAL_CHARS} defaultValue={actionData?.values?.aiMaterial ?? ""} />
+            <Textarea ref={aiMaterialRef} id="new-ai-material" name="aiMaterial" rows={8} maxLength={POST_AI_MATERIAL_CHARS} defaultValue={actionData?.values?.aiMaterial ?? ""} />
             <p className="ui-help">{loaderData.aiMaterialLabels.help}</p>
           </details>
           {error && (previewFailed || !(posting && isVillageTargetError(error))) && <p id="topic-new-error" role="alert" className={previewFailed ? "ui-help text-muted-foreground" : "text-destructive"}>{previewFailed && error !== "ai_material_invalid" ? loaderData.previewFailureLabel : error === "ai_material_invalid" ? loaderData.aiMaterialLabels.error : entryErrorMessage(error)}</p>}

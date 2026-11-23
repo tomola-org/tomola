@@ -7,6 +7,7 @@ import { QuietBoundary, usePageReady } from "~/components/quiet-boundary";
 import { EntryFields, EntryLanguage, entryErrorMessage, type BodyEditorProps } from "~/components/entry-fields";
 import { DraftKeeper } from "~/components/draft-keeper";
 import { orBlank } from "~/lib/local-draft";
+import { usePrehydrationTextarea } from "~/lib/prehydration-input";
 import { PostSettings } from "~/components/post-settings";
 import { StanceTagSelect } from "~/components/stance-tag";
 import { TitleField } from "~/components/title-field";
@@ -67,6 +68,8 @@ export function EntryEditForm({
   destination?: ReactNode;
 }) {
   const errorId = useId();
+  const noteId = `${errorId}-note`;
+  const noteRef = usePrehydrationTextarea(fixNote && values?.note ? noteId : undefined);
   const ready = usePageReady();
   const [candidate, setCandidate] = useState("");
   const [lang, setLang] = useState(values?.lang ?? entry.lang);
@@ -95,7 +98,7 @@ export function EntryEditForm({
         {fixNote && (
           <FieldLabel className="w-full flex-col items-start">
             {m.mod_fix_note()}
-            <Textarea {...entryFieldError(error, "note", errorId)} dir="auto" name="note" required rows={2} maxLength={500} defaultValue={values?.note ?? ""} />
+            <Textarea {...entryFieldError(error, "note", errorId)} ref={noteRef} id={noteId} dir="auto" name="note" required rows={2} maxLength={500} defaultValue={values?.note ?? ""} />
           </FieldLabel>
         )}
         {error && <p id={errorId} role="alert" className="text-destructive">{conflict?.message ?? errorText ?? entryErrorMessage(error, entry.kind)}{conflict && <> <a className="underline" href={conflict.href} target="_blank" rel="noreferrer noopener">{conflict.label}</a></>}</p>}

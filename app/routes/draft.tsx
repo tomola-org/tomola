@@ -26,7 +26,6 @@ import { EntryForm, SendButton } from "~/components/entry-form";
 import { AiEditorTools } from "~/components/ai-editor-tools";
 import { titleOrNull } from "~/lib/text";
 import { orBlank } from "~/lib/local-draft";
-import { prehydrationBody } from "~/lib/prehydration-input";
 import { villagesEnabled } from "~/lib/villages-enabled.server";
 import { villageReaderFor } from "~/lib/display-lang.server";
 import { postingVillages } from "~/lib/villages.server";
@@ -77,16 +76,9 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
   const submitted = actionData?.values;
   const [draft, setDraft] = useState(() => {
     const stanceTag = submitted?.stanceTag;
-    const initial = submitted ? { ...loaderData.draft, title: titleOrNull(submitted.title), body: submitted.body, asksStance: submitted.asksStance,
+    return submitted ? { ...loaderData.draft, title: titleOrNull(submitted.title), body: submitted.body, asksStance: submitted.asksStance,
       ...(stanceTag === null || isStanceTag(stanceTag) ? { stanceTag } : {}),
     } : loaderData.draft;
-    // Hydrating a nonempty textarea can restore its default over native edits.
-    // Adopt those edits before React initializes the field; the guard and
-    // autosave still compare with the original server text. Reloads and history
-    // loads may instead restore stale input, so keep the server text there.
-    const body = typeof document === "undefined" ? null : document.querySelector<HTMLTextAreaElement>(`form[action="/drafts/${initial.id}"] textarea[name="body"]`);
-    const earlyBody = body ? prehydrationBody(body, (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type) : undefined;
-    return earlyBody !== undefined ? { ...initial, body: earlyBody } : initial;
   });
   const requiresReview = draft.requiresReview;
   const [version, setVersion] = useState(submitted ? Number(submitted.version) : draft.version);

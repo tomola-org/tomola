@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useId, useRef, useState, type KeyboardEvent, type TextareaHTMLAttributes } from "react";
 import { mentionQueryAt } from "~/lib/mention-syntax";
+import { usePrehydrationTextarea } from "~/lib/prehydration-input";
 import { m } from "~/paraglide/messages.js";
 import type { MentionSuggestion } from "./mention-suggestions";
 
@@ -19,7 +20,7 @@ export function MentionTextarea(props: Props) {
   const { onInput, onKeyDown, onBlur, onClick, onKeyUp, village, ...rest } = props;
   const id = useId();
   const listId = `${id}-mentions`;
-  const ref = useRef<HTMLTextAreaElement>(null);
+  const ref = usePrehydrationTextarea(village === undefined && rest.defaultValue ? rest.id : undefined);
   const [items, setItems] = useState<MentionSuggestion[]>([]);
   const [active, setActive] = useState(0);
   // Where the mention that is being typed starts (the index of its sigil) and what is typed after it.
@@ -45,7 +46,7 @@ export function MentionTextarea(props: Props) {
     const form = ref.current?.form;
     form?.addEventListener("reset", close);
     return () => form?.removeEventListener("reset", close);
-  }, [village]);
+  }, [ref, village]);
 
   // Look at the text before the cursor: the mention being typed, if any, is asked for after the delay.
   const update = () => {
