@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { pushSubscriptions } from "~/lib/db/schema";
+import { getAuth } from "~/lib/auth/auth.server";
+import { createReply, createTopic } from "~/lib/entries.server";
+import { createPushHandlers } from "~/lib/jobs/push-jobs.server";
+import { runDueJobs } from "~/lib/jobs/queue.server";
 import { handlePushRequest } from "~/lib/push/http.server";
+import { registerPush } from "~/lib/push/subscriptions.server";
+import { action as confirm } from "~/routes/auth-confirm";
 import { action as logout } from "~/routes/logout";
 import { action as settings, loader as settingsLoader } from "~/routes/settings";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
-import { configurePush, identity, subscription } from "./helpers/push";
+import { configurePush, identity, pushAuthorization, subscription } from "./helpers/push";
 let h: RouteHarness;
 beforeEach(async () => { configurePush(); h = await setupRouteHarness(); await h.signIn("push_api_reader"); await h.signIn("push_api_other"); });
 afterEach(() => { h.restore(); vi.unstubAllEnvs(); });
@@ -61,13 +67,41 @@ it("stops only the owned browser row on logout and preserves unrelated registrat
   expect((await h.db.select().from(pushSubscriptions).where(eq(pushSubscriptions.id, second.browser.id)))[0].stoppedReason).toBeNull();
 });
 
+it("delivers a queued notification after reauthentication keeps its browser subscription authorized", async () => {
+  const current = await register();
+  const reader = h.ids.push_api_reader;
+  const topic = await createTopic(h.db, reader, { lang: "ja", title: "Notification delivery", body: "Topic" });
+  if (!topic.ok) throw new Error(topic.error);
+  const reply = await createReply(h.db, h.ids.push_api_other, topic.id, { lang: "ja", body: "Reply" });
+  if (!reply.ok) throw new Error(reply.error);
+  const other = identity();
+  await registerPush(h.db, reader, other, subscription(), "", await pushAuthorization(h.db, reader));
+  const [before] = await h.db.select().from(pushSubscriptions).where(eq(pushSubscriptions.id, other.id));
+
+  const original = h.request("/", { as: "push_api_reader" }).headers;
+  const token = await h.issueLink("push_api_reader@example.com");
+  const cookie = `${h.linkCookie(token)}; ${original.get("cookie")}`;
+  const request = h.request("/auth/confirm", { form: { token }, headers: { cookie } });
+  const response = await confirm(h.args(request)) as Response;
+  expect(response.status).toBe(303);
+  const nextCookie = response.headers.getSetCookie().find(value => value.startsWith("better-auth.session_token="))!.split(";")[0];
+  const auth = await getAuth();
+  const next = await auth.api.getSession({ headers: new Headers({ cookie: nextCookie }) });
+  expect(next).toMatchObject({ user: { id: reader } });
+  expect(await auth.api.getSession({ headers: original })).toBeNull();
+  expect(await h.db.select().from(pushSubscriptions).where(eq(pushSubscriptions.id, current.browser.id)))
+    .toMatchObject([{ authorizingSessionId: next!.session.id, authorizedUntil: next!.session.expiresAt, generation: 1 }]);
+  expect(await h.db.select().from(pushSubscriptions).where(eq(pushSubscriptions.id, other.id))).toEqual([before]);
+
+  const send = vi.fn(async () => ({ kind: "accepted" as const }));
+  await runDueJobs(h.db, createPushHandlers({ send }), { now: new Date(Date.now() + 61_000) });
+  expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ endpoint: current.sub.endpoint }), expect.any(String), expect.any(Object));
+});
+
 
 it("rechecks the push recipient and current content before marking a notice read", async () => {
   await register();
-  const { createTopic, createReply } = await import("~/lib/entries.server");
   const { notifications, pushDeliveries, entries } = await import("~/lib/db/schema");
-  const { createPushHandlers } = await import("~/lib/jobs/push-jobs.server");
-  const { runDueJobs } = await import("~/lib/jobs/queue.server");
   const { loader: open } = await import("~/routes/notification-open");
   const topic = await createTopic(h.db, h.ids.push_api_reader, { lang: "ja", title: "Opening boundary", body: "Topic" }); if (!topic.ok) throw new Error(topic.error);
   const reply = await createReply(h.db, h.ids.push_api_other, topic.id, { lang: "ja", body: "Reply" }); if (!reply.ok) throw new Error(reply.error);
@@ -105,7 +139,6 @@ it("does not let a stale test-send response change a stopped registration", asyn
 
 it.each(["expired", "revoked"])("requires the registration's authorizing session for a test when %s", async condition => {
   const f = await register();
-  const { pushAuthorization } = await import("./helpers/push");
   const { session } = await import("~/lib/db/schema");
   const authorization = await pushAuthorization(h.db, h.ids.push_api_reader);
   await h.db.update(pushSubscriptions).set({ authorizingSessionId: authorization.sessionId }).where(eq(pushSubscriptions.id, f.browser.id));

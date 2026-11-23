@@ -8,7 +8,7 @@ export type VerifiedLogin = { method: Exclude<LoginMethod, "unknown">; at: Date 
 const verified = new WeakMap<object, VerifiedLogin>();
 export const passkeyChallenges = new WeakMap<object, { userId: string; sessionId?: string; createdAt: Date }>();
 export const internalLogin = new AsyncLocalStorage<VerifiedLogin & { userId: string }>();
-export const verifiedEmailCode = new AsyncLocalStorage<{ reauthentication?: { email: string; sessionId: string } }>();
+export const verifiedEmailLogin = new AsyncLocalStorage<{ method: "email_link" | "email_code"; sourceSessionId?: string; fresh: boolean }>();
 export const markVerifiedLogin = (context: object, login: VerifiedLogin) => verified.set(context, login);
 export function verifiedLogin(context: object | undefined, userId: string): VerifiedLogin | undefined {
   const issued = internalLogin.getStore();

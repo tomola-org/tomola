@@ -6,6 +6,7 @@ import { rateLimits, session, user, verification } from "~/lib/db/schema";
 import { hashMagicLinkToken } from "~/lib/auth/plugins";
 import { magicLinkOwnerHash, magicLinkUsedIdentifier } from "~/lib/auth/complete-magic-link.server";
 import { getSessionUser } from "~/lib/auth/session.server";
+import { getAuth } from "~/lib/auth/auth.server";
 import { browserBindingIdentifier } from "~/lib/auth/magic-link-browser.server";
 import { confirmUrl } from "~/lib/auth/magic-link.server";
 import { createProfile } from "~/lib/profiles.server";
@@ -131,6 +132,48 @@ describe("confirm page", () => {
       const t = await h.issueLink("dan@example.com", next);
       expect(((await action(h.args(post(t, { next })))) as Response).headers.get("location"), next).toBe("/");
     }
+  });
+
+  it("replaces only the current browser session when a member confirms their email link", async () => {
+    const handle = "confirm_reauth";
+    const email = `${handle}@example.com`;
+    const id = await h.signIn(handle);
+    const current = h.request("/", { as: handle }).headers;
+    const deviceToken = await h.issueLink(email);
+    const device = await action(h.args(post(deviceToken))) as Response;
+    const deviceCookie = device.headers.getSetCookie().find(cookie => cookie.startsWith("better-auth.session_token="))!.split(";")[0];
+    const token = await h.issueLink(email, "/settings#settings-login-methods");
+    const cookie = `${h.linkCookie(token)}; ${current.get("cookie")}`;
+    const result = await action(h.args(post(token, {}, { cookie }))) as Response;
+    expect(result.status).toBe(303);
+    expect(result.headers.get("location")).toBe("/settings#settings-login-methods");
+    const nextCookie = result.headers.getSetCookie().find(cookie => cookie.startsWith("better-auth.session_token="))!.split(";")[0];
+    const auth = await getAuth();
+    expect(await auth.api.getSession({ headers: current })).toBeNull();
+    expect(await auth.api.getSession({ headers: new Headers({ cookie: deviceCookie }) })).toMatchObject({ user: { id } });
+    const next = await auth.api.getSession({ headers: new Headers({ cookie: nextCookie }) });
+    expect(next).toMatchObject({ user: { id } });
+    expect(await h.db.select().from(session).where(eq(session.id, next!.session.id)))
+      .toMatchObject([{ loginMethod: "email_link", reauthenticationMethod: "email_link", reauthenticatedAt: expect.any(Date) }]);
+  });
+
+  it("preserves another member's session when confirming a link for a different account", async () => {
+    const otherId = await h.signIn("confirm_other_session");
+    const id = await h.signIn("confirm_link_account");
+    const other = h.request("/", { as: "confirm_other_session" }).headers;
+    const existing = h.request("/", { as: "confirm_link_account" }).headers;
+    const token = await h.issueLink("confirm_link_account@example.com");
+    const cookie = `${h.linkCookie(token)}; ${other.get("cookie")}`;
+    const result = await action(h.args(post(token, {}, { cookie }))) as Response;
+    expect(result.status).toBe(303);
+    const nextCookie = result.headers.getSetCookie().find(cookie => cookie.startsWith("better-auth.session_token="))!.split(";")[0];
+    const auth = await getAuth();
+    expect(await auth.api.getSession({ headers: other })).toMatchObject({ user: { id: otherId } });
+    expect(await auth.api.getSession({ headers: existing })).toMatchObject({ user: { id } });
+    const next = await auth.api.getSession({ headers: new Headers({ cookie: nextCookie }) });
+    expect(next).toMatchObject({ user: { id } });
+    expect(await h.db.select().from(session).where(eq(session.id, next!.session.id)))
+      .toMatchObject([{ loginMethod: "email_link", reauthenticationMethod: null, reauthenticatedAt: null }]);
   });
 
   it("POST from another origin is refused before the token is used", async () => {

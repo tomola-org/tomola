@@ -135,10 +135,7 @@ export async function action({ request }: Route.ActionArgs) {
     });
   }
   if (intent === "login-restart") return restartLoginCode(request);
-  if (intent === "login-code") {
-    const sessionId = reauth && member ? await loginManagementSession(request) : undefined;
-    return submitLoginCode(request, form, { reauthentication: member && sessionId ? { email: member.email, sessionId } : undefined });
-  }
+  if (intent === "login-code") return submitLoginCode(request, form, { reauthenticate: reauth });
   const resent = intent === "login-resend";
   const next = safeLocalPath(String(form.get("next") ?? ""));
   if (!email) return { status: "invalid" as const };

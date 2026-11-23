@@ -17,7 +17,8 @@ import { clearInvitationCookie, readInvitationCookie } from "./invitation-cookie
 import { magicLinkInvitationContext, magicLinkInvitationIdentifier, parseInvitationRef, sameInvitation } from "./invitation-ref.server";
 import { usedSignupInvitation } from "./signup-invitation.server";
 import { lockSigningMember, SigningError } from "~/lib/signing.server";
-import { verifiedEmailCode } from "./login-method.server";
+import { verifiedEmailLogin } from "./login-method.server";
+import { getSessionUser, loginManagementSession } from "./session.server";
 import { hashMagicLinkToken } from "./plugins";
 export const LOGIN_HEADERS = { "Cache-Control": "no-store", "Referrer-Policy": "strict-origin", "X-Robots-Tag": "noindex" };
 export const magicLinkUsedIdentifier = (token: string) => `magic-link-used:${hashMagicLinkToken(token)}`;
@@ -35,8 +36,9 @@ export async function waitForMagicLinkCompletion(token: string): Promise<boolean
 // link/code request can create only one session, even on separate connections.
 type Completion = { kind: "ok"; response: Response } | { kind: "invitation_unavailable" } | { kind: "invalid" };
 const invalid = { kind: "invalid" } as const;
+type EmailLogin = { method: "email_link" } | { method: "email_code"; reauthenticate: boolean };
 
-export async function completeMagicLink(request: Request, token: string): Promise<Completion> {
+export async function completeMagicLink(request: Request, token: string, login: EmailLogin = { method: "email_link" }): Promise<Completion> {
   // Serialize local confirmations through marker insertion as well as token use.
   // Better Auth still enforces atomic consumption across separate processes.
   const key = magicLinkUsedIdentifier(token);
@@ -46,22 +48,25 @@ export async function completeMagicLink(request: Request, token: string): Promis
   confirmations.set(key, pending);
   try {
     await previous;
-    return await verifyMagicLink(request, token);
+    return await verifyMagicLink(request, token, login);
   } finally {
     release();
     if (confirmations.get(key) === pending) confirmations.delete(key);
   }
 }
 
-async function verifyMagicLink(request: Request, token: string): Promise<Completion> {
+async function verifyMagicLink(request: Request, token: string, login: EmailLogin): Promise<Completion> {
   const db = await getDb();
   if (!(await matchesMagicLinkBrowser(db, request, token))) return invalid;
   const [credential] = await db.select({ expiresAt: verification.expiresAt, value: verification.value }).from(verification)
     .where(eq(verification.identifier, `magic-link:${hashMagicLinkToken(token)}`));
   if (!credential || credential.expiresAt <= new Date()) return invalid;
   const email = (JSON.parse(credential.value) as { email?: string }).email?.toLowerCase();
-  const reauthentication = verifiedEmailCode.getStore()?.reauthentication;
-  if (reauthentication && email !== reauthentication.email.toLowerCase()) return invalid;
+  const signedIn = login.method === "email_link" || login.reauthenticate ? await getSessionUser(request) : null;
+  const sessionId = signedIn ? await loginManagementSession(request) : undefined;
+  const sourceSessionId = email === signedIn?.email.toLowerCase() ? sessionId : undefined;
+  if (login.method === "email_code" && sessionId && !sourceSessionId) return invalid;
+  const proof = { method: login.method, sourceSessionId, fresh: login.method === "email_code" || sourceSessionId !== undefined };
   const identifier = magicLinkInvitationIdentifier(token);
   const [binding] = await db.select().from(verification).where(eq(verification.identifier, identifier));
   let ref = null;
@@ -76,7 +81,8 @@ async function verifyMagicLink(request: Request, token: string): Promise<Complet
     ]));
   };
   const auth = await getAuth();
-  const verify = async (connection?: Db) => (connection ? bindAuthToDatabase(auth, connection) : auth).api.magicLinkVerify({ query: { token }, headers: request.headers, request, asResponse: true });
+  const verify = (connection?: Db) => verifiedEmailLogin.run(proof, () =>
+    (connection ? bindAuthToDatabase(auth, connection) : auth).api.magicLinkVerify({ query: { token }, headers: request.headers, request, asResponse: true }));
   const verifyWithMemberLock = async () => {
     const [member] = email ? await db.select({ id: user.id }).from(user).where(eq(user.email, email)) : [];
     if (!member) return verify();

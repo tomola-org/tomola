@@ -1,6 +1,6 @@
 import { and, eq, gt } from "drizzle-orm";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { passkey, profiles, session } from "../db/schema";
+import { passkey, profiles, pushSubscriptions, session } from "../db/schema";
 import { isDeletedIdentity } from "../deleted-member";
 import { randomUUID } from "node:crypto";
 import { betterAuth } from "better-auth";
@@ -10,7 +10,7 @@ import { finishGoogleFlow, googleInvitationRef, prepareGoogleFlow, validateGoogl
 import { getDb, type Db, type Tx } from "~/lib/db/client.server";
 import { sessionAdapter, sessionWriteScope } from "./session-adapter.server";
 import { passkeySessionPlugin } from "./passkey-session.server";
-import { internalLogin, linkedGoogle, markVerifiedLogin, passkeyChallengeRevoked, passkeyChallenges, verifiedEmailCode, verifiedLogin } from "./login-method.server";
+import { internalLogin, linkedGoogle, markVerifiedLogin, passkeyChallengeRevoked, passkeyChallenges, verifiedEmailLogin, verifiedLogin } from "./login-method.server";
 import { loginReauthentication } from "./login-reauthentication.server";
 import { enqueuePasskeyNotice } from "./passkeys.server";
 import { lockSigningMember, SigningError } from "~/lib/signing.server";
@@ -87,8 +87,8 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
         ctx.context.internalAdapter = { ...adapter, consumeVerificationValue: async identifier => {
           const value = await adapter.consumeVerificationValue(identifier);
           if (identifier === expected && value?.identifier === expected && value.expiresAt.getTime() > Date.now()) {
-            const code = verifiedEmailCode.getStore();
-            markVerifiedLogin(ctx.context, { method: code ? "email_code" : "email_link", at: new Date(), sourceSessionId: code?.reauthentication?.sessionId });
+            const email = verifiedEmailLogin.getStore();
+            markVerifiedLogin(ctx.context, { method: email?.method ?? "email_link", at: email?.fresh === false ? null : new Date(), sourceSessionId: email?.sourceSessionId });
           }
           if (passkeyAuthentication && value) {
             const challenge = JSON.parse(value.value) as { type?: string; userData?: { id?: string }; sessionId?: string };
@@ -205,7 +205,10 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
       return sessionCreation.run(creation, async () => {
         const created = await createSession(...args);
         if (created && creation.sourceSessionId) {
-          await writes.transaction.getStore()!.delete(session).where(and(eq(session.id, creation.sourceSessionId), eq(session.userId, created.userId)));
+          const tx = writes.transaction.getStore()!;
+          await tx.update(pushSubscriptions).set({ authorizingSessionId: created.id, authorizedUntil: created.expiresAt })
+            .where(and(eq(pushSubscriptions.userId, created.userId), eq(pushSubscriptions.authorizingSessionId, creation.sourceSessionId)));
+          await tx.delete(session).where(and(eq(session.id, creation.sourceSessionId), eq(session.userId, created.userId)));
         }
         return created;
       });
