@@ -192,6 +192,8 @@ test("Nushi calls produce sourced public AI replies with independent reader and 
     await body.fill("The orchard source needs its seasonal context.");
     await caller.getByRole("button", { name: en.submit_reply, exact: true }).click();
     await expect(caller.locator("#replies")).toContainText("The orchard source needs its seasonal context.");
+    const replyTarget = `${en.nushi_name} · ${en.reply_target_link}`;
+    await expect(caller.getByRole("link", { name: replyTarget, exact: true })).toHaveAttribute("href", `/nushi/${answerId}`);
     const errorForm = caller.locator('[data-nushi-answer] form:has(input[value="error"])');
     await caller.locator("[data-nushi-about] > summary").click();
     await errorForm.locator("..").locator("summary").click();
@@ -251,8 +253,15 @@ test("Nushi calls produce sourced public AI replies with independent reader and 
     await expect(guest.locator("[data-nushi-hidden]")).toHaveCount(0);
     await expect(guest.locator("[data-nushi-answer]")).toHaveCount(0);
     await expect(guestHide).toHaveCount(0);
+    await expect(guest.getByText(replyTarget, { exact: true })).toBeVisible();
+    await expect(guest.getByRole("link", { name: replyTarget, exact: true })).toHaveCount(0);
     const withdrawn = await guest.request.get(`/nushi/${answerId}.json?lang=en`);
     expect(withdrawn.status()).toBe(404);
+
+    await page.getByLabel(en.nushi_disable_topic, { exact: true }).uncheck();
+    await page.locator('form:has(input[value="topic"])').getByRole("button").click();
+    await expect(page.locator(`#nushi-${answerId}[data-nushi-hidden]`)).toBeVisible();
+    await expect(page.getByRole("link", { name: replyTarget, exact: true })).toHaveAttribute("href", `/nushi/${answerId}`);
   } finally { await callerContext.close(); await guestContext.close(); }
 });
 
