@@ -2988,6 +2988,8 @@
   "chat_nushi_description": "Dalam obrolan, hanya pesan anggota pemanggil yang digunakan untuk menafsirkan pertanyaan. Balasan dan pesan di sekitarnya dikecualikan. Jawaban diambil dari unggahan publik desa yang sama dan hanya dapat dibaca oleh anggota desa yang telah memberikan persetujuan. Pertanyaan, jawaban, dan kesalahan penyedia tidak disalin ke dalam catatan permintaan atau pembuatan.",
   "village_slug_ai_help": "Untuk nama dengan huruf non-Latin, AI menerima nama tersebut untuk menyarankan alamat bahasa Inggris. Tinjau dan edit saran tersebut sebelum membuat desa; Anda tidak dapat mengubah alamatnya nanti.",
   "village_slug_suggesting": "Menyarankan alamat…",
+  "village_slug_suggest": "Sarankan alamat",
+  "village_slug_suggest_failed": "Tidak ada alamat yang disarankan. Coba lagi, atau masukkan sendiri.",
   "ai_use_village_slug": "Saran alamat desa",
   "ai_use_sent_village_slug": "Nama yang dimasukkan saat membuat desa, untuk menyarankan slug URL bahasa Inggris.",
   "nushi_truncated": "Beberapa materi dihilangkan.",

@@ -3098,6 +3098,8 @@
   "chat_nushi_description": "En el chat, solo se utiliza el mensaje del miembro que llama para interpretar la pregunta. Se excluyen las respuestas y los mensajes circundantes. Las respuestas se basan en las publicaciones públicas de la misma aldea y solo pueden ser leídas por miembros de la aldea que hayan dado su consentimiento. Las preguntas, respuestas y errores del proveedor no se copian en los registros de solicitud o generación.",
   "village_slug_ai_help": "En el caso de nombres con caracteres no latinos, la IA recibe el nombre para sugerir una dirección en inglés. Revise y edite la sugerencia antes de crear la aldea; no podrá cambiar la dirección más adelante.",
   "village_slug_suggesting": "Sugiriendo una dirección…",
+  "village_slug_suggest": "Sugerir una dirección",
+  "village_slug_suggest_failed": "No se sugirió ninguna dirección. Inténtelo de nuevo o escriba una.",
   "ai_use_village_slug": "Sugerencias de dirección de la aldea",
   "ai_use_sent_village_slug": "El nombre introducido al crear una aldea, para sugerir un slug de URL en inglés.",
   "nushi_truncated": "Se omitió parte del material.",

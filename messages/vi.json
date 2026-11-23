@@ -2988,6 +2988,8 @@
   "chat_nushi_description": "Trong đoạn chat, chỉ tin nhắn của thành viên gọi Nushi được dùng để diễn giải câu hỏi. Các câu trả lời và tin nhắn xung quanh đều bị loại trừ. Câu trả lời dựa trên các bài đăng công khai của cùng một làng và chỉ những thành viên trong làng đã đồng ý mới có thể đọc được. Câu hỏi, câu trả lời và lỗi của nhà cung cấp không được sao chép vào hồ sơ yêu cầu hoặc hồ sơ tạo nội dung.",
   "village_slug_ai_help": "Đối với các tên có ký tự không phải chữ Latinh, AI sẽ nhận tên đó để gợi ý một địa chỉ tiếng Anh. Hãy xem lại và chỉnh sửa gợi ý trước khi tạo làng; bạn không thể thay đổi địa chỉ sau này.",
   "village_slug_suggesting": "Đang gợi ý địa chỉ…",
+  "village_slug_suggest": "Gợi ý địa chỉ",
+  "village_slug_suggest_failed": "Không có địa chỉ nào được gợi ý. Hãy thử lại, hoặc tự nhập.",
   "ai_use_village_slug": "Gợi ý địa chỉ làng",
   "ai_use_sent_village_slug": "Tên được nhập khi tạo làng, dùng để gợi ý chuỗi định danh URL (slug) bằng tiếng Anh.",
   "nushi_truncated": "Một số tư liệu đã được lược bỏ.",
