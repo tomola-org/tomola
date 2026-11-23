@@ -6,7 +6,7 @@ Nushi is an operator-provided AI that searches a village's public posts and answ
 
 `VILLAGE_NUSHI=1` enables the feature. It defaults off. Public reading and villages must also be enabled. Open and invitation-only public villages have Nushi by default; their owners can turn it off in village management on the village page. Personal villages default off; the owner can opt in under Nushi in account settings. Language villages, closed or ended villages, and topics without a village cannot use it. Topic authors can prevent answers in their topic.
 
-Turning off a village or topic setting cancels pending requests and permanently hides existing answers, retaining their positions and human replies. Enabling it again allows new requests. The global switch cancels pending requests and hides all answers; turning it back on restores answers that were not separately withdrawn. Workers expire requests and apply the global stop before claiming more work. Reads independently enforce the switch.
+Turning off a village or topic setting cancels pending requests and permanently withdraws existing answers. Human replies remain visible. Answer markers are absent while Nushi is off. Enabling Nushi again brings those markers back and allows new requests. The global switch also cancels pending requests and suppresses answers and markers. Turning it back on restores readable answers and markers for withdrawn ones. Workers expire requests and apply the global stop before claiming more work. Reads independently enforce the switch.
 
 Readers can hide answers on their own screen. Members save this preference in their account; visitors save it in a device cookie. This does not stop generation or affect other readers.
 
@@ -65,11 +65,11 @@ Callers see answers and failures in the topic. Cited authors may receive one cit
 
 While a topic still supports Nushi, a withdrawn answer is represented by its position, withdrawal reason and any replacement link. Answer URLs return 404 when the topic is unavailable for Nushi.
 
-Daily maintenance erases a member-deleted post's saved quotations, quotation translations and author attribution from Nushi answers when it erases the post after 30 days. It also clears affected answer translations and residual chat answer text and translations. The answer keeps its number, position and any replacement link. Preservation holds, open appeals and reversible operator deletions use the same rules as the source post. Consented or audited report evidence follows its own retention policy.
+Daily maintenance erases a member-deleted post's saved quotations, quotation translations, author labels and source fingerprints from Nushi when it erases the post after 30 days. It drops readings that cite an erased passage or name its author with `@` without citing retained material from that author. Generated paraphrases without an `@` mention can remain in readings that cite retained material. Maintenance also clears affected answer translations and residual chat answer text and translations. The answer keeps its number, position and any replacement link. Preservation holds, open appeals and reversible operator deletions use the same rules as the source post. Consented or audited report evidence follows its own retention policy.
 
-Source-attribution snapshots belonging to the member are included in personal exports, without other members' snapshots or AI answer text. Both account deletion choices anonymize attribution in saved posting Nushi answers and their source records. Stored quotes from retained posts remain under the shared departed-member label. Posts selected for deletion enter the same 30-day cleanup.
+Source-attribution snapshots belonging to the member are included in personal exports, without other members' snapshots or AI answer text. Both account deletion choices anonymize attribution in saved posting Nushi answers, their source records and error-report evidence. At withdrawal, chat Nushi answers that used the member's posts are cleared along with their translations. Stored quotes from retained posts remain under the shared departed-member label. Posts selected for deletion enter the same 30-day cleanup.
 
-Posting and chat quota reservations are counted by UTC day. Daily maintenance removes reservations from past days, and account deletion removes keys identifying the departing member from both tables.
+Posting and chat quota reservations are counted by UTC day. Daily maintenance keeps the current and previous UTC days and removes older reservations. Account deletion removes keys identifying the departing member from both tables.
 
 ## Reports and operational review
 

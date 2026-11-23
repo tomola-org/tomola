@@ -57,8 +57,12 @@ The maintenance log reports `revisionsDeleted` and `revisionsPruned` separately.
 The source, revisions and copies share the transaction's 100-row budget, including
 a single post with a large history. Category logs and `run` output include
 `removed` (rows deleted or cleared), `remaining`, `skipped`, `batches` and `stop`. For
-`entry_content`, these count source rows and all affected copies together; the
-separate entry log counts sources and the two revision outcomes. The
+`entry_content`, these count source rows and all affected copies together. Each
+Nushi answer and its source record count as two rows per erased source. Answer
+translations, chat source records, and cleared chat answers and translations
+each count by row. The separate entry log counts sources and the two revision
+outcomes. `nushi_reservations` and `chat_nushi_reservations` separately count
+quota rows older than the previous UTC day. The
 `chat_report_snapshots` category also counts cleared assessment copies. `limit`
 defers the backlog to the next invocation, `time` exhausts the shared time budget,
 and `signal` stops at a shutdown request. `hold` stops preservation work.
