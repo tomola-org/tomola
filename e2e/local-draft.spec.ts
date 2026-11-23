@@ -88,6 +88,43 @@ test("choosing to leave a screen and discard what was typed removes the copy on 
   await expect(body(page)).toHaveValue("");
 });
 
+test("retrying a reply after a lost response opens the accepted reply and clears the device draft", async ({ page }) => {
+  await useMember(page, "zlds_reply_retry@example.com", "/t/new");
+  await typeAndWait(page, "A discussion for a reply retry");
+  await page.getByRole("button", { name: en.submit_post, exact: true }).click();
+  await expect(page).toHaveURL(/\/t\/\d+\?posted=\d+/);
+  const thread = new URL(page.url()).pathname;
+  await page.goto(thread);
+  const reply = "The reply that was accepted before the connection ended.";
+  await typeAndWait(page, reply, "#reply");
+
+  const matches = (url: URL) => url.pathname === `${thread}.data`;
+  const dropResponse = async (route: import("@playwright/test").Route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await route.fetch();
+    await route.abort();
+  };
+  const send = page.getByRole("button", { name: en.submit_reply, exact: true });
+  await page.route(matches, dropResponse);
+  await send.click();
+  await expect(page.getByText(en.write_error_kept, { exact: false })).toBeVisible();
+  expect(await kept(page)).not.toEqual([]);
+  await page.unroute(matches, dropResponse);
+
+  await page.reload();
+  await expect(body(page, "#reply")).toHaveValue(reply);
+  const accepted = page.locator("#replies article").filter({ hasText: reply });
+  await expect(accepted).toHaveCount(1);
+  const anchor = await accepted.getAttribute("id");
+  expect(anchor).toMatch(/^c-\d+$/);
+  await waitForFormReady(page.locator("#reply form"));
+  await send.click();
+  await expect(page).toHaveURL(url => url.hash === `#${anchor}` && url.searchParams.get("posted") === anchor!.slice(2));
+  await expect(accepted).toHaveCount(1);
+  await expect(body(page, "#reply")).toBeEmpty();
+  await expect.poll(() => kept(page)).toEqual([]);
+});
+
 test("writing made on an earlier text of an edit screen is set aside and offered, not dropped", async ({ page, browser }) => {
   await useMember(page, "zlds_other@example.com", "/t/new");
   await waitForClientRoute(page);

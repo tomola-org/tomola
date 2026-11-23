@@ -209,7 +209,7 @@ export const MEMBER_FIXTURES: readonly SeedMember[] = [
   {"email": "member_profile@example.com", "handle": "member_profile", "homeArea": "en", "uiLocale": "en"},
   {"email": "home_controls@example.com", "handle": "controls_reader", "homeArea": "ja", "uiLocale": "en"},
   {"email": "title_first@example.com", "handle": "title_first", "homeArea": "en", "uiLocale": "en"},
-  ...["zlds_writer", "zlds_other", "zlds_third"].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "en" as const, uiLocale: "en" as const })),
+  ...["zlds_writer", "zlds_other", "zlds_third", "zlds_reply_retry"].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "en" as const, uiLocale: "en" as const })),
   ...["draft_new_owner_a", "draft_new_owner_b"].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "en" as const, uiLocale: "en" as const })),
   ...["layout", "scroll", "ai"].map(scenario => ({ email: `reading_rail_${scenario}@example.com`, handle: `reading_rail_${scenario}`, homeArea: "en" as const, uiLocale: "en" as const })),
   { email: "reading_layout@example.com", handle: "reading_layout", homeArea: "en", uiLocale: "en" },
