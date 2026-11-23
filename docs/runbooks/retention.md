@@ -59,8 +59,10 @@ a single post with a large history. Category logs and `run` output include
 `removed` (rows deleted or cleared), `remaining`, `skipped`, `batches` and `stop`. For
 `entry_content`, these count source rows and all affected copies together. Each
 Nushi answer and its source record count as two rows per erased source. Answer
-translations, chat source records, and cleared chat answers and translations
-each count by row. The separate entry log counts sources and the two revision
+translations, finished call fingerprints, chat source records, and cleared chat
+answers and translations each count by row. When cleanup records a missing
+withdrawal marker, the existing trigger hides descendant answers as well.
+The separate entry log counts sources and the two revision
 outcomes. `nushi_reservations` and `chat_nushi_reservations` separately count
 quota rows older than the previous UTC day. The
 `chat_report_snapshots` category also counts cleared assessment copies. `limit`
