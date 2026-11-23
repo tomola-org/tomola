@@ -75,7 +75,7 @@ export async function pruneDeletedEntries(db: Db, now: Date, results?: Retention
       for (const table of derivatives) changed += await deleteRetentionRows(tx, table, eq(table.entryId, entry.id), RETENTION_BATCH_SIZE - changed);
       changed += await deleteRetentionRows(tx, entryReferences, eq(entryReferences.sourceEntryId, entry.id), RETENTION_BATCH_SIZE - changed);
       changed += await updateRetentionRows(tx, translationReports, and(eq(translationReports.entryId, entry.id), excerptPending)!, sql`excerpt = ''`, RETENTION_BATCH_SIZE - changed);
-      changed += await pruneNushiEntryCopies(tx, entry.id, RETENTION_BATCH_SIZE - changed);
+      changed += await pruneNushiEntryCopies(tx, entry.id, now, RETENTION_BATCH_SIZE - changed);
       // Do not let locked copies fill the next candidate window. Retrying them
       // is safe on the next invocation; the pending count still includes them.
       // A Nushi answer and its source label can use the next batch's two slots.

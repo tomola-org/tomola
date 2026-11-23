@@ -9,8 +9,9 @@ import { dayOf } from "~/lib/nushi-requests.server";
 export function runRetentionCleanup(db: Db, now = new Date(), options: RetentionRunOptions = {}): Promise<RetentionResults> {
   return withRetentionRun(options, async () => {
     const results = await cleanupExpiredLimits(db, now);
-    await drainRetentionRows(db, "nushi_reservations", nushiReservations, lt(nushiReservations.day, dayOf(now)), results);
-    await drainRetentionRows(db, "chat_nushi_reservations", chatNushiReservations, lt(chatNushiReservations.day, dayOf(now)), results);
+    const reservationCutoff = dayOf(daysBefore(now, 1));
+    await drainRetentionRows(db, "nushi_reservations", nushiReservations, lt(nushiReservations.day, reservationCutoff), results);
+    await drainRetentionRows(db, "chat_nushi_reservations", chatNushiReservations, lt(chatNushiReservations.day, reservationCutoff), results);
     await drainRetentionRows(db, "nushi_error_reports", nushiReports, and(eq(nushiReports.kind, "error"), lt(nushiReports.createdAt, daysBefore(now, RETENTION.aiQuestionReportDays)))!, results);
     await drainRetentionRows(db, "nushi_moderation_reports", nushiReports, and(eq(nushiReports.kind, "moderation"), lt(nushiReports.createdAt, daysBefore(now, RETENTION.villageReportDays)))!, results);
     await drainRetentionRows(db, "ai_question_reports", aiQuestionReports, lt(aiQuestionReports.createdAt, daysBefore(now, RETENTION.aiQuestionReportDays)), results);

@@ -8,7 +8,7 @@ import { and, eq, inArray, is, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { getTableConfig, PgTable } from "drizzle-orm/pg-core";
 import type { Db, Tx } from "./db/client.server";
 import * as schema from "./db/schema";
-import { accountDeletions, chatAccessLog, chatMessages, chatReportSnapshots, chatTranslationReports, entries, entryMedia, entryMentionSnapshots, invitations, invitationNoteTranslations, jobs, media, memberFollows, memberSignatures, moderationActions, notifications, nushiReports, nushiSources, profiles, reports, sharedInvitations, sharedInvitationUses, suspendedEmailHashes, translations, user, verification, villageEvents, villageInvites, villageMembers, villages } from "./db/schema";
+import { accountDeletions, chatAccessLog, chatMessages, chatReportSnapshots, chatTranslationReports, entries, entryMedia, entryMentionSnapshots, invitations, invitationNoteTranslations, jobs, media, memberFollows, memberSignatures, moderationActions, notifications, profiles, reports, sharedInvitations, sharedInvitationUses, suspendedEmailHashes, translations, user, verification, villageEvents, villageInvites, villageMembers, villages } from "./db/schema";
 import { discardPaidTranslationCalls } from "./jobs/paid-translation.server";
 import { TRANSLATE_INVITATION_NOTE_JOB } from "./invitation-note.server";
 import { DELETED_MEMBER_EMAIL, DELETED_MEMBER_HANDLE, DELETED_MEMBER_ID, isDeletedIdentity } from "./deleted-member";
@@ -25,7 +25,7 @@ import { RETENTION, monthsBefore } from "./retention";
 import { suspendedEmailHash } from "./suspended-email.server";
 import { enqueue } from "./jobs/queue.server";
 import { SEND_ACCOUNT_DELETED_JOB } from "./jobs/mail-kinds";
-import { anonymizeNushiAnswers } from "./nushi-retention.server";
+import { anonymizeNushiAnswers, clearHiddenChatNushiCopies } from "./nushi-retention.server";
 
 export type AccountDeletionInput = { confirmation: string; posts?: "keep" | "delete"; villages?: Record<string, string> };
 export class AccountDeletionError extends Error {
@@ -249,19 +249,7 @@ export async function completeAccountDeletion(db: Db, id: string, opts: { now?: 
       .where(and(eq(entryMedia.mediaId, media.id), eq(entryMedia.isOwnerReference, true), isNull(entries.deletedAt)));
     await tx.update(media).set({ bytes: null, deletedAt: now }).where(and(eq(media.uploadedBy, userId), isNull(media.deletedAt), or(eq(media.avatar, true), sql`not exists (${retained})`)));
     await anonymizeNushiAnswers(tx, userId);
-    // Evidence retains its passages, but material and citation labels follow withdrawal.
-    for (const [path, idKey] of [["{materials}", "id"], ["{answer,citations}", "sourceId"]]) {
-      await tx.update(nushiReports).set({ evidence: sql`jsonb_set(${nushiReports.evidence}, ${path}::text[], (
-        select coalesce(jsonb_agg(case when exists (
-          select 1 from ${nushiSources} where ${nushiSources.answerId} = ${nushiReports.answerId}
-          and ${nushiSources.authorId} = ${userId}
-          and material->>${idKey} in ('e-' || ${nushiSources.entryId} || '-title', 'e-' || ${nushiSources.entryId} || '-body')
-        ) then material || jsonb_build_object('author', ${DELETED_MEMBER_HANDLE}::text) else material end order by ordinal), '[]'::jsonb)
-        from jsonb_array_elements(${nushiReports.evidence} #> ${path}::text[]) with ordinality as items(material, ordinal)
-      ))` }).where(and(eq(nushiReports.kind, "error"), sql`exists (
-        select 1 from ${nushiSources} where ${nushiSources.answerId} = ${nushiReports.answerId} and ${nushiSources.authorId} = ${userId}
-      )`));
-    }
+    await clearHiddenChatNushiCopies(tx, userId);
     await tx.update(chatReportSnapshots).set({ authorHandle: DELETED_MEMBER_HANDLE }).where(eq(chatReportSnapshots.authorId, userId));
     await tx.update(chatAccessLog).set({ readerHandle: DELETED_MEMBER_HANDLE }).where(eq(chatAccessLog.readerId, userId));
     await tx.update(villageEvents).set({ actorHandle: DELETED_MEMBER_HANDLE }).where(eq(villageEvents.actorId, userId));
