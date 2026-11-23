@@ -149,7 +149,7 @@ export async function action({ request }: Route.ActionArgs) {
       db: await getDb(), request, email,
       send: () => auth.api.signInMagicLink({
         // metadata.locale writes the email in this screen's language (app/lib/mail/magic-link.server.ts).
-        body: { email, metadata: { locale: getLocale(), browserNonce: browser.nonce, codeId: pending.id, next } },
+        body: { email, metadata: { locale: getLocale(), browserNonce: browser.nonce, codeId: pending.id, next, reauthentication: reauth } },
         headers: request.headers,
         request,
         asResponse: false,

@@ -7,6 +7,8 @@ import { prepareLoginCode } from "~/lib/auth/login-code-cookie.server";
 import { issueLoginCode, loginCodeIdentifier } from "~/lib/auth/login-code.server";
 import { browserBindingIdentifier } from "~/lib/auth/magic-link-browser.server";
 import { magicLinkNextIdentifier } from "~/lib/auth/magic-link-next.server";
+import { magicLinkReauthenticationIdentifier } from "~/lib/auth/login-method.server";
+import { hashMagicLinkToken } from "~/lib/auth/plugins";
 import { account, passkey, session, verification } from "~/lib/db/schema";
 import * as signing from "~/lib/signing.server";
 import { action as loginAction } from "~/routes/login";
@@ -20,8 +22,8 @@ let h: RouteHarness;
 beforeAll(async () => { h = await setupRouteHarness(); });
 afterAll(() => h.restore());
 
-async function prepareCode(email: string) {
-  const token = await h.issueLink(email, "/settings");
+async function prepareCode(email: string, reauthentication = false) {
+  const token = await h.issueLink(email, "/settings", { reauthentication });
   const pending = prepareLoginCode(h.request("/login", { headers: { cookie: h.linkCookie(token) } }), email);
   const code = await issueLoginCode(h.db, { id: pending.id, email, token, nonce: pending.browser.nonce, secret: "test-secret-0123456789abcdef0123456789abcdef" });
   return { token, code, cookie: [h.linkCookie(token), pending.cookie.split(";")[0], pending.emailCookie.split(";")[0]].join("; ") };
@@ -76,7 +78,9 @@ it("honors credential revocation from settings and accepts freshly issued login 
   await h.db.insert(account).values({ id: "settings-google-fixture", accountId: "fixture-subject", providerId: "google", userId: id });
   const [source] = await h.db.select({ id: session.id }).from(session).where(eq(session.userId, id));
   const registration = await passkeyRegistrationOptions(h.db, id, source.id, "Replacement");
-  const pending = await prepareCode(as + "@example.com");
+  const pending = await prepareCode(as + "@example.com", true);
+  const reauthenticationMarker = eq(verification.identifier, magicLinkReauthenticationIdentifier(hashMagicLinkToken(pending.token)));
+  expect(await h.db.$count(verification, reauthenticationMarker)).toBe(1);
   await h.signIn("settings_revocation_other");
   const other = await prepareCode("settings_revocation_other@example.com");
   const submit = ({ code, cookie }: Awaited<ReturnType<typeof prepareCode>>) =>
@@ -86,6 +90,7 @@ it("honors credential revocation from settings and accepts freshly issued login 
   expect((await submit(pending)).status).toBe(400);
   const confirm = h.request("/auth/confirm", { form: { token: pending.token }, headers: { cookie: pending.cookie } });
   expect(await completeMagicLink(confirm, pending.token)).toEqual({ kind: "invalid" });
+  expect(await h.db.$count(verification, reauthenticationMarker)).toBe(0);
   expect(await (await getAuth()).api.getSession({ headers: revoke.headers })).toBeNull();
   expect(await h.db.select({ id: passkey.id }).from(passkey).where(eq(passkey.userId, id))).toEqual([{ id: registered.id }]);
   expect(await h.db.select({ id: account.id }).from(account).where(eq(account.userId, id))).toEqual([{ id: "settings-google-fixture" }]);

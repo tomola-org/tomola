@@ -11,7 +11,7 @@ import { magicLinkInvitationIdentifier, parseInvitationRef } from "./invitation-
 import { APIError } from "better-auth/api";
 import { MCP_SCOPES } from "~/lib/connect-paths";
 import { MCP_ACCESS_TOKEN_SECONDS, lineMark } from "~/lib/mcp/line.server";
-import { markVerifiedLogin } from "./login-method.server";
+import { magicLinkReauthenticationIdentifier, markVerifiedLogin } from "./login-method.server";
 
 // Magic-link token storage in the DB verification table: SHA-256 encoded as unpadded base64url. This matches Better Auth's default (storeToken: "hashed"),
 // but keep the function here so the app can compute it. When refusing delivery for an unknown recipient or rate limit, the app uses it to delete the row Better Auth wrote before sending
@@ -58,16 +58,21 @@ export function authPlugins(sendMagicLink: SendMagicLink, opts: { baseURL: strin
             expiresAt: new Date(Date.now() + 15 * 60 * 1000),
           });
           const next = safeMagicLinkNext(metadata?.next);
-          if (next !== "/") {
-            const credential = await ctx.context.internalAdapter.findVerificationValue(`magic-link:${hashMagicLinkToken(token)}`);
+          const reauthentication = metadata?.reauthentication === true;
+          if (next !== "/" || reauthentication) {
+            const tokenHash = hashMagicLinkToken(token);
+            const credential = await ctx.context.internalAdapter.findVerificationValue(`magic-link:${tokenHash}`);
             if (credential) {
               try {
-                await ctx.context.internalAdapter.createVerificationValue({
+                if (next !== "/") await ctx.context.internalAdapter.createVerificationValue({
                   identifier: magicLinkNextIdentifier(token), value: next, expiresAt: credential.expiresAt,
+                });
+                if (reauthentication) await ctx.context.internalAdapter.createVerificationValue({
+                  identifier: magicLinkReauthenticationIdentifier(tokenHash), value: "1", expiresAt: credential.expiresAt,
                 });
               } catch {
                 // SQL errors can contain parameter values. Never propagate the private destination or the original error/cause into logs.
-                throw new Error("Could not store magic-link return destination");
+                throw new Error("Could not store magic-link metadata");
               }
             }
           }

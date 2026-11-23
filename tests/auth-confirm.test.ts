@@ -7,6 +7,7 @@ import { hashMagicLinkToken } from "~/lib/auth/plugins";
 import { magicLinkOwnerHash, magicLinkUsedIdentifier } from "~/lib/auth/complete-magic-link.server";
 import { getSessionUser } from "~/lib/auth/session.server";
 import { getAuth } from "~/lib/auth/auth.server";
+import { magicLinkReauthenticationIdentifier } from "~/lib/auth/login-method.server";
 import { browserBindingIdentifier } from "~/lib/auth/magic-link-browser.server";
 import { confirmUrl } from "~/lib/auth/magic-link.server";
 import { createProfile } from "~/lib/profiles.server";
@@ -82,7 +83,8 @@ describe("confirm page", () => {
     expect(cookies.some((c) => /session_token=/.test(c))).toBe(true);
     expect(cookies.some((c) => c.startsWith("tomola.reading-return="))).toBe(false);
     const [u] = await h.db.select().from(user).where(eq(user.email, "bob@example.com"));
-    expect(await h.db.select().from(session).where(eq(session.userId, u.id))).toHaveLength(1);
+    expect(await h.db.select().from(session).where(eq(session.userId, u.id)))
+      .toMatchObject([{ loginMethod: "email_link", reauthenticationMethod: "email_link", reauthenticatedAt: expect.any(Date) }]);
   });
 
   it("carries a new member's stored return path to onboarding and rejects external paths", async () => {
@@ -142,7 +144,7 @@ describe("confirm page", () => {
     const deviceToken = await h.issueLink(email);
     const device = await action(h.args(post(deviceToken))) as Response;
     const deviceCookie = device.headers.getSetCookie().find(cookie => cookie.startsWith("better-auth.session_token="))!.split(";")[0];
-    const token = await h.issueLink(email, "/settings#settings-login-methods");
+    const token = await h.issueLink(email, "/settings#settings-login-methods", { reauthentication: true });
     const cookie = `${h.linkCookie(token)}; ${current.get("cookie")}`;
     const result = await action(h.args(post(token, {}, { cookie }))) as Response;
     expect(result.status).toBe(303);
@@ -162,7 +164,7 @@ describe("confirm page", () => {
     const id = await h.signIn("confirm_link_account");
     const other = h.request("/", { as: "confirm_other_session" }).headers;
     const existing = h.request("/", { as: "confirm_link_account" }).headers;
-    const token = await h.issueLink("confirm_link_account@example.com");
+    const token = await h.issueLink("confirm_link_account@example.com", undefined, { reauthentication: true });
     const cookie = `${h.linkCookie(token)}; ${other.get("cookie")}`;
     const result = await action(h.args(post(token, {}, { cookie }))) as Response;
     expect(result.status).toBe(303);
@@ -174,6 +176,24 @@ describe("confirm page", () => {
     expect(next).toMatchObject({ user: { id } });
     expect(await h.db.select().from(session).where(eq(session.id, next!.session.id)))
       .toMatchObject([{ loginMethod: "email_link", reauthenticationMethod: null, reauthenticatedAt: null }]);
+  });
+
+  it("allows ordinary sign-in with a reauthentication link when the browser has no session cookie", async () => {
+    const id = await h.signIn("confirm_no_session");
+    const original = h.request("/", { as: "confirm_no_session" }).headers;
+    const token = await h.issueLink("confirm_no_session@example.com", "/settings", { reauthentication: true });
+    const marker = eq(verification.identifier, magicLinkReauthenticationIdentifier(hashMagicLinkToken(token)));
+    expect(await h.db.$count(verification, marker)).toBe(1);
+    const result = await action(h.args(post(token))) as Response;
+    expect(result.status).toBe(303);
+    const newCookie = result.headers.getSetCookie().find(cookie => cookie.startsWith("better-auth.session_token="))!.split(";")[0];
+    const auth = await getAuth();
+    expect(await auth.api.getSession({ headers: original })).toMatchObject({ user: { id } });
+    const next = await auth.api.getSession({ headers: new Headers({ cookie: newCookie }) });
+    expect(next).toMatchObject({ user: { id } });
+    expect(await h.db.select().from(session).where(eq(session.id, next!.session.id)))
+      .toMatchObject([{ loginMethod: "email_link", reauthenticationMethod: null, reauthenticatedAt: null }]);
+    expect(await h.db.$count(verification, marker)).toBe(0);
   });
 
   it("POST from another origin is refused before the token is used", async () => {

@@ -18,7 +18,7 @@ import { validBrowserNonce } from "./magic-link-browser.server";
 import { findSharedInvitation, sharedInvitationStatus } from "~/lib/shared-invitations.server";
 import { magicLinkInvitationIdentifier, parseInvitationRef } from "./invitation-ref.server";
 import { magicLinkNextIdentifier } from "./magic-link-next.server";
-import { passkeyOnlyAddress } from "./login-method.server";
+import { magicLinkReauthenticationIdentifier, passkeyOnlyAddress } from "./login-method.server";
 
 // Email URLs point to the confirmation page /auth/confirm (app/routes/auth-confirm.tsx), rather than Better Auth's verification URL (/api/auth/magic-link/verify).
 // Opening the URL does not consume the token; the page button's POST does. Return destinations stay beside the token hash in verification, never in mail.
@@ -127,7 +127,9 @@ export function createMagicLinkSender(deps: {
     // Preserve code-attempt state when the page should behave like an ordinary
     // delivery. Without the underlying link, those codes cannot sign anyone in.
     const cleanup = async (remove: "all" | "link" | "none" = "all") => {
-      const identifiers = remove === "none" ? [] : [`magic-link:${hashMagicLinkToken(token)}`, browserBindingIdentifier(token), magicLinkNextIdentifier(token), magicLinkInvitationIdentifier(token)];
+      const tokenHash = hashMagicLinkToken(token);
+      const identifiers = remove === "none" ? [] : [`magic-link:${tokenHash}`, browserBindingIdentifier(token), magicLinkNextIdentifier(token),
+        magicLinkInvitationIdentifier(token), magicLinkReauthenticationIdentifier(tokenHash)];
       if (remove === "all" && validBrowserNonce(metadata?.codeId)) identifiers.push(loginCodeIdentifier(metadata.codeId), loginCodeLinkIdentifier(token));
       try {
         await db.delete(verification).where(inArray(verification.identifier, identifiers));

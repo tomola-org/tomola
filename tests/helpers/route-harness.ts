@@ -25,7 +25,7 @@ export type RouteHarness = {
   ids: Record<string, string>;
   signIn(handle: string, opts?: { homeArea?: Area; readLangs?: Lang[]; email?: string; profile?: boolean }): Promise<string>;
   // Create an invitation, request a magic link and return its unverified email token for confirmation-page tests.
-  issueLink(email: string, next?: string): Promise<string>;
+  issueLink(email: string, next?: string, options?: { reauthentication?: boolean }): Promise<string>;
   linkCookie(token: string): string;
   request(path: string, opts?: { as?: string; form?: Record<string, string | string[]>; headers?: Record<string, string> }): Request;
   args(req: Request, params?: Record<string, string>): never;
@@ -41,7 +41,7 @@ export async function setupRouteHarness(dbOptions?: Parameters<typeof createTest
   const ids: Record<string, string> = {};
   const linkCookies = new Map<string, string>();
 
-  async function issueLink(email: string, next?: string): Promise<string> {
+  async function issueLink(email: string, next?: string, { reauthentication }: { reauthentication?: boolean } = {}): Promise<string> {
     const sent: string[] = [];
     const auth = createAuth(db, {
       baseURL: BASE,
@@ -56,7 +56,7 @@ export async function setupRouteHarness(dbOptions?: Parameters<typeof createTest
     g.__tomolaAuth = Promise.resolve(auth);
     await createInvitation(db, { email });
     const browser = magicLinkBrowser(new Request(BASE));
-    await auth.api.signInMagicLink({ body: { email, metadata: { browserNonce: browser.nonce, next } }, headers: new Headers() });
+    await auth.api.signInMagicLink({ body: { email, metadata: { browserNonce: browser.nonce, next, reauthentication } }, headers: new Headers() });
     const token = new URL(sent.at(-1)!).searchParams.get("token")!;
     linkCookies.set(token, browser.cookie.split(";")[0]);
     return token;

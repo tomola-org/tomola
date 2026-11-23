@@ -17,7 +17,7 @@ import { clearInvitationCookie, readInvitationCookie } from "./invitation-cookie
 import { magicLinkInvitationContext, magicLinkInvitationIdentifier, parseInvitationRef, sameInvitation } from "./invitation-ref.server";
 import { usedSignupInvitation } from "./signup-invitation.server";
 import { lockSigningMember, SigningError } from "~/lib/signing.server";
-import { verifiedEmailLogin } from "./login-method.server";
+import { magicLinkReauthenticationIdentifier, verifiedEmailLogin } from "./login-method.server";
 import { getSessionUser, loginManagementSession } from "./session.server";
 import { hashMagicLinkToken } from "./plugins";
 export const LOGIN_HEADERS = { "Cache-Control": "no-store", "Referrer-Policy": "strict-origin", "X-Robots-Tag": "noindex" };
@@ -58,15 +58,23 @@ export async function completeMagicLink(request: Request, token: string, login: 
 async function verifyMagicLink(request: Request, token: string, login: EmailLogin): Promise<Completion> {
   const db = await getDb();
   if (!(await matchesMagicLinkBrowser(db, request, token))) return invalid;
-  const [credential] = await db.select({ expiresAt: verification.expiresAt, value: verification.value }).from(verification)
-    .where(eq(verification.identifier, `magic-link:${hashMagicLinkToken(token)}`));
-  if (!credential || credential.expiresAt <= new Date()) return invalid;
+  const tokenHash = hashMagicLinkToken(token);
+  const credentialId = `magic-link:${tokenHash}`;
+  const reauthenticationId = magicLinkReauthenticationIdentifier(tokenHash);
+  const rows = await db.select().from(verification).where(inArray(verification.identifier, [credentialId, reauthenticationId]));
+  const now = new Date();
+  const credential = rows.find(row => row.identifier === credentialId && row.expiresAt > now);
+  if (!credential) return invalid;
+  const requestedReauthentication = rows.some(row => row.identifier === reauthenticationId && row.expiresAt > now);
   const email = (JSON.parse(credential.value) as { email?: string }).email?.toLowerCase();
-  const signedIn = login.method === "email_link" || login.reauthenticate ? await getSessionUser(request) : null;
+  const codeReauthentication = login.method === "email_code" && login.reauthenticate;
+  const signedIn = login.method === "email_link" || codeReauthentication ? await getSessionUser(request) : null;
   const sessionId = signedIn ? await loginManagementSession(request) : undefined;
   const sourceSessionId = email === signedIn?.email.toLowerCase() ? sessionId : undefined;
-  if (login.method === "email_code" && sessionId && !sourceSessionId) return invalid;
-  const proof = { method: login.method, sourceSessionId, fresh: login.method === "email_code" || sourceSessionId !== undefined };
+  if (codeReauthentication && sessionId && !sourceSessionId) return invalid;
+  // Ordinary sign-in supplies the fresh proof used during initial passkey enrollment.
+  const fresh = !!sourceSessionId || (!sessionId && !requestedReauthentication && !codeReauthentication);
+  const proof = { method: login.method, sourceSessionId, fresh };
   const identifier = magicLinkInvitationIdentifier(token);
   const [binding] = await db.select().from(verification).where(eq(verification.identifier, identifier));
   let ref = null;
@@ -77,7 +85,8 @@ async function verifyMagicLink(request: Request, token: string, login: EmailLogi
   const clean = async () => {
     const mappings = await db.select().from(verification).where(eq(verification.identifier, loginCodeLinkIdentifier(token)));
     await db.delete(verification).where(inArray(verification.identifier, [
-      identifier, browserBindingIdentifier(token), magicLinkNextIdentifier(token), loginCodeLinkIdentifier(token), ...mappings.map(row => loginCodeIdentifier(row.value)),
+      identifier, browserBindingIdentifier(token), magicLinkNextIdentifier(token), reauthenticationId, loginCodeLinkIdentifier(token),
+      ...mappings.map(row => loginCodeIdentifier(row.value)),
     ]));
   };
   const auth = await getAuth();

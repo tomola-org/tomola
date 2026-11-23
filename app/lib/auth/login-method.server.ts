@@ -9,6 +9,7 @@ const verified = new WeakMap<object, VerifiedLogin>();
 export const passkeyChallenges = new WeakMap<object, { userId: string; sessionId?: string; createdAt: Date }>();
 export const internalLogin = new AsyncLocalStorage<VerifiedLogin & { userId: string }>();
 export const verifiedEmailLogin = new AsyncLocalStorage<{ method: "email_link" | "email_code"; sourceSessionId?: string; fresh: boolean }>();
+export const magicLinkReauthenticationIdentifier = (tokenHash: string) => `magic-link-reauthentication:${tokenHash}`;
 export const markVerifiedLogin = (context: object, login: VerifiedLogin) => verified.set(context, login);
 export function verifiedLogin(context: object | undefined, userId: string): VerifiedLogin | undefined {
   const issued = internalLogin.getStore();
@@ -37,7 +38,7 @@ export async function passkeyOnlyAddress(db: Db, email: string) {
 }
 
 // Better Auth stores the email beside the token hash. Delete its bound browser,
-// return and code data by that hash as well, including links issued before this setting existed.
+// return, reauthentication and code data by that hash as well.
 export async function invalidateEmailLogins(db: Db, email: string) {
   const links = await db.delete(verification).where(and(like(verification.identifier, "magic-link:%"), sql`strpos(lower(${verification.value}), ${`"email":${JSON.stringify(email.toLowerCase())}`}) > 0`)).returning({ identifier: verification.identifier });
   const hashes = links.map(row => row.identifier.slice("magic-link:".length));
@@ -45,6 +46,7 @@ export async function invalidateEmailLogins(db: Db, email: string) {
   const mappings = await db.select({ value: verification.value }).from(verification).where(inArray(verification.identifier, hashes.map(hash => `magic-link-code-link:${hash}`)));
   await db.delete(verification).where(inArray(verification.identifier, [
     ...hashes.flatMap(hash => ["magic-link-browser", "magic-link-next", "magic-link-invite", "magic-link-code-link"].map(prefix => `${prefix}:${hash}`)),
+    ...hashes.map(magicLinkReauthenticationIdentifier),
     ...mappings.map(row => `magic-link-code:${row.value}`),
   ]));
 }
