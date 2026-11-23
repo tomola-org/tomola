@@ -37,7 +37,7 @@ At `/invites/new`, operators can paste up to 20 email addresses at once and send
 
 Operators can also create a shared link with a registration limit, an expiry date and an optional village. The label and usage counts are visible only to operators. The link itself is shown once, on creation. Operators can revoke it from their invitation page or the administration list. A new account takes one place when it is created, and account deletion does not release that place. If a selected village is no longer eligible during profile setup, the new member completes registration without joining it.
 
-Sign-up email requests through an available shared invitation use a per-link sending allowance alongside recipient limits, leaving the ordinary source IP sending allowance available for sign-in. Individual invitation pages show the email confirmation screen after the mail provider accepts the message and show a retry message if a sending limit or delivery failure prevents the send.
+Sign-up email requests through an available shared invitation use a per-link sending allowance alongside recipient limits, leaving the ordinary source IP sending allowance available for sign-in. Individual invitation pages show the code entry screen after the mail provider accepts the message and show a retry message if a sending limit or delivery failure prevents the send.
 
 Writing, member pages, following lists, chat, and protected machine reads such as search and stance aggregates require membership and the relevant permissions. Principles, why pages and guidance such as `llms.txt` are independent of post visibility. Readability is distinct from permission to reuse posts or publication of the software.
 

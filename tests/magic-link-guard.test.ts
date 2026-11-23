@@ -313,7 +313,7 @@ describe("the login and invitation screens say what happened to the request", ()
 
       // The invitation remains valid when the route reads it, then expires before the sender reads it.
       now = expiresAt;
-      await assertLater(await submit(ip));
+      expect(await submit(ip)).toEqual({ sentTo: null, error: "invalid" });
       expect(mail).toHaveBeenCalledTimes(2);
     } finally {
       h.restore();

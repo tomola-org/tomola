@@ -71,11 +71,11 @@ export function addressHasher(secret: string): (email: string) => string {
 
 // Magic-link delivery (Better Auth's sendMagicLink). Both the Better Auth HTTP endpoint (/api/auth/sign-in/magic-link,
 // closed by app/lib/auth/endpoints.server.ts) and direct auth.api calls must pass through here.
-//   Before returning, while the caller waits: count email/IP pairs, recipients and source IPs. Obtain the IP according to trusted-proxy settings
-//   (app/lib/http/client-ip.server.ts). Valid shared invitations spend their link's allowance instead of the source IP's sending allowance.
-//   Afterward, without waiting: check the recipient (existing user or valid invitation), compose the email, and send it.
-// To prevent response timing from revealing membership, run the same counter updates before returning for every address.
-// If rate-limited or the recipient is unknown, send nothing and throw no exception, so the caller responds as if sent. Only record the outcome.
+// Count email/IP pairs, recipients and source IPs before returning. Obtain the IP according to trusted-proxy settings
+// (app/lib/http/client-ip.server.ts). Valid shared invitations spend their link's allowance instead of the source IP's sending allowance.
+// Callers that request an outcome wait for the delivery job, which checks the recipient, composes the email, and sends it.
+// Other callers, such as scripts and tests, return without waiting for the job. Their response is the same for successful sends,
+// unknown recipients and rate-limited requests. Counter updates before the delivery job do not depend on membership.
 // Login checks registration before requesting mail, behind its lookup allowance. Invitation screens ask for the delivery result after validating the invitation.
 // Before calling sendMagicLink, Better Auth writes a verification row with the token hash as identifier (with the plugin's magic-link: namespace) and the email address as value.
 // Delete that row when not sending, since anyone could otherwise leave rows for unknown addresses. Sent rows remain until the token is consumed or expires after 15 minutes
@@ -163,7 +163,7 @@ export function createMagicLinkSender(deps: {
       try {
         if (limited) return await refuse(`rate limited (${limited})`);
         if (observed?.individualInvitationId) {
-          // Eligibility for an invitation request comes from the invitation, even if its status changes during submission.
+          // Reload the individual invitation before sending. If it became unavailable or no longer matches the recipient, skip delivery.
           const invitation = await findValidInvitationById(db, observed.individualInvitationId, now);
           if (invitation?.email !== email) {
             await cleanup();
@@ -199,7 +199,7 @@ export function createMagicLinkSender(deps: {
           : magicLinkMail({ to: email, url: confirmUrl(deps.baseURL, token), locale, code: code ?? "", invitation: metadata?.invitation === true }));
         if (observed) observed.result = "sent";
       } catch (error) {
-        // Synchronous mailer() exceptions reach here too. Keep the caller's response unchanged; only record the delivery failure.
+        // Synchronous mailer() exceptions reach here too. Report the failure to callers waiting for an outcome.
         console.error(held ? "[magic-link] sending failed" : `[magic-link] sending failed for address=${tag(email)}`);
         if (observed) {
           await cleanup();

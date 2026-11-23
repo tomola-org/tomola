@@ -156,10 +156,11 @@ export async function action({ request, params }: Route.ActionArgs) {
       asResponse: false,
     });
     await magicLinkOutcome.run(outcome, () => invitation.kind === "shared" ? sharedInvitationContext.run(invitation.ref.id, send) : send());
-    if (outcome.result !== "sent") {
-      const error = invitation.kind === "shared" && outcome.result === "invitation_unavailable" ? "invitation_unavailable" : "later";
+    if (outcome.result === "invitation_unavailable") {
+      const error = invitation.kind === "shared" ? "invitation_unavailable" : "invalid";
       return { sentTo: null, error };
     }
+    if (outcome.result !== "sent") return { sentTo: null, error: "later" as const };
   } catch (error) {
     // 403 origin rejection means the opened address differs from configuration. Other rejections indicate invalid input.
     if (isOriginRejected(error)) return { sentTo: null, error: "origin_mismatch" as const };
