@@ -1,7 +1,7 @@
 import { safeErrorText } from "~/lib/error-text.server";
 import { loadDisplayNames, displayNameFields } from "../display-names.server";
 import { withMarkdownScope, MarkdownBudgetError, MarkdownBusyError } from "../markdown-budget.server";
-import { McpServer, createMcpHandler, requireScopes } from "@modelcontextprotocol/server";
+import { McpServer, createMcpHandler, readRequestBody, requireScopes } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { Db } from "~/lib/db/client.server";
 import { isEnabledLang, enabledLangs } from "~/lib/enabled-langs.server";
@@ -199,6 +199,25 @@ export function createMemberMcpServer(db: Db, principal: McpPrincipal, onBusy?: 
   return createTomolaMcpServer(db, principal, onBusy);
 }
 
+const MCP_HANDLER_OPTIONS = { legacy: "stateless", maxRequestBodySize: 256 * 1024 } as const;
+
+async function rejectMcpBatch(request: Request, headers?: HeadersInit): Promise<Response | undefined> {
+  if (request.bodyUsed || request.body?.locked) return;
+  const copy = request.clone();
+  try {
+    const body = await readRequestBody(copy, MCP_HANDLER_OPTIONS.maxRequestBodySize);
+    if (body.tooLarge || !body.text.trimStart().startsWith("[") || !Array.isArray(JSON.parse(body.text))) return;
+    void request.body?.cancel().catch(() => {});
+    return Response.json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Send one MCP message per request." } }, { status: 400, headers });
+  } catch {
+    // The SDK handles malformed JSON and unreadable bodies.
+    return;
+  } finally {
+    // A tee cancellation can wait for the other branch, which the SDK reads next.
+    void copy.body?.cancel().catch(() => {});
+  }
+}
+
 export async function handlePublicMcpRequest(request: Request, deps: { db: Db; baseURL: string }) {
   const headers = { "Cache-Control": "private, no-store" };
   if (!publicReading()) return Response.json({ error: "public_reading_disabled" }, { status: 404, headers });
@@ -209,11 +228,13 @@ export async function handlePublicMcpRequest(request: Request, deps: { db: Db; b
   // Share the anonymous browser/Markdown allowance. Every POST counts, including discovery and unknown tools; credentials never change the public reader.
   const rate = await hitPublicReadLimit(deps.db, request);
   if (rate && !rate.allowed) return Response.json({ error: "rate_limited" }, { status: 429, headers: { ...headers, ...rateLimitHeaders(rate) } });
-  const handler = createMcpHandler(() => createTomolaMcpServer(deps.db, null), { legacy: "stateless", maxRequestBodySize: 256 * 1024 });
+  const responseHeaders = rate ? { ...headers, ...rateLimitHeaders(rate) } : headers;
+  const rejected = await rejectMcpBatch(request, responseHeaders);
+  if (rejected) return rejected;
+  const handler = createMcpHandler(() => createTomolaMcpServer(deps.db, null), MCP_HANDLER_OPTIONS);
   try {
     const response = await handler.fetch(request);
-    response.headers.set("Cache-Control", headers["Cache-Control"]);
-    if (rate) for (const [name, value] of Object.entries(rateLimitHeaders(rate))) response.headers.set(name, value);
+    for (const [name, value] of Object.entries(responseHeaders)) response.headers.set(name, value);
     return response;
   } finally { await handler.close(); }
 }
@@ -227,8 +248,10 @@ export async function handleMcpRequest(request: Request, deps: { db: Db; auth: M
   const response = await withMcpAuth(request, deps, async (principal) => {
     const rate = await hitRateLimit(deps.db, { key: `read:member:${principal.userId}`, ...READ_RATE_LIMIT });
     if (!rate.allowed) return Response.json({ error: "rate_limited" }, { status: 429, headers: { ...rateLimitHeaders(rate), "Cache-Control": "private, no-store" } });
+    const rejected = await rejectMcpBatch(request);
+    if (rejected) return rejected;
     let busy = false;
-    const handler = createMcpHandler(() => createMemberMcpServer(deps.db, principal, () => { busy = true; }), { legacy: "stateless", maxRequestBodySize: 256 * 1024 });
+    const handler = createMcpHandler(() => createMemberMcpServer(deps.db, principal, () => { busy = true; }), MCP_HANDLER_OPTIONS);
     try {
       const response = await handler.fetch(request, { authInfo: {
         token: /^Bearer\s+(.+)$/i.exec(request.headers.get("authorization")!)![1], clientId: principal.client.id, scopes: [...principal.scopes],

@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
+import { McpServer } from "@modelcontextprotocol/server";
 import { createAuth } from "~/lib/auth/auth.server";
 import { entries, profiles, translations, villages, drafts, notifications } from "~/lib/db/schema";
 import { createTopic, createReply } from "~/lib/entries.server";
@@ -10,7 +11,7 @@ import { handleMcpRequest, handlePublicMcpRequest } from "~/lib/mcp/server.serve
 import { buildGlossaryMarkdown } from "~/lib/md/glossary.server";
 import { mcpMarkdown, PRIVATE_RECORDS_RESPONSE } from "~/lib/mcp/output.server";
 import { NO_SCOPE } from "~/lib/roles.server";
-import { hitIpLimit, clearMemoryReadLimitsForTests, READ_RATE_LIMIT } from "~/lib/rate-limit.server";
+import { hitIpLimit, hitRateLimit, clearMemoryReadLimitsForTests, READ_RATE_LIMIT } from "~/lib/rate-limit.server";
 import { addMember, createTestDb } from "./helpers/db";
 
 const baseURL = "https://forum.example.org";
@@ -43,6 +44,57 @@ async function rpcBody(response: Response) {
 const publicRpc = (method: string, params: object = {}, options: Parameters<typeof request>[2] = {}) => handlePublicMcpRequest(request(method, params, options), { db, baseURL });
 const publicCall = (name: string, args: object = {}, options: Parameters<typeof request>[2] = {}) => publicRpc("tools/call", { name, arguments: args }, options);
 const memberCall = (name: string, args: object = {}, token = readToken) => handleMcpRequest(request("tools/call", { name, arguments: args }, { member: true, token }), { db, auth, baseURL });
+
+describe.each(["public", "member"] as const)("%s MCP request framing", endpoint => {
+  const member = endpoint === "member";
+  const post = (body: string, headers?: Record<string, string>) => {
+    const base = request("ping", {}, { member, legacy: true, token: member ? readToken : undefined, headers });
+    const req = new Request(base, { body });
+    return member ? handleMcpRequest(req, { db, auth, baseURL }) : handlePublicMcpRequest(req, { db, baseURL });
+  };
+
+  it("responds with one invalid-request error for a JSON array", async () => {
+    const tool = { jsonrpc: "2.0", method: "tools/call", params: { name: "fixture_tool", arguments: {} } };
+    const registered = vi.spyOn(McpServer.prototype, "registerTool");
+    try {
+      const response = await post(JSON.stringify([1, 2, 3].map(id => ({ ...tool, id }))));
+      expect(response.status).toBe(400);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(await response.json()).toEqual({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Send one MCP message per request." } });
+      expect(registered).not.toHaveBeenCalled();
+      const rate = member
+        ? await hitRateLimit(db, { key: "read:member:reader", ...READ_RATE_LIMIT })
+        : await hitIpLimit(db, new Headers({ "x-forwarded-for": "192.0.2.40" }), "public-read");
+      expect(rate?.count).toBe(2);
+    } finally { registered.mockRestore(); }
+  });
+
+  it("responds with an invalid-request error for an empty array", async () => {
+    const response = await post(" \n[]\t", { "content-type": "text/plain" });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ id: null, error: { code: -32600 } });
+  });
+
+  it("handles single messages and keeps the transport's parse errors", async () => {
+    expect((await post(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }))).status).toBe(202);
+    const ping = await post(JSON.stringify({ jsonrpc: "2.0", id: "ping", method: "ping" }));
+    expect(ping.status).toBe(200);
+    expect(await rpcBody(ping)).toMatchObject({ id: "ping", result: {} });
+    const invalid = await post("[invalid");
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toMatchObject({ id: null, error: { code: -32700, message: "Parse error: Invalid JSON" } });
+  });
+
+  it("retains the transport's body-size and media-type responses", async () => {
+    const byLength = await post("[]", { "content-length": String(256 * 1024 + 1) });
+    const byStream = await post(`["${"é".repeat(128 * 1024)}"]`);
+    for (const response of [byLength, byStream]) {
+      expect(response.status).toBe(413);
+      expect(await response.json()).toEqual({ jsonrpc: "2.0", id: null, error: { code: -32000, message: "Payload Too Large: Request body must not exceed 262144 bytes" } });
+    }
+    expect((await post("{}", { "content-type": "text/plain" })).status).toBe(415);
+  });
+});
 
 beforeAll(async () => {
   db = await createTestDb();
