@@ -1,5 +1,6 @@
 import "./quarantine-policy.test.mjs";
 import "./check-tools.test.mjs";
+import "./check-migration-compat.test.mjs";
 import "./check-resources.test.mjs";
 import "./check-history.test.mjs";
 import assert from "node:assert/strict";
@@ -362,9 +363,9 @@ test("focused requires explicit files and cannot accept traversal or arbitrary V
     assert.throws(() => planChecks(["focused", ...args], root, {}));
   }
   const plan = planChecks(["focused", "tests/email.test.ts"], root, {});
-  assert.equal(plan.steps.length, 1);
-  assert.equal(plan.steps[0].args.at(-1), "tests/email.test.ts");
-  assert.ok(plan.steps[0].args.includes("vitest.fast.config.ts"));
+  const unit = plan.steps.find(step => step.name === "focused unit");
+  assert.equal(unit.args.at(-1), "tests/email.test.ts");
+  assert.ok(unit.args.includes("vitest.fast.config.ts"));
 });
 
 test("every planned unit and browser stage rejects exclusive tests independently of CI", t => {
@@ -593,7 +594,8 @@ test("release runs all PGlite files and only database files on PostgreSQL", (t) 
   const root = fixture(t);
   fs.writeFileSync(path.join(root, "tests/db-client.test.ts"), "// database fixture\n");
   for (const args of [["focused", "tests/email.test.ts", "tests/db-client.test.ts"], ["focused", "--pg", "tests/email.test.ts"]]) {
-    assert.ok(!planChecks(args, root, pgEnv).steps[0].args.includes("vitest.fast.config.ts"));
+    const unit = planChecks(args, root, pgEnv).steps.find(step => step.name === "focused unit");
+    assert.ok(!unit.args.includes("vitest.fast.config.ts"));
   }
 });
 
@@ -616,13 +618,21 @@ test('lint and disclosure guard integration and release; fast mode lints and doc
   assert.ok(planChecks(['fast'], root, {}).steps.some(row => row.name === 'lint baseline'));
   assert.ok(planChecks(['docs'], root, {}).steps.some(row => row.name === 'disclosure baseline'));
 });
+test('migration compatibility lints before unit tests in all code verification modes', t => {
+  const root = fixture(t);
+  for (const args of [['fast'], ['focused', 'tests/email.test.ts'], ['integration'], ['release']]) {
+    const { steps } = planChecks(args, root, pgEnv);
+    const lint = steps.findIndex(step => step.args.includes('scripts/check-migration-compat.mjs'));
+    const unit = steps.findIndex(step => step.command === 'parallel' || step.args.includes('vitest'));
+    assert.ok(lint >= 0 && lint < unit, args[0]);
+  }
+});
 test('focused changed selects only modified tests, and accepts an empty selection without a full-suite fallback', async t => {
   const root = fixture(t);
-  assert.deepEqual(planChecks(['focused', '--changed', '--base=HEAD'], root, {}).steps, []);
+  assert.deepEqual(planChecks(['focused', '--changed', '--base=HEAD'], root, {}).steps.map(step => step.name), ['migration compatibility lint']);
   fs.appendFileSync(path.join(root, 'tests/email.test.ts'), '// changed\n');
   const plan = planChecks(['focused', '--changed', '--base=HEAD'], root, {});
-  assert.equal(plan.steps.length, 1);
-  assert.equal(plan.steps[0].args.at(-1), 'tests/email.test.ts');
+  assert.equal(plan.steps.find(step => step.name === 'focused unit').args.at(-1), 'tests/email.test.ts');
   assert.equal(plan.selection.base, 'HEAD');
   assert.match(plan.selection.mergeBase, /^[a-f0-9]{40}$/);
   assert.deepEqual(plan.selection.changedFiles, ['tests/email.test.ts']);
@@ -674,7 +684,7 @@ test("focused changed selects catalog readers, their unit dependents, and change
   const isolated = planChecks(args.slice(0, -1), root, {});
   assert.deepEqual(isolated.selection.unit, readers);
   assert.ok(isolated.selection.reasons.some(reason => reason.reason === "message-keys" && reason.matched === 1));
-  assert.deepEqual(isolated.steps.map(step => step.name), ["focused unit"]);
+  assert.deepEqual(isolated.steps.map(step => step.name), ["migration compatibility lint", "focused unit"]);
   assert.ok(isolated.selection.reasons.some(reason => reason.reason === "browser-not-inferred"));
 
   write("messages/en.json", '{"view_title":"old","other_title":"unchanged","isolated_title":"old"}\n');
@@ -689,7 +699,7 @@ test("focused catalog changes require a unit stage even when there are no recogn
   fs.writeFileSync(path.join(root, "messages/en.json"), '{"title":"new"}');
   const plan = planChecks(args, root, {});
   assert.equal(plan.selection.all, true);
-  assert.deepEqual(plan.steps.map(step => step.name), ["focused unit"]);
+  assert.deepEqual(plan.steps.map(step => step.name), ["migration compatibility lint", "focused unit"]);
   fs.rmSync(path.join(root, "tests/email.test.ts"));
   assert.throws(() => planChecks(args, root, {}), /require at least one unit test/);
 });

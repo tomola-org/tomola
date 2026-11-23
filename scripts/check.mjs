@@ -19,6 +19,7 @@ const step = (name, args, env = {}) => {
 };
 const runnerTests = { name: "check runner", command: "node", args: ["--test", "--test-isolation=none", "tests/check-runner.test.mjs"], env: {} };
 const lint = { name: "lint baseline", command: "node", args: ["scripts/check-lint.mjs"], env: {} };
+const migrationLint = { name: "migration compatibility lint", command: "node", args: ["scripts/check-migration-compat.mjs"], env: {} };
 const disclosure = { name: "disclosure baseline", command: "node", args: ["scripts/check-disclosure.mjs"], env: {} };
 const bundleSize = { name: "page JavaScript budget", command: "node", args: ["scripts/check-bundle-size.mjs"], env: {}, requires: ["build"] };
 const isBrowserCheck = check => check.command === "pnpm" && (check.args[0]?.startsWith("test:e2e") || check.args[0] === "exec" && check.args[1] === "playwright");
@@ -104,10 +105,10 @@ export function planChecks(argv, root, environment = process.env) {
   const build = { ...step("build", ["build"]), requires: [typecheck.name] };
   const plans = {
     docs: [disclosure, step("documentation", ["exec", "vitest", "run", "--config", "vitest.fast.config.ts", "tests/documentation.test.ts"])],
-    fast: [runnerTests, lint, step("no-DB unit", ["exec", "vitest", "run", "--config", "vitest.fast.config.ts", "--maxWorkers=4"])],
-    focused,
-    integration: [runnerTests, lint, disclosure, typecheck, full, build, bundleSize, ...browserChecks],
-    release: [runnerTests, lint, disclosure, step("migration metadata", ["exec", "drizzle-kit", "check"]), typecheck, ...releaseUnits, build, bundleSize, ...browserChecks,
+    fast: [runnerTests, lint, migrationLint, step("no-DB unit", ["exec", "vitest", "run", "--config", "vitest.fast.config.ts", "--maxWorkers=4"])],
+    focused: [migrationLint, ...focused],
+    integration: [runnerTests, lint, migrationLint, disclosure, typecheck, full, build, bundleSize, ...browserChecks],
+    release: [runnerTests, lint, migrationLint, disclosure, step("migration metadata", ["exec", "drizzle-kit", "check"]), typecheck, ...releaseUnits, build, bundleSize, ...browserChecks,
       step("browser (production PostgreSQL)", ["test:e2e:prod"], prodEnv), ...variantChecks],
   };
   return { mode, dryRun, keepGoing, options: [...(keepGoing ? ["--keep-going"] : []), ...(changed ? ["--changed", ...(base ? [base] : [])] : []), ...explicit, ...(pg ? ["--pg"] : [])], steps: plans[mode], ...(selection ? { selection: {
