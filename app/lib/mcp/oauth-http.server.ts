@@ -86,14 +86,15 @@ export async function handleOAuthHttp(request: Request, db: Db, auth: McpAuth, b
         const transactional = bindAuthToDatabase(auth, tx, metadataSources);
         try {
           const token = endpoint === "token" && grantType === "refresh_token" ? form.get("refresh_token") : null;
+          // Hashing the raw token matches storeTokens while the provider has no refresh token prefix or format conversion. A format change can restore family-wide deletion.
           const sent = typeof token === "string" && token ? (await tx.select({
             id: oauthRefreshToken.id, userId: oauthRefreshToken.userId, clientId: oauthRefreshToken.clientId,
             authorizationCodeId: oauthRefreshToken.authorizationCodeId, rotatedAt: oauthRefreshToken.rotatedAt,
           }).from(oauthRefreshToken).where(eq(oauthRefreshToken.token, hashMagicLinkToken(token))))[0] : undefined;
           const replay: ReturnType<typeof refreshReplayScope.getStore> = sent ? { sent } : undefined;
-          const response = replay ? await refreshReplayScope.run(replay, () => transactional.handler(bounded.clone()))
-            : await processOAuthHttp(bounded, tx, auth, baseURL, transactional.handler);
-          return { response, replay: response.status === 400 ? replay?.outcome : undefined };
+          const processRequest = () => processOAuthHttp(bounded, tx, auth, baseURL, transactional.handler);
+          const response = await (replay ? refreshReplayScope.run(replay, processRequest) : processRequest());
+          return { response, replay: replay?.outcome };
         } finally {
           // Provider discovery translates transport errors into OAuth responses. Check for a
           // deferred resource explicitly so that even those responses roll back this attempt.
@@ -104,7 +105,9 @@ export async function handleOAuthHttp(request: Request, db: Db, auth: McpAuth, b
       if (result.replay) {
         if ("lineMark" in result.replay) {
           console.log(`[http] OAuth refresh replay revoked line ${JSON.stringify(result.replay)}`);
-          response = Response.json({ error: "invalid_grant", error_description: refreshReplayDescription }, { status: 400, headers: noStore });
+          if (response.status === 400) {
+            response = Response.json({ error: "invalid_grant", error_description: refreshReplayDescription }, { status: 400, headers: noStore });
+          }
         } else {
           console.log(`[http] OAuth refresh replay deleted all refresh tokens ${JSON.stringify(result.replay)}`);
         }
@@ -177,6 +180,7 @@ async function processOAuthHttp(bounded: Request, db: Db, auth: McpAuth, baseURL
   const token = stripAccessTokenAuthorizationScheme(String(form?.get("token") ?? ""));
   // The provider reads a refresh token that was already rotated as a replay and ends every refresh token of the member and client. A revocation
   // sent by the client must end only the token's own line, so a rotated token is handed to the provider as if it were live and put back afterwards.
+  // Hashing the raw token matches storeTokens while the provider has no refresh token prefix or format conversion. A format change can restore family-wide deletion.
   const sent = revocation && token ? (await db.select().from(oauthRefreshToken).where(eq(oauthRefreshToken.token, hashMagicLinkToken(token))))[0] : undefined;
   if (sent?.revoked) await db.update(oauthRefreshToken).set({ revoked: null }).where(eq(oauthRefreshToken.id, sent.id));
   const response = await handler(request.clone());

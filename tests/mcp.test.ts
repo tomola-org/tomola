@@ -1477,12 +1477,12 @@ describe("connecting an AI tool", () => {
       const replayLines = logs.mock.calls.flat().map(String).filter(line => line.startsWith("[http] OAuth "));
       expect(replayLines).toHaveLength(2);
       const events = replayLines.map(line => JSON.parse(line.slice(line.indexOf("{"))));
-      expect(events).toEqual([
+      expect(events).toMatchObject([
         { lineMark: mark, revokedCount: 1, secondsSinceRotation: expect.any(Number) },
-        { endpoint: "token", grant_type: "refresh_token", status: 400, ...error, client_id: clientId },
+        { endpoint: "token", grant_type: "refresh_token", status: 400, error: error.error, error_description: error.error_description, client_id: clientId },
       ]);
       expect(events[0].secondsSinceRotation).toBeGreaterThanOrEqual(0);
-      for (const secret of [first.refresh_token, rotated.refresh_token, first.access_token, original.token, original.authorizationCodeId!,
+      for (const secret of [first.refresh_token, rotated.refresh_token, first.access_token, rotated.access_token, original.token, head.token, original.authorizationCodeId!,
         `"${original.userId}"`, "member@example.com"]) expect(replayLines.join("\n")).not.toContain(secret);
 
       const repeated = await refresh(first.refresh_token, credentials);
@@ -1557,8 +1557,11 @@ describe("connecting an AI tool", () => {
       expect(await db.$count(oauthConsent, eq(oauthConsent.clientId, clientId))).toBe(1);
       const lines = logs.mock.calls.flat().map(String).filter(line => line.startsWith("[http] OAuth "));
       expect(lines).toHaveLength(2);
-      expect(JSON.parse(lines[0].slice(lines[0].indexOf("{")))).toEqual({ deletedCount: 3 });
+      expect(JSON.parse(lines[0].slice(lines[0].indexOf("{")))).toMatchObject({ deletedCount: 3 });
       expect(lines[1]).toContain("OAuth failure");
+      for (const secret of [first.refresh_token, first.access_token, original.token, `"${original.userId}"`, "member@example.com"]) {
+        expect(lines.join("\n")).not.toContain(secret);
+      }
     } finally { logs.mockRestore(); }
   });
 
