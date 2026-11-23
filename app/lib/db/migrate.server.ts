@@ -50,7 +50,7 @@ export async function migrateDatabase(config: DbConfig, opts: MigrateOptions = {
     const got = await lock.query<{ locked: boolean }>("SELECT pg_try_advisory_lock($1) AS locked", [MIGRATE_LOCK_KEY]);
     if (!got.rows[0].locked) {
       waited = true;
-      log("another process is migrating this database; waiting for it to finish");
+      log("waiting up to 10 seconds for the migration lock held by another process");
       await lock.query("SELECT pg_advisory_lock($1)", [MIGRATE_LOCK_KEY]);
     }
     const db = await openPgDb(config.url, { migrate: true, max: 2 });
