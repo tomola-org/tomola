@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, ne, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AiQuestionAnswer } from "./ai-questions";
 import type { Tx } from "./db/client.server";
-import { chatMessages, chatMessageTranslations, chatNushiRequests, chatNushiSources, nushiAnswers, nushiReports, nushiSources, nushiTranslations } from "./db/schema";
+import { chatMessages, chatMessageTranslations, chatNushiRequests, chatNushiSources, nushiAnswers, nushiReports, nushiRequests, nushiSources, nushiTranslations } from "./db/schema";
 import { DELETED_MEMBER_HANDLE } from "./deleted-member";
 import { mentionCandidates } from "./mention-syntax";
 import { deleteRetentionRows, updateRetentionRows } from "./retention-batch.server";
@@ -66,6 +66,7 @@ function entryCopies(entryId: SQLWrapper) {
   return {
     sources: sql`${nushiSources.entryId} = ${entryId} and (${nushiSources.author} <> '' or ${nushiSources.textHash} is not null or ${nushiSources.sourceHash} <> '' or ${scopeHashes})`,
     translations: sql`${nushiTranslations.answerId} in (${answers})`,
+    requests: sql`${nushiRequests.entryId} = ${entryId} and ${nushiRequests.state} in ('answered', 'cancelled', 'failed') and ${nushiRequests.sourceHash} <> ''`,
     chatSources: sql`${chatNushiSources.entryId} = ${entryId} and ${chatNushiSources.sourceHash} <> ''`,
     ...hiddenChatCopies(sql`${chatNushiSources.entryId} = ${entryId}`),
   };
@@ -76,6 +77,7 @@ export function pendingNushiEntryCopies(entryId: SQLWrapper) {
   return [
     { table: nushiSources, where: copies.sources, mutations: 2 },
     { table: nushiTranslations, where: copies.translations, mutations: 1 },
+    { table: nushiRequests, where: copies.requests, mutations: 1 },
     { table: chatNushiSources, where: copies.chatSources, mutations: 1 },
     { table: chatMessages, where: copies.chatBodies, mutations: 1 },
     { table: chatMessageTranslations, where: copies.chatTranslations, mutations: 1 },
@@ -102,6 +104,7 @@ export async function pruneNushiEntryCopies(tx: Tx, entryId: number, now: Date, 
     await tx.update(nushiSources).set({ author: "", textHash: null, sourceHash: "" }).where(and(eq(nushiSources.answerId, id), eq(nushiSources.entryId, entryId)));
   }
   changed += sources.length * 2;
+  changed += await updateRetentionRows(tx, nushiRequests, copies.requests, sql`source_hash = ''`, limit - changed);
   changed += await updateRetentionRows(tx, chatNushiSources, copies.chatSources, sql`source_hash = ''`, limit - changed);
   changed += await updateRetentionRows(tx, chatMessages, copies.chatBodies, sql`body = '', nushi_shape = null`, limit - changed);
   changed += await deleteRetentionRows(tx, chatMessageTranslations, copies.chatTranslations, limit - changed);
@@ -135,7 +138,8 @@ export async function anonymizeNushiAnswers(tx: Tx, userId: string) {
     .where(and(eq(nushiReports.kind, "error"), inArray(nushiReports.answerId, tx.select({ id: nushiSources.answerId }).from(nushiSources).where(owned))))
     .orderBy(asc(nushiReports.id)).for("no key update");
   for (const report of reports) {
-    const evidence = report.evidence as { materials: Array<{ id: string; author: string }>; answer: AiQuestionAnswer };
+    const evidence = report.evidence as { materials: Array<{ id: string; author: string }>; answer: AiQuestionAnswer } | null;
+    if (!Array.isArray(evidence?.materials) || !Array.isArray(evidence.answer?.citations) || !Array.isArray(evidence.answer?.readings)) continue;
     const related = byAnswer.get(report.answerId) ?? [];
     const ids = new Set(related.flatMap(source => sourceIds(source.entryId)));
     const authors = new Set(related.map(source => authorKey(source.author)));

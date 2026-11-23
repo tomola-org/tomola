@@ -6,7 +6,9 @@ import { appeals, chatMessages, chatMessageTranslations, chatNushiRequests, chat
 import { DELETED_MEMBER_HANDLE } from "~/lib/deleted-member";
 import { pruneDeletedEntries } from "~/lib/entry-retention.server";
 import { softDeleteEntry } from "~/lib/entries.server";
-import { nushiCounts, readNushiAnswer } from "~/lib/nushi.server";
+import { nushiCaller } from "~/lib/nushi-materials.server";
+import { clearHiddenChatNushiCopies, pruneNushiEntryCopies } from "~/lib/nushi-retention.server";
+import { canRefreshNushi, nushiCounts, readNushiAnswer, requestNushiAgain } from "~/lib/nushi.server";
 import type { RetentionResults } from "~/lib/retention-batch.server";
 import { runRetentionCleanup } from "~/lib/retention.server";
 import { addMember, createTestDb } from "./helpers/db";
@@ -102,14 +104,18 @@ it("renumbers successive erasures including a title-only source", async () => {
   expect((await f.db.select().from(nushiAnswers))[0].answer).toEqual({ status: "answered", citations: [retained], readings: [{ ...reading, citations: [1] }] });
 });
 
-it("clears a remaining translation fingerprint and records the source withdrawal", async () => {
+it("drains answer translations before recording the source withdrawal", async () => {
   vi.stubEnv("VILLAGE_NUSHI", "1");
   vi.stubEnv("VILLAGES", "1");
   vi.stubEnv("PUBLIC_READING", "1");
   const f = await fixture({ sourcePurged: true });
   await f.db.update(nushiSources).set({ author: "", sourceHash: "", textHash: null }).where(eq(nushiSources.entryId, f.source.id));
+  await f.db.insert(nushiTranslations).values({ answerId: f.saved.id, lang: "ja", readings: [TRANSLATED], engine: "fake", model: "fake" });
   expect(await readNushiAnswer(f.db, f.saved.id)).toMatchObject({ hidden: true, reason: "source_changed" });
   expect(await nushiCounts(f.db, [f.topic.id])).toEqual(new Map([[f.topic.id, 1]]));
+  expect(await f.db.transaction(tx => pruneNushiEntryCopies(tx, f.source.id, NOW, 2))).toBe(1);
+  expect(await f.db.select().from(nushiTranslations)).toEqual([]);
+  expect((await f.db.select().from(nushiAnswers))[0]).toMatchObject({ hiddenAt: null, scope: f.saved.scope });
   const results: RetentionResults = {};
   await pruneDeletedEntries(f.db, NOW, results);
   expect((await f.db.select().from(nushiAnswers))[0]).toMatchObject({
@@ -119,9 +125,50 @@ it("clears a remaining translation fingerprint and records the source withdrawal
   expect(await nushiCounts(f.db, [f.topic.id])).toEqual(new Map());
 });
 
+it("clears finished request fingerprints for purged calls and preserves active ones", async () => {
+  vi.stubEnv("VILLAGE_NUSHI", "1");
+  vi.stubEnv("VILLAGES", "1");
+  vi.stubEnv("PUBLIC_READING", "1");
+  const f = await fixture();
+  const reply = { kind: "reply", threadId: f.topic.id, authorId: "river", lang: "en" } as const;
+  const [call] = await f.db.insert(entries).values({ ...reply, body: "@nushi orchard", sourceHash: f.call.sourceHash }).returning();
+  const [finished] = await f.db.insert(nushiRequests).values(["answered", "cancelled", "failed"].map(state => ({ ...f.call, entryId: call.id, state }))).returning();
+  const [answer] = await f.db.insert(nushiAnswers).values({ requestId: finished.id, answer: f.saved.answer, scope: f.saved.scope,
+    lang: "en", engine: "fake", model: "fake", promptVersion: "fixture", hiddenAt: DELETED, hiddenReason: "source_changed",
+  }).returning();
+  const view = (await readNushiAnswer(f.db, answer.id))!;
+  expect(await nushiCaller(f.db, finished)).not.toBeNull();
+  expect(await canRefreshNushi(f.db, view, "river")).toBe(true);
+
+  await f.db.update(entries).set({ deletedAt: DELETED, body: "", sourceHash: null }).where(eq(entries.id, call.id));
+  expect(await nushiCaller(f.db, finished)).toBeNull();
+  expect(await canRefreshNushi(f.db, view, "river")).toBe(false);
+  for (const state of ["pending", "processing"]) {
+    const [activeCall] = await f.db.insert(entries).values({ ...reply, body: "", deletedAt: DELETED }).returning();
+    await f.db.insert(nushiRequests).values({ ...f.call, entryId: activeCall.id, state });
+  }
+
+  const results: RetentionResults = {};
+  expect((await pruneDeletedEntries(f.db, NOW, results)).entries).toBe(0);
+  expect(results.entry_content).toMatchObject({ removed: 3, remaining: 0, stop: "complete" });
+  const requests = await f.db.select().from(nushiRequests);
+  expect(requests.filter(request => request.entryId === call.id)).toEqual(expect.arrayContaining(
+    ["answered", "cancelled", "failed"].map(state => expect.objectContaining({ state, sourceHash: "" })),
+  ));
+  expect(requests.filter(request => request.entryId !== call.id)).toEqual(expect.arrayContaining(
+    ["answered", "pending", "processing"].map(state => expect.objectContaining({ state, sourceHash: f.call.sourceHash })),
+  ));
+  expect(await nushiCaller(f.db, requests.find(request => request.id === finished.id)!)).toBeNull();
+  expect(await canRefreshNushi(f.db, view, "river")).toBe(false);
+  expect(await requestNushiAgain(f.db, "river", answer.id)).toBe(false);
+  await pruneDeletedEntries(f.db, NOW, results);
+  expect(results.entry_content).toMatchObject({ removed: 0, remaining: 0, stop: "complete" });
+});
+
 it.each(["hold", "appeal", "operator deletion"])("keeps Nushi copies under %s", async protectedBy => {
   const f = await fixture();
   await softDeleteEntry(f.db, f.source.id, { now: DELETED });
+  await f.db.insert(nushiRequests).values({ ...f.call, entryId: f.source.id, threadId: f.source.id, callerId: "orchard", sourceHash: f.source.sourceHash! });
   if (protectedBy === "hold") await f.db.update(retentionHold).set({ active: true });
   else {
     const [action] = await f.db.insert(moderationActions).values({ targetEntryId: f.source.id, action: protectedBy === "appeal" ? "hide" : "delete", actorId: "river", reason: "other" }).returning();
@@ -129,8 +176,11 @@ it.each(["hold", "appeal", "operator deletion"])("keeps Nushi copies under %s", 
     else await f.db.update(entries).set({ moderationActionId: action.id }).where(eq(entries.id, f.source.id));
   }
   await pruneDeletedEntries(f.db, NOW);
-  expect((await f.db.select().from(nushiAnswers))[0].answer).toEqual(f.saved.answer);
-  expect((await f.db.select().from(nushiSources).where(eq(nushiSources.entryId, f.source.id)))[0].author).toBe("@orchard_writer");
+  expect((await f.db.select().from(nushiAnswers))[0]).toMatchObject({ answer: f.saved.answer, scope: f.saved.scope });
+  expect(await f.db.select().from(nushiSources).where(eq(nushiSources.entryId, f.source.id))).toMatchObject([
+    { author: "@orchard_writer", textHash: "fixture-text", sourceHash: "fixture" },
+  ]);
+  expect(await f.db.select().from(nushiRequests).where(eq(nushiRequests.entryId, f.source.id))).toMatchObject([{ sourceHash: f.source.sourceHash }]);
 });
 
 async function chatCopies(f: Awaited<ReturnType<typeof fixture>>, hiddenAt: Date | null = DELETED) {
@@ -232,6 +282,40 @@ it.each(["keep", "delete"] as const)("anonymizes saved Nushi attribution when de
   for (const table of [nushiReservations, chatNushiReservations]) expect(await f.db.select({ key: table.key }).from(table)).toEqual([{ key: "member:river" }]);
   await pruneDeletedEntries(f.db, NOW);
   expect((await f.db.select().from(nushiAnswers))[0].answer.citations).toEqual(posts === "keep" ? after.answer.citations : [f.riverQuote]);
+});
+
+it("lets the source withdrawal trigger clear visible chat answers on account deletion", async () => {
+  const f = await fixture();
+  const chat = await chatCopies(f, null);
+  await f.db.insert(chatSequences).values({ villageId: f.village.id, seq: 2 });
+  await f.db.insert(chatNushiSources).values({ requestId: chat.request.id, entryId: f.source.id, authorId: "orchard", revision: 0, sourceHash: "fixture" });
+  const [translation] = await f.db.insert(chatMessageTranslations).values({ messageId: chat.answer.id,
+    lang: "ja", sourceHash: chatSourceHash(chat.answer.body), text: TRANSLATED, state: "ready",
+  }).returning();
+  const chatAnswer = () => f.db.select().from(chatMessages).where(eq(chatMessages.id, chat.answer.id));
+  await f.db.transaction(tx => clearHiddenChatNushiCopies(tx, "orchard"));
+  expect(await chatAnswer()).toEqual([chat.answer]);
+  expect(await f.db.select().from(chatMessageTranslations)).toEqual([translation]);
+
+  await deleteAccount(f.db, "orchard", { confirmation: "orchard_writer", posts: "keep" }, { now: DELETED });
+  expect(await chatAnswer()).toMatchObject([{ body: "", hiddenAt: expect.any(Date), changedSeq: 3 }]);
+  expect(await f.db.select().from(chatMessageTranslations)).toEqual([]);
+  expect(await f.db.select().from(chatSequences)).toMatchObject([{ seq: 3 }]);
+  expect(await f.db.select().from(entries).where(eq(entries.id, f.source.id))).toMatchObject([{ body: ORIGINAL, deletedAt: null }]);
+});
+
+it("completes account deletion with incomplete report evidence", async () => {
+  const f = await fixture();
+  const evidence = [
+    { answer: f.saved.answer },
+    { materials: [{ id: f.orchardQuote.sourceId, author: f.orchardQuote.author }], answer: { readings: f.saved.answer.readings } },
+  ];
+  // These reports have no retained reporter, so their evidence can share an answer.
+  await f.db.insert(nushiReports).values(evidence.map(value => ({ answerId: f.saved.id, kind: "error", reason: "wrong_post", evidence: value })));
+
+  await deleteAccount(f.db, "orchard", { confirmation: "orchard_writer", posts: "keep" }, { now: DELETED });
+  expect((await f.db.select().from(nushiAnswers))[0].answer.citations[0].author).toBe(DELETED_MEMBER_HANDLE);
+  expect((await f.db.select().from(nushiReports).orderBy(nushiReports.id)).map(report => report.evidence)).toEqual(evidence);
 });
 
 it("retains the current and preceding UTC days in both quota tables", async () => {
