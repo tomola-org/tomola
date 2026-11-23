@@ -1,4 +1,5 @@
-import { assertNushiConfig } from "./nushi-config.server";
+import { assertNushiConfig, nushiPlaceEnabled } from "./nushi-config.server";
+import { chatNushiPlaceEnabled } from "./chat-nushi-config.server";
 import { pushConfig } from "./push/config.server";
 import { googleLoginConfig } from "./auth/google-config.server";
 import { operatorConfig } from "~/lib/operator-config.server";
@@ -25,6 +26,10 @@ import { testSiteEnabled } from "~/lib/site-stage.server";
 import { assertAiQuestionConfig, postAskAiEnabled } from "./ai-question-config.server";
 import { questionModel } from "./ai-question-answer.server";
 import { assertVillageSlugSuggestConfig } from "./village-slug-suggest-config.server";
+import { resolveAiUseConfigurations } from "./ai-use-registry.server";
+import { LlmError } from "./llm/errors.server";
+import { priceEnvName, priceFor } from "./llm/pricing.server";
+import type { LlmEnv } from "./llm/types";
 
 // Startup configuration checks, called by app/lib/startup.server.ts. Reject invalid configuration before starting the server instead of waiting for the first request.
 // In production (NODE_ENV is neither development nor test, including unset), also validate the signing secret and site URL:
@@ -118,6 +123,37 @@ export function warnIfSampleRateZero(env: Record<string, string | undefined> = p
   return true;
 }
 
+function checkLlmPrices(env: LlmEnv, log: (message: string) => void): void {
+  let configurations: ReturnType<typeof resolveAiUseConfigurations>;
+  try {
+    configurations = resolveAiUseConfigurations(env);
+  } catch (error) {
+    // Development and tests may start with incomplete engine configuration.
+    if (isDevOrTest(env) && error instanceof LlmError && error.code === "config") return;
+    throw error;
+  }
+
+  const models = new Set<string>();
+  for (const { purpose, config } of configurations) {
+    if (!config || config.id === "fake") continue;
+    if (purpose === "village-nushi" && !nushiPlaceEnabled(env)) continue;
+    if (purpose === "chat-nushi" && !chatNushiPlaceEnabled(env)) continue;
+    models.add(config.model);
+  }
+
+  const missing: string[] = [];
+  for (const model of models) {
+    if (priceFor(model, env, undefined, { warnInvalidOverride: false }).source !== "fallback") continue;
+    const name = priceEnvName(model);
+    const detail = env[name]?.trim() ? `${name} has an invalid format. Use <input>,<output> in USD per million tokens` : `set ${name}`;
+    missing.push(`${JSON.stringify(model)} (${detail})`);
+  }
+  if (missing.length === 0) return;
+  const message = `Missing prices for configured LLM models: ${missing.join(", ")}`;
+  if (!isDevOrTest(env)) throw new Error(message);
+  log(`[startup] WARNING: ${message}`);
+}
+
 // deps.reviewCounts: the review state of the UI strings (by default what the build embedded; tests pass their own).
 export function assertStartupConfig(
   env: Record<string, string | undefined> = process.env,
@@ -161,7 +197,10 @@ export function assertStartupConfig(
   }
   homeTrialEnabled(env);
   operatorConfig(env);
-  if (isDevOrTest(env)) return;
+  if (isDevOrTest(env)) {
+    checkLlmPrices(env, log);
+    return;
+  }
   monthlyBudgetMicro(env);
   const secret = env.BETTER_AUTH_SECRET?.trim();
   if (!secret) throw new Error("BETTER_AUTH_SECRET is required unless NODE_ENV is development or test");
@@ -184,6 +223,7 @@ export function assertStartupConfig(
   divergenceSampleRate(env);
   // Daily automatic retranslation limits, per member and site-wide: reject startup unless nonnegative integers.
   retryCaps(env);
+  checkLlmPrices(env, log);
   warnIfNoRetryModel(env, log);
   warnIfRetryModelIsPrimary(env, log);
   warnIfSampleRateZero(env, log);

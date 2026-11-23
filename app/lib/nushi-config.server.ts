@@ -37,10 +37,16 @@ export function nushiModel(env: LlmEnv = process.env) {
   if (!/^(?:models\/)?[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(model) || !modelMatchesProvider(primaryEngineId(env), model)) throw new Error("Invalid VILLAGE_NUSHI_MODEL");
   return model;
 }
-export function nushiInVillage(village: { kind: string; language: string | null; slug: string | null; endedAt: Date | null; nushiEnabled: boolean | null }, env: LlmEnv = process.env) {
-  return nushiEnabled(env) && publicReading(env) && villagesEnabled(env) && !village.language && !village.endedAt
+export function nushiPlaceEnabled(env: LlmEnv = process.env) {
+  return publicReading(env) && villagesEnabled(env);
+}
+export function nushiAllowedInVillage(village: { kind: string; language: string | null; slug: string | null; endedAt: Date | null; nushiEnabled: boolean | null }) {
+  return !village.language && !village.endedAt
     && (village.kind === "personal" ? village.nushiEnabled === true
       : !!village.slug && ["open", "invite_public"].includes(village.kind) && village.nushiEnabled !== false);
+}
+export function nushiInVillage(village: Parameters<typeof nushiAllowedInVillage>[0], env: LlmEnv = process.env) {
+  return nushiEnabled(env) && nushiPlaceEnabled(env) && nushiAllowedInVillage(village);
 }
 
 export function assertNushiConfig(env: LlmEnv = process.env) {

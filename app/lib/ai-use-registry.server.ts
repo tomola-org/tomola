@@ -66,17 +66,20 @@ export const AI_USE_DEFINITIONS = {
 export type AiUsePurpose = keyof typeof AI_USE_DEFINITIONS;
 export const AI_USE_PURPOSES = Object.keys(AI_USE_DEFINITIONS) as [AiUsePurpose, ...AiUsePurpose[]];
 
+export function resolveAiUseConfigurations(env: LlmEnv) {
+  const context: Context = {
+    env,
+    engines: resolveEngines(env),
+    embedding: resolveEmbeddingEngine(env),
+    figure: figureTranslationEnabled(env) ? createFigureReader(env) : null,
+    sampleRate: currentDivergenceSampleRate(env),
+  };
+  return AI_USE_PURPOSES.filter(purpose => purpose !== "chat-nushi" || chatNushiEnabled(env)).map(purpose => ({ purpose, definition: AI_USE_DEFINITIONS[purpose], config: AI_USE_DEFINITIONS[purpose].current(context) }));
+}
+
 export function readAiUseConfigurations(env: LlmEnv = process.env) {
-  let context: Context;
   try {
-    context = {
-      env,
-      engines: resolveEngines(env),
-      embedding: resolveEmbeddingEngine(env),
-      figure: figureTranslationEnabled(env) ? createFigureReader(env) : null,
-      sampleRate: currentDivergenceSampleRate(env),
-    };
-    return AI_USE_PURPOSES.filter(purpose => purpose !== "chat-nushi" || chatNushiEnabled(env)).map(purpose => ({ purpose, definition: AI_USE_DEFINITIONS[purpose], config: AI_USE_DEFINITIONS[purpose].current(context) }));
+    return resolveAiUseConfigurations(env);
   } catch {
     // Resolver errors can contain a supplied value. Never echo them through a public route.
     throw new Error("AI configuration is unavailable");

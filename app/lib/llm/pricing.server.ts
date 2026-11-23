@@ -71,13 +71,13 @@ const warned = new Set<string>();
 
 // Price precedence: LLM_PRICE_<name> override > price table (dated names like `claude-haiku-4-5-20251001` match a listed name followed by `-`) > provider maximum (fallbackPriceFor).
 // Overrides support unlisted models and price revisions before table updates.
-export function priceFor(model: string, env: LlmEnv = process.env, provider?: string): { price: Price; source: PriceSource } {
+export function priceFor(model: string, env: LlmEnv = process.env, provider?: string, options: { warnInvalidOverride?: boolean } = {}): { price: Price; source: PriceSource } {
   const name = priceEnvName(model);
   const raw = env[name];
   if (raw !== undefined && raw.trim() !== "") {
     const price = parsePriceEnv(raw);
     if (price) return { price, source: "env" };
-    if (!warned.has(name)) {
+    if (options.warnInvalidOverride !== false && !warned.has(name)) {
       warned.add(name);
       console.warn(`[llm] ${name} must look like "<input>,<output>" (USD per 1M tokens); ignoring "${raw}"`);
     }

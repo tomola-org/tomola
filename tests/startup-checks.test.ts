@@ -110,6 +110,9 @@ it("runs the pre-migration gate from runtime files without messages, database dr
     fs.writeFileSync(countsFile, JSON.stringify(CLEAN_COUNTS));
     const ready = check();
     expect(ready.status, ready.stderr).toBe(0);
+    const unpriced = check({ GEMINI_API_KEY: "test-key-not-used", EMBEDDING_ENGINE: "gemini", EMBEDDING_MODEL: "gemini-test-embedding" });
+    expect(unpriced.status).toBe(1);
+    expect(unpriced.stderr).toContain('[startup] Missing prices for configured LLM models: "gemini-test-embedding" (set LLM_PRICE_GEMINI_TEST_EMBEDDING)');
     const fontBin = path.join(dir, "font-bin"), fontDir = path.join(dir, "fonts");
     fs.mkdirSync(fontBin); fs.mkdirSync(fontDir);
     fs.symlinkSync(process.execPath, path.join(fontBin, "node"));
@@ -179,6 +182,81 @@ const good = {
   // Production requires PostgreSQL or explicitly configured PGlite to start.
   DATABASE_URL: "postgres://tomola:pw@db:5432/tomola",
 };
+
+describe("startup model pricing", () => {
+  const base = { ...good, TRANSLATION_RETRY_MODEL: "gemini-3.8-flash" };
+  const unpriced = { ...base, TRANSLATION_GEMINI_MODEL: "gemini-test-primary" };
+  const message = 'Missing prices for configured LLM models: "gemini-test-primary" (set LLM_PRICE_GEMINI_TEST_PRIMARY)';
+
+  it.each(["production", undefined])("requires a valid price override for an active unlisted model with NODE_ENV=%s", NODE_ENV => {
+    expect(() => assertStartupConfig({ ...unpriced, NODE_ENV }, vi.fn())).toThrow(message);
+  });
+
+  it("names a malformed price override without including its value", () => {
+    expect(() => assertStartupConfig({ ...unpriced, LLM_PRICE_GEMINI_TEST_PRIMARY: "unreadable-fixture-value" }, vi.fn())).toThrow(
+      new Error('Missing prices for configured LLM models: "gemini-test-primary" (LLM_PRICE_GEMINI_TEST_PRIMARY has an invalid format. Use <input>,<output> in USD per million tokens)'),
+    );
+  });
+
+  it("accepts a valid price override for an active unlisted production model", () => {
+    const warn = vi.fn();
+    expect(() => assertStartupConfig({ ...unpriced, LLM_PRICE_GEMINI_TEST_PRIMARY: "1.50,7.50" }, warn)).not.toThrow();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it.each(["development", "test"])("warns once about missing prices and continues in %s", NODE_ENV => {
+    const warn = vi.fn();
+    expect(() => assertStartupConfig({ ...unpriced, NODE_ENV, FIGURE_TRANSLATION: "1", FIGURE_READING_MODEL: unpriced.TRANSLATION_GEMINI_MODEL }, warn)).not.toThrow();
+    expect(warn).toHaveBeenCalledExactlyOnceWith(`[startup] WARNING: ${message}`);
+  });
+
+  it("reports distinct models across active features", () => {
+    const models = {
+      TRANSLATION_GEMINI_MODEL: "gemini-test-primary",
+      TRANSLATION_SECONDARY_GEMINI_MODEL: "gemini-test-secondary",
+      TRANSLATION_RETRY_MODEL: "gemini-test-retry",
+      CHAT_TRANSLATION_MODEL: "gemini-test-chat",
+      DIVERGENCE_JUDGE_GEMINI_MODEL: "gemini-test-judge",
+      FIGURE_READING_MODEL: "gemini-test-figure",
+      VILLAGE_NUSHI_MODEL: "gemini-test-nushi",
+      POST_ASK_AI_MODEL: "gemini-test-ask",
+      MODERATION_AI_MODEL: "gemini-test-moderation",
+      EMBEDDING_MODEL: "gemini-test-embedding",
+      VILLAGE_SLUG_SUGGEST_MODEL: "gemini-test-slug",
+    };
+    const warn = vi.fn();
+    assertStartupConfig({
+      ...base, ...models, NODE_ENV: "development",
+      TRANSLATION_SECONDARY: "gemini", DIVERGENCE_JUDGE: "gemini", DIVERGENCE_SAMPLE_RATE: "1",
+      PUBLIC_READING: "1", VILLAGES: "1", VILLAGE_CHAT: "1", VILLAGE_CHAT_NUSHI: "1",
+      FIGURE_TRANSLATION: "1", POST_ASK_AI: "1", MODERATION_AI_TRIAGE_ENABLED: "1", VILLAGE_SLUG_SUGGEST: "1",
+    }, warn);
+    expect(warn).toHaveBeenCalledTimes(1);
+    for (const model of Object.values(models)) expect(warn.mock.calls[0][0]).toContain(`"${model}"`);
+  });
+
+  it("accepts listed and dated models and ignores disabled features and fake engines", () => {
+    const warn = vi.fn();
+    expect(() => assertStartupConfig({
+      ...base, TRANSLATION_GEMINI_MODEL: "gemini-3.5-flash-lite-20990101",
+      EMBEDDING_ENGINE: "fake", EMBEDDING_MODEL: "gemini-test-embedding", TOMOLA_ALLOW_FAKE_ENGINES: "1",
+      CHAT_TRANSLATION_MODEL: "gemini-test-chat", FIGURE_READING_MODEL: "gemini-test-figure",
+      VILLAGE_NUSHI: "1", VILLAGE_CHAT_NUSHI: "1", VILLAGE_NUSHI_MODEL: "gemini-test-nushi",
+      POST_ASK_AI_MODEL: "gemini-test-ask", MODERATION_AI_SPAM_ENABLED: "1", MODERATION_AI_MODEL: "gemini-test-moderation",
+      VILLAGE_SLUG_SUGGEST: "1", VILLAGE_SLUG_SUGGEST_MODEL: "gemini-test-slug",
+      DIVERGENCE_JUDGE: "gemini", DIVERGENCE_JUDGE_GEMINI_MODEL: "gemini-test-judge",
+    }, warn)).not.toThrow();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("ignores the chat nushi model when villages are open but chat is disabled", () => {
+    const warn = vi.fn();
+    expect(() => assertStartupConfig({
+      ...base, PUBLIC_READING: "1", VILLAGES: "1", VILLAGE_CHAT_NUSHI: "1", VILLAGE_NUSHI_MODEL: "gemini-test-nushi",
+    }, warn)).not.toThrow();
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
 
 describe("the startup check in production", () => {
   it.each([undefined, "gemini-3.8-flash"])("starts with distinct Gemini comparison models when the primary override is %s", primaryModel => {
@@ -291,8 +369,11 @@ describe("the startup check in production", () => {
     expect(() => assertStartupConfig({ TOMOLA_OPERATOR_DIR: process.env.TOMOLA_OPERATOR_DIR, ...good, PGLITE_DATA_DIR: "/x" })).not.toThrow();
   });
 
-  it("does not look at the engines in development and test", () => {
-    for (const NODE_ENV of ["development", "test"]) expect(() => assertStartupConfig({ TOMOLA_OPERATOR_DIR: process.env.TOMOLA_OPERATOR_DIR, NODE_ENV })).not.toThrow();
+  it("accepts fake engines and incomplete engine configurations in development and test", () => {
+    for (const NODE_ENV of ["development", "test"]) {
+      expect(() => assertStartupConfig({ NODE_ENV })).not.toThrow();
+      expect(() => assertStartupConfig({ NODE_ENV, TRANSLATION_PRIMARY: "gemini" })).not.toThrow();
+    }
   });
 
   it("does not ask for a database URL in development and test (PGlite is the development database)", () => {
