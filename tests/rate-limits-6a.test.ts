@@ -109,13 +109,20 @@ describe("member control reads", () => {
 
   it("assigns only the designated browser GETs to the control allowance", async () => {
     await fill(`read:member:${h.ids.hana}`, READ_RATE_LIMIT);
+    const proposalId = "0123456789abcdef0123456789abcdef";
     for (const path of [
       "/settings", "/settings/chat", "/settings/connections", "/settings/delete-account", "/settings/media", "/settings/stances", "/settings/tokens",
-      "/mcp/consent", "/mcp/entry-edits/1", "/mcp/entries/1/delete", "/drafts/1", "/drafts/1/preview", "/village-proposals/1", "/suspended", "/appeal/1", "/navigation-header",
+      "/mcp/consent", "/mcp/entry-edits/1", "/mcp/entries/1/delete", "/drafts/1", "/drafts/1/preview", "/drafts/autosave?draftId=1",
+      `/village-proposals/${proposalId}`, `/Village-Proposals/${proposalId}.data`, "/suspended", "/appeal/1", "/drafts/23/preview/_.data",
     ]) {
       expect((await h.outcome(() => requireMember(h.request(path, { as: "hana" })))).status, path).toBe(200);
     }
-    for (const path of ["/settings/export", "/drafts", "/mentions/suggest", "/notifications", "/t/1/edit"]) {
+    for (const path of [
+      "/settings/export", "/drafts", "/mentions/suggest", "/notifications", "/navigation-header", "/t/1/edit",
+      "/drafts/ai-write", "/drafts/autosave/preview", "/drafts/01", "/drafts/0/preview", "/drafts/1/preview/extra",
+      "/mcp/entry-edits/current", "/mcp/entry-edits/9007199254740992", "/mcp/entries/-1/delete", "/mcp/entries/1/edit",
+      "/village-proposals/1", `/village-proposals/${proposalId.toUpperCase()}`, "/appeal/current", "/appeal/1.0",
+    ]) {
       expect((await h.outcome(() => requireMember(h.request(path, { as: "hana" })))).status, path).toBe(429);
     }
     const head = new Request(h.request("/settings/connections", { as: "hana" }), { method: "HEAD" });

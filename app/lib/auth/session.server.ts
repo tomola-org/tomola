@@ -14,6 +14,7 @@ import { hitBrowserReadLimit, hitPublicReadLimit, rateLimitHeaders } from "~/lib
 import { publicReading } from "~/lib/public-reading.server";
 import { readerLoginHref } from "~/lib/public-reading";
 import { setMarkdownMember } from "~/lib/markdown-budget.server";
+import { parseIdOrNull } from "~/lib/params.server";
 
 export type SessionUser = { id: string; email: string; name: string };
 
@@ -49,12 +50,24 @@ export async function requireUser(request: Request): Promise<SessionUser> {
 type Member = { user: SessionUser; profile: Profile; db: Db };
 export type Reader = Member | { db: Db; user?: never; profile?: never };
 
-// Browser account controls, draft and proposal confirmation, and their document navigation.
+// Browser account controls, draft and proposal review, and suspension and appeals.
 const memberControlPaths = [
   /^\/settings(?:\/(?:chat|connections|delete-account|media|stances|tokens))?\/?$/i,
-  /^\/mcp\/(?:consent|entry-edits\/[^/]+|entries\/[^/]+\/delete)\/?$/i,
-  /^\/(?:drafts\/[^/]+(?:\/preview)?|village-proposals\/[^/]+|suspended|appeal\/[^/]+|navigation-header)\/?$/i,
+  /^\/(?:mcp\/consent|suspended)\/?$/i,
+  /^\/drafts\/autosave\/?$/i, // The draft editor verifies that its saved draft still exists.
 ];
+const numericMemberControlPaths = [
+  /^\/drafts\/([1-9]\d*)(?:\/preview)?\/?$/i,
+  /^\/(?:appeal|mcp\/entry-edits)\/([1-9]\d*)\/?$/i,
+  /^\/mcp\/entries\/([1-9]\d*)\/delete\/?$/i,
+];
+
+function isMemberControlPath(pathname: string): boolean {
+  if (memberControlPaths.some(path => path.test(pathname))) return true;
+  const proposal = /^\/village-proposals\/([a-f0-9]{32})\/?$/i.exec(pathname);
+  if (proposal) return proposal[1] === proposal[1].toLowerCase();
+  return numericMemberControlPaths.some(path => parseIdOrNull(path.exec(pathname)?.[1]) !== null);
+}
 
 // Only explicitly selected reading routes use this gate. Writers stay members-only.
 async function getReaderImplementation(request: Request, countPublicRead = true): Promise<Reader> {
@@ -80,7 +93,7 @@ async function requireMemberImplementation(request: Request): Promise<Member> {
     if (!selfService && !resource) throw redirect(`/onboarding?${new URLSearchParams({ next: url.pathname + url.search })}`);
   }
   if (request.method === "GET" || request.method === "HEAD") {
-    const control = request.method === "GET" && memberControlPaths.some(path => path.test(documentUrl(request).pathname));
+    const control = request.method === "GET" && isMemberControlPath(documentUrl(request).pathname);
     const rate = await hitBrowserReadLimit(db, request, user.id, control ? "control" : "shared");
     if (!rate.allowed) throw data("Too many reads. Try again later.", { status: 429, headers: rateLimitHeaders(rate) });
   }

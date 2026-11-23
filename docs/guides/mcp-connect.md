@@ -79,7 +79,7 @@ Reply drafts use `kind: "reply"` and `threadId` and inherit the root topic's pla
 
 ## Limits and short-lived delegated links
 
-Reading is limited to 600 requests per member per hour, shared across the web, REST, MCP and all tokens. Creating drafts is limited to 30 per member per hour across REST and MCP, with at most 100 unpublished drafts made through the API. Search and notifications also have their own shared limits.
+Reading is limited to 600 requests per member per hour, shared across the web, REST, MCP and all tokens. Browser GETs for account controls, draft and proposal review, suspension explanations, and appeals use a separate limit of 120 requests per member per hour. Creating drafts is limited to 30 per member per hour across REST and MCP, with at most 100 unpublished drafts made through the API. Search and notifications also have their own shared limits.
 
 "Open in AI" creates a URL through a same-origin POST when pressed. With `PUBLIC_READING=1`, a publicly readable resource receives a credential-free URL with an `o` return marker; that marker grants no reading permission. Protected resources instead require a member and receive an `oai2` delegation lasting 300 seconds, scoped to the canonical page, reply pages, display language and filter query. Initial HTML/loaders and ordinary copy links contain no delegated key. Treat a delegated URL as a credential; links inside its returned Markdown do not inherit `k`.
 
