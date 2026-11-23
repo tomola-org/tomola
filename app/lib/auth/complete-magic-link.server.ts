@@ -71,9 +71,8 @@ async function verifyMagicLink(request: Request, token: string, login: EmailLogi
   const signedIn = login.method === "email_link" || codeReauthentication ? await getSessionUser(request) : null;
   const sessionId = signedIn ? await loginManagementSession(request) : undefined;
   const sourceSessionId = email === signedIn?.email.toLowerCase() ? sessionId : undefined;
-  if (codeReauthentication && sessionId && !sourceSessionId) return invalid;
   // Ordinary sign-in supplies the fresh proof used during initial passkey enrollment.
-  const fresh = !!sourceSessionId || (!sessionId && !requestedReauthentication && !codeReauthentication);
+  const fresh = !!sourceSessionId || (!requestedReauthentication && !codeReauthentication);
   const proof = { method: login.method, sourceSessionId, fresh };
   const identifier = magicLinkInvitationIdentifier(token);
   const [binding] = await db.select().from(verification).where(eq(verification.identifier, identifier));

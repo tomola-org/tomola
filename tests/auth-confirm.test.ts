@@ -2,7 +2,7 @@ import { m } from "~/paraglide/messages.js";
 import { renderInRouter } from "./helpers/render-in-router";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { rateLimits, session, user, verification } from "~/lib/db/schema";
+import { invitations, rateLimits, session, user, verification } from "~/lib/db/schema";
 import { hashMagicLinkToken } from "~/lib/auth/plugins";
 import { magicLinkOwnerHash, magicLinkUsedIdentifier } from "~/lib/auth/complete-magic-link.server";
 import { getSessionUser } from "~/lib/auth/session.server";
@@ -136,15 +136,17 @@ describe("confirm page", () => {
     }
   });
 
-  it("replaces only the current browser session when a member confirms their email link", async () => {
-    const handle = "confirm_reauth";
+  it.each([
+    { purpose: "reauthentication", handle: "confirm_reauth", reauthentication: true },
+    { purpose: "ordinary sign-in", handle: "confirm_signin", reauthentication: false },
+  ])("replaces only the current browser session when its member confirms a link for $purpose", async ({ handle, reauthentication }) => {
     const email = `${handle}@example.com`;
     const id = await h.signIn(handle);
     const current = h.request("/", { as: handle }).headers;
     const deviceToken = await h.issueLink(email);
     const device = await action(h.args(post(deviceToken))) as Response;
     const deviceCookie = device.headers.getSetCookie().find(cookie => cookie.startsWith("better-auth.session_token="))!.split(";")[0];
-    const token = await h.issueLink(email, "/settings#settings-login-methods", { reauthentication: true });
+    const token = await h.issueLink(email, "/settings#settings-login-methods", { reauthentication });
     const cookie = `${h.linkCookie(token)}; ${current.get("cookie")}`;
     const result = await action(h.args(post(token, {}, { cookie }))) as Response;
     expect(result.status).toBe(303);
@@ -325,7 +327,7 @@ describe("confirm page", () => {
     }
   });
 
-  it("keeps another member's usable button and replaces the browser session on confirmation", async () => {
+  it("keeps ordinary email sign-in fresh and preserves the other member's session", async () => {
     await h.signIn("confirm_target");
     const signedCookie = h.request("/", { as: "confirm_signed_in" }).headers.get("cookie")!;
     const usable = await h.issueLink("confirm_target@example.com");
@@ -334,8 +336,31 @@ describe("confirm page", () => {
     const result = await action(h.args(post(usable, {}, { cookie }))) as Response;
     expect(result.headers.get("location")).toBe("/");
     const newCookie = result.headers.getSetCookie().map(value => value.split(";")[0]).join("; ");
-    expect((await getSessionUser(h.request("/", { headers: { cookie: newCookie } })))?.id).toBe(h.ids.confirm_target);
+    const next = await (await getAuth()).api.getSession({ headers: new Headers({ cookie: newCookie }) });
+    expect(next).toMatchObject({ user: { id: h.ids.confirm_target } });
+    expect(await h.db.select().from(session).where(eq(session.id, next!.session.id)))
+      .toMatchObject([{ loginMethod: "email_link", reauthenticationMethod: "email_link", reauthenticatedAt: expect.any(Date) }]);
     expect((await getSessionUser(h.request("/", { as: "confirm_signed_in" })))?.id).toBe(h.ids.confirm_signed_in);
+  });
+
+  it("keeps invitation signup by email link fresh and preserves the other member's session", async () => {
+    const other = "confirm_invite_other";
+    const otherId = await h.signIn(other);
+    const original = h.request("/", { as: other }).headers;
+    const email = "confirm_invitee@example.com";
+    const token = await h.issueLink(email);
+    const cookie = `${h.linkCookie(token)}; ${original.get("cookie")}`;
+    const result = await action(h.args(post(token, {}, { cookie }))) as Response;
+    expect(result.status).toBe(303);
+    expect(result.headers.get("location")).toBe("/onboarding");
+    const nextCookie = result.headers.getSetCookie().find(value => value.startsWith("better-auth.session_token="))!.split(";")[0];
+    const auth = await getAuth();
+    const next = await auth.api.getSession({ headers: new Headers({ cookie: nextCookie }) });
+    expect(next).toMatchObject({ user: { email } });
+    expect(await h.db.select().from(invitations).where(eq(invitations.email, email))).toMatchObject([{ usedBy: next!.user.id }]);
+    expect(await h.db.select().from(session).where(eq(session.id, next!.session.id)))
+      .toMatchObject([{ loginMethod: "email_link", reauthenticationMethod: "email_link", reauthenticatedAt: expect.any(Date) }]);
+    expect(await auth.api.getSession({ headers: original })).toMatchObject({ user: { id: otherId } });
   });
 
   it("renders every failure and its recovery form on the server without revealing a token", async () => {

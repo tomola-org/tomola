@@ -9,7 +9,7 @@ import { browserBindingIdentifier } from "~/lib/auth/magic-link-browser.server";
 import { magicLinkNextIdentifier } from "~/lib/auth/magic-link-next.server";
 import { magicLinkReauthenticationIdentifier } from "~/lib/auth/login-method.server";
 import { hashMagicLinkToken } from "~/lib/auth/plugins";
-import { account, passkey, session, verification } from "~/lib/db/schema";
+import { account, invitations, passkey, session, verification } from "~/lib/db/schema";
 import * as signing from "~/lib/signing.server";
 import { action as loginAction } from "~/routes/login";
 import { action as inviteAction } from "~/routes/invite";
@@ -54,6 +54,54 @@ it("replaces just the current browser session after email code reauthentication"
   expect(await auth.api.getSession({ headers: oldHeaders })).toBeNull();
   expect((await h.outcome(() => settingsLoader(h.args(h.request("/settings", { as }))))).location).toContain("/login");
   expect(await auth.api.getSession({ headers: new Headers({ cookie: deviceCookie }) })).toMatchObject({ user: { id: userId } });
+});
+
+it.each([
+  { scenario: "ordinary sign-in with another member's cookie", as: "ordinary_code", reauthentication: false, withCookie: true },
+  { scenario: "reauthentication with another member's cookie", as: "reauth_code", reauthentication: true, withCookie: true },
+  { scenario: "reauthentication without a session cookie", as: "reauth_code_no_session", reauthentication: true, withCookie: false },
+])("completes email code sign-in for $scenario", async ({ as, reauthentication, withCookie }) => {
+  const userId = await h.signIn(as);
+  const other = `${as}_other`;
+  const otherId = await h.signIn(other);
+  const original = h.request("/", { as: other }).headers;
+  const pending = await prepareCode(`${as}@example.com`, reauthentication);
+  const cookie = withCookie ? `${pending.cookie}; ${original.get("cookie")}` : pending.cookie;
+  const form = { intent: "login-code", code: pending.code, ...(reauthentication ? { reauth: "1" } : {}) };
+  const result = await loginAction(h.args(h.request("/login", { form, headers: { cookie } }))) as Response;
+  expect(result.status).toBe(303);
+  const nextCookie = result.headers.getSetCookie().find(value => value.startsWith("better-auth.session_token="))!.split(";")[0];
+  const auth = await getAuth();
+  const next = await auth.api.getSession({ headers: new Headers({ cookie: nextCookie }) });
+  expect(next).toMatchObject({ user: { id: userId } });
+  expect(await h.db.select().from(session).where(eq(session.id, next!.session.id))).toMatchObject([{
+    loginMethod: "email_code",
+    reauthenticationMethod: reauthentication ? null : "email_code",
+    reauthenticatedAt: reauthentication ? null : expect.any(Date),
+  }]);
+  expect(await auth.api.getSession({ headers: original })).toMatchObject({ user: { id: otherId } });
+});
+
+it("keeps invitation signup by email code fresh and preserves the other member's session", async () => {
+  const other = "code_invite_other";
+  const otherId = await h.signIn(other);
+  const original = h.request("/", { as: other }).headers;
+  const email = "code_invitee@example.com";
+  const pending = await prepareCode(email);
+  const [invitation] = await h.db.select().from(invitations).where(eq(invitations.email, email));
+  const cookie = `${pending.cookie}; ${original.get("cookie")}`;
+  const request = h.request("/invite", { form: { intent: "login-code", code: pending.code }, headers: { cookie } });
+  const result = await inviteAction(h.args(request)) as Response;
+  expect(result.status).toBe(303);
+  expect(result.headers.get("location")).toBe("/onboarding?next=%2Fsettings");
+  const nextCookie = result.headers.getSetCookie().find(value => value.startsWith("better-auth.session_token="))!.split(";")[0];
+  const auth = await getAuth();
+  const next = await auth.api.getSession({ headers: new Headers({ cookie: nextCookie }) });
+  expect(next).toMatchObject({ user: { email } });
+  expect(await h.db.select().from(invitations).where(eq(invitations.id, invitation.id))).toMatchObject([{ usedBy: next!.user.id }]);
+  expect(await h.db.select().from(session).where(eq(session.id, next!.session.id)))
+    .toMatchObject([{ loginMethod: "email_code", reauthenticationMethod: "email_code", reauthenticatedAt: expect.any(Date) }]);
+  expect(await auth.api.getSession({ headers: original })).toMatchObject({ user: { id: otherId } });
 });
 
 it("keeps the source session when the replacement cannot be inserted", async () => {
