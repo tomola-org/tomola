@@ -7,6 +7,7 @@ import type { Db, Tx } from "~/lib/db/client.server";
 import { entries, entryMedia, figureMedia, media, motionPairs, moderationActions, profiles, user, villages } from "~/lib/db/schema";
 import type { RewrittenMedia } from "./media-processing.server";
 import { MEDIA_LIMITS, MediaError, mediaPath } from "~/lib/media";
+import { ownerMediaReference } from "./media-ownership.server";
 import { isReason } from "~/lib/moderation";
 import type { ModScope } from "~/lib/roles.server";
 import { rootTopic, rootTopicOn, visibleWithTopic } from "~/lib/visibility.server";
@@ -72,8 +73,8 @@ export async function readMedia(db: Db, id: string) {
 }
 function publicMediaCondition(db: Db) {
   const publicReference = db.select({ id: entries.id }).from(entryMedia)
-    .innerJoin(entries, and(eq(entries.id, entryMedia.entryId), eq(entries.authorId, media.uploadedBy)))
-    .innerJoin(rootTopic, rootTopicOn()).where(and(eq(entryMedia.mediaId, media.id), visibleWithTopic()));
+    .innerJoin(entries, eq(entries.id, entryMedia.entryId))
+    .innerJoin(rootTopic, rootTopicOn()).where(and(eq(entryMedia.mediaId, media.id), ownerMediaReference(), visibleWithTopic()));
   return and(isNull(media.deletedAt), exists(publicReference), or(
     eq(media.avatar, false),
     exists(db.select({ id: profiles.userId }).from(profiles).where(eq(profiles.avatarMediaId, media.id))),

@@ -67,7 +67,8 @@ async function loaderImplementation({ request }: Route.LoaderArgs) {
   }
   // Hide reports against the viewer's own posts, which they may not moderate.
   const result = await listReportCards(db, scope, { page: parsePage(request), handled: tab === "handled", viewerId: user.id });
-  const images = await motionImages(db, result.cards.flatMap(card => "body" in card ? [card.body] : []));
+  const { images, ownedByEntry } = await motionImages(db, result.cards.flatMap(card =>
+    card.kind === "topic" || card.kind === "reply" ? [{ id: card.entryId, html: card.body }] : []));
   return {
     inspectedMedia, inspectedId,
     review: null,
@@ -77,7 +78,7 @@ async function loaderImplementation({ request }: Route.LoaderArgs) {
     maxDays: scope.operator ? MAX_SUSPEND_DAYS.operator : MAX_SUSPEND_DAYS.moderator,
     cards: result.cards.map((c) => c.kind === "avatar" ? { ...c, reports: c.reports.map(r => ({ ...r, createdAt: r.createdAt.toISOString().slice(0, 10) })) } : c.kind === "display_name" ? { ...c, reports: c.reports.map(r => ({ ...r, createdAt: r.createdAt.toISOString().slice(0, 10) })) } : c.kind === "village" ? { ...c, reports: c.reports.map(r => ({ ...r, createdAt: r.createdAt.toISOString().slice(0, 10) })) } : c.kind === "chat" ? { ...c, reports: c.reports.map(r => ({ ...r, createdAt: r.createdAt.toISOString().slice(0, 10) })) } : ({
       ...c,
-      motionLinks: [...images.values()].filter(image => image.animated && image.uploadedBy === c.authorId && c.body.includes(image.id)).map(image => mediaPath(image.id, image.width, image.height)),
+      motionLinks: [...images.values()].filter(image => ownedByEntry.get(c.entryId)?.has(image.id) && c.body.includes(image.id)).map(image => mediaPath(image.id, image.width, image.height)),
       authorSuspendedUntil: c.authorSuspendedUntil ? c.authorSuspendedUntil.toISOString().slice(0, 10) : null,
       reports: c.reports.map((r) => ({ ...r, createdAt: r.createdAt.toISOString().slice(0, 10) })),
     })),

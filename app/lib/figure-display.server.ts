@@ -78,11 +78,15 @@ export function decorateFigureHtml(html: string, originalHtml: string, available
 
 export async function prepareEntryFigureDisplay(db: Db, ids: readonly number[], lang: Lang): Promise<(entryId: number, html: string) => string> {
   if (!ids.length) return (_id, html) => html;
-  const sources = await db.select({ id: entries.id, html: entries.html, authorId: entries.authorId }).from(entries).where(inArray(entries.id, [...ids]));
-  const originals = new Map(sources.map(source => [source.id, source.html ?? ""]));
-  const available = await availableFigures(db, sources.flatMap(source => figureImageIds(source.html ?? "")), lang);
-  const images = await motionImages(db, sources.map(source => source.html ?? ""));
-  return (id, html) => decorateFigureHtml(decorateMotionHtml(html, originals.get(id) ?? "", sources.find(source => source.id === id)?.authorId ?? "", images), originals.get(id) ?? "", available, lang);
+  const rows = await db.select({ id: entries.id, html: entries.html }).from(entries).where(inArray(entries.id, [...ids]));
+  const sources = rows.map(row => ({ id: row.id, html: row.html ?? "" }));
+  const originals = new Map(sources.map(source => [source.id, source.html]));
+  const available = await availableFigures(db, sources.flatMap(source => figureImageIds(source.html)), lang);
+  const { images, ownedByEntry } = await motionImages(db, sources);
+  return (id, html) => {
+    const original = originals.get(id) ?? "";
+    return decorateFigureHtml(decorateMotionHtml(html, original, ownedByEntry.get(id), images), original, available, lang);
+  };
 }
 
 // Static document pages keep their ordinary database-free path when they contain

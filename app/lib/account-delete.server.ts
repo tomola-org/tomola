@@ -1,5 +1,6 @@
 import { stopPush } from "./push/subscriptions.server";
 import { lockFigureMedia } from "./figure-translation.server";
+import { matchingMediaOwner } from "./media-ownership.server";
 import { endPersonalVillage } from "./personal-villages.server";
 import { createHmac, randomUUID } from "node:crypto";
 import { signupInvitationIdentifier } from "./signup-village.server";
@@ -235,8 +236,14 @@ export async function completeAccountDeletion(db: Db, id: string, opts: { now?: 
     await tx.delete(schema.passkeyRecoveries).where(eq(schema.passkeyRecoveries.userId, userId));
     await deleteAllStanceRecords(tx, userId);
     await lockFigureMedia(tx);
-    // Keep bytes only where an undeleted discussion still uses the image.
-    await tx.update(media).set({ bytes: null, deletedAt: now }).where(and(eq(media.uploadedBy, userId), isNull(media.deletedAt), or(eq(media.avatar, true), sql`not exists (select 1 from ${entryMedia} inner join ${entries} on ${entries.id} = ${entryMedia.entryId} where ${entryMedia.mediaId} = ${media.id} and ${entries.deletedAt} is null)`)));
+    // Record ownership before replacing the author's and uploader's identities.
+    await tx.execute(sql`update ${entryMedia} set is_owner_reference = ${matchingMediaOwner()}
+      from ${entries}, ${media}
+      where ${entryMedia.entryId} = ${entries.id} and ${entryMedia.mediaId} = ${media.id}
+        and ${entryMedia.isOwnerReference} is null and (${entries.authorId} = ${userId} or ${media.uploadedBy} = ${userId})`);
+    const retained = tx.select({ id: entries.id }).from(entryMedia).innerJoin(entries, eq(entries.id, entryMedia.entryId))
+      .where(and(eq(entryMedia.mediaId, media.id), eq(entryMedia.isOwnerReference, true), isNull(entries.deletedAt)));
+    await tx.update(media).set({ bytes: null, deletedAt: now }).where(and(eq(media.uploadedBy, userId), isNull(media.deletedAt), or(eq(media.avatar, true), sql`not exists (${retained})`)));
     await tx.update(nushiSources).set({ author: DELETED_MEMBER_HANDLE }).where(eq(nushiSources.authorId, userId));
     // Evidence retains its passages, but material and citation labels follow withdrawal.
     for (const [path, idKey] of [["{materials}", "id"], ["{answer,citations}", "sourceId"]]) {

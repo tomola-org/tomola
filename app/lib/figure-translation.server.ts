@@ -8,6 +8,7 @@ import type { LlmEnv } from "./llm/types";
 import { FIGURE_READING_PROMPT_VERSION, figureTranslationEnabled } from "./figure-reading.server";
 import { usableFigure } from "./figure-render.server";
 import { enqueue } from "./jobs/queue.server";
+import { ownerMediaReference } from "./media-ownership.server";
 import { rootTopic, rootTopicOn, visibleWithTopic } from "./visibility.server";
 
 export const PREPARE_FIGURES_JOB = "prepare_figures";
@@ -49,8 +50,8 @@ export async function availableFigures(db: Db, ids: readonly string[], lang: str
 // Icons and avatars never become figure sources, even if their URL is copied.
 export function publicFigureCondition(db: Db, entryId?: number) {
   const reference = db.select({ id: entries.id }).from(entryMedia)
-    .innerJoin(entries, and(eq(entries.id, entryMedia.entryId), eq(entries.authorId, media.uploadedBy)))
-    .innerJoin(rootTopic, rootTopicOn()).where(and(eq(entryMedia.mediaId, media.id), entryId === undefined ? undefined : eq(entries.id, entryId), visibleWithTopic()));
+    .innerJoin(entries, eq(entries.id, entryMedia.entryId))
+    .innerJoin(rootTopic, rootTopicOn()).where(and(eq(entryMedia.mediaId, media.id), ownerMediaReference(), entryId === undefined ? undefined : eq(entries.id, entryId), visibleWithTopic()));
   return and(eq(media.avatar, false), eq(media.animated, false), isNull(media.villageId), isNull(media.deletedAt), isNotNull(media.bytes), exists(reference))!;
 }
 

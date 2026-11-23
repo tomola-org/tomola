@@ -167,21 +167,21 @@ it("binds explicit authored pairs, visibility, translation exclusion, export and
   if (!created.ok) throw new Error(created.error);
   expect(await canReadMedia(db, motionId, null)).toBe(true);
   const html = await renderMarkdown(body);
-  const images = await motionImages(db, [html]);
+  const { images, ownedByEntry } = await motionImages(db, [{ id: created.id, html }]);
+  const owned = ownedByEntry.get(created.id);
   expect(images.get(motionId)?.durationMs).toBe(rewritten.durationMs);
-  expect(decorateMotionHtml(html, html, "motion-author", images)).toContain(`data-motion-duration="${rewritten.durationMs}"`);
-  const passive = decorateMotionHtml(html, html, "motion-author", images, false);
+  expect(decorateMotionHtml(html, html, owned, images)).toContain(`data-motion-duration="${rewritten.durationMs}"`);
+  const passive = decorateMotionHtml(html, html, owned, images, false);
   expect(passive).not.toContain("data-motion-open");
   expect(passive).toContain(`href="${saved.url}"`);
   const repeated = await renderMarkdown(Array(16).fill(body).join("\n\n"));
-  expect(decorateMotionHtml(repeated, repeated, "motion-author", images).match(/data-motion-figure/g)).toHaveLength(15);
-  expect(decorateMotionHtml(html, html, "motion-author", images)).toContain("data-motion-figure");
-  expect(decorateMotionHtml(html, html, "motion-other", images)).not.toContain("data-motion-figure");
+  expect(decorateMotionHtml(repeated, repeated, owned, images).match(/data-motion-figure/g)).toHaveLength(15);
+  expect(decorateMotionHtml(html, html, undefined, images)).not.toContain("data-motion-figure");
   expect((await prepareEntryFigureDisplay(db, [created.id], "en"))(created.id, html)).toContain("data-motion-figure");
   const plain = await renderMarkdown(`![diagram](${saved.url})`);
-  expect(decorateMotionHtml(plain, plain, "motion-author", images)).not.toContain("<img");
+  expect(decorateMotionHtml(plain, plain, owned, images)).not.toContain("<img");
   for (const other of [`[![diagram](${saved.posterUrl})](https://example.com/a.webp)`, `[![diagram](${saved.posterUrl})](${saved.posterUrl})`]) {
-    const h = await renderMarkdown(other); expect(decorateMotionHtml(h, h, "motion-author", images)).not.toContain("data-motion-figure");
+    const h = await renderMarkdown(other); expect(decorateMotionHtml(h, h, owned, images)).not.toContain("data-motion-figure");
   }
   expect((await db.select({ id: media.id }).from(media).where(publicFigureCondition(db))).map(image => image.id)).not.toContain(motionId);
   await db.update(entries).set({ hiddenAt: new Date() }).where(eq(entries.id, created.id));
@@ -309,19 +309,20 @@ it("keeps animated images out of share previews while allowing linked stills", a
 it("links standalone motion and escapes descriptions exactly once, including over the display cap", async () => {
   const stillId = "a".repeat(64), motionId = "b".repeat(64);
   const still = `/media/${stillId}-10x10.webp`, motion = `/media/${motionId}-10x10.webp`;
-  const images = new Map([[stillId, { id: stillId, width: 10, height: 10, animated: false, uploadedBy: "author", durationMs: null }], [motionId, { id: motionId, width: 10, height: 10, animated: true, uploadedBy: "author", durationMs: 1000 }]]);
+  const images = new Map([[stillId, { id: stillId, width: 10, height: 10, animated: false, durationMs: null }], [motionId, { id: motionId, width: 10, height: 10, animated: true, durationMs: 1000 }]]);
+  const owned = new Set([motionId]);
   const html = await renderMarkdown(`![A & B <tag> "quoted"](${motion})`);
-  const shown = decorateMotionHtml(html, html, "author", images);
+  const shown = decorateMotionHtml(html, html, owned, images);
   expect(shown).toContain(`<a href="${motion}">A &amp; B &lt;tag&gt; &quot;quoted&quot;</a>`);
   expect(shown).not.toContain("&amp;amp;");
   const empty = await renderMarkdown(`![](${motion})`);
-  expect(decorateMotionHtml(empty, empty, "author", images)).toContain(`<a href="${motion}">View motion</a>`);
+  expect(decorateMotionHtml(empty, empty, owned, images)).toContain(`<a href="${motion}">View motion</a>`);
   const linked = `<a href="${motion}"><img src="${motion}" alt="A &amp; B"></a>`;
-  expect(decorateMotionHtml(linked, linked, "author", images)).toBe(`<a href="${motion}">A &amp; B</a>`);
+  expect(decorateMotionHtml(linked, linked, owned, images)).toBe(`<a href="${motion}">A &amp; B</a>`);
   const emptyLinked = `<a href="${motion}"><img src="${motion}" alt=""></a>`;
-  expect(decorateMotionHtml(emptyLinked, emptyLinked, "author", images)).toBe(`<a href="${motion}">View motion</a>`);
+  expect(decorateMotionHtml(emptyLinked, emptyLinked, owned, images)).toBe(`<a href="${motion}">View motion</a>`);
   const capped = Array(16).fill(`<a href="${motion}"><img src="${still}" alt="A &amp; B &#x3c;script&#62;"></a>`).join("");
-  const overflow = decorateMotionHtml(capped, capped, "author", images);
+  const overflow = decorateMotionHtml(capped, capped, owned, images);
   expect(overflow).toContain(`<a href="${motion}">A &amp; B &lt;script&gt;</a>`);
   expect(overflow).not.toContain("&amp;amp;");
 });

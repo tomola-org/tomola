@@ -5,9 +5,42 @@ import { setupRouteHarness } from "./helpers/route-harness";
 import { completeAccountDeletion, deleteAccount, requestAccountDeletion } from "~/lib/account-delete.server";
 import { withCredentialSession } from "~/lib/auth/credential-session.server";
 import { createApiToken } from "~/lib/tokens.server";
-import { accountDeletions, apiTokens, entries, jobs, user } from "~/lib/db/schema";
+import { accountDeletions, apiTokens, entries, entryMedia, jobs, media, user } from "~/lib/db/schema";
 import { SEND_ACCOUNT_DELETED_JOB } from "~/lib/jobs/mail-kinds";
+import { canReadMedia, syncMediaReferences } from "~/lib/media-references.server";
 import { addMember, createTestDb } from "./helpers/db";
+
+it.skipIf(!PG_MODE)("waits for an original image reference before retaining account media", { tags: ["postgres"] }, async () => {
+  const db = await createTestDb();
+  const owner = "quit-media-writer";
+  await addMember(db, owner, "quit_media_writer");
+  const image = "d".repeat(64);
+  const body = `![diagram](/media/${image}-1x1.webp)`;
+  await db.insert(media).values({ id: image, uploadedBy: owner, bytes: Buffer.from([1]), byteSize: 1, mime: "image/webp", width: 1, height: 1 });
+  const [post] = await db.insert(entries).values({ authorId: owner, kind: "topic", lang: "en", body }).returning({ id: entries.id });
+  const requestId = await requestAccountDeletion(db, owner, { confirmation: "quit_media_writer", posts: "keep" });
+  let recorded!: () => void, release!: () => void;
+  const ready = new Promise<void>(resolve => { recorded = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const sync = db.transaction(async tx => {
+    await syncMediaReferences(tx, post.id, body);
+    recorded();
+    await gate;
+  });
+  await Promise.race([ready, sync]);
+  const deletion = completeAccountDeletion(db, requestId);
+  try {
+    await expect.poll(async () => {
+      const { rows } = await db.execute(sql`select count(*)::int as waiting from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and cardinality(pg_blocking_pids(pid)) > 0`) as { rows: { waiting: number }[] };
+      return rows[0].waiting;
+    }).toBeGreaterThan(0);
+  } finally {
+    release();
+    await Promise.all([sync, deletion]);
+  }
+  expect(await db.select().from(entryMedia)).toEqual([{ entryId: post.id, mediaId: image, isOwnerReference: true }]);
+  expect(await canReadMedia(db, image, null)).toBe(true);
+});
 
 it.skipIf(!PG_MODE)("prevents a request authenticated before deletion from minting credentials after its commit", { tags: ["postgres"] }, async () => {
   const h = await setupRouteHarness();

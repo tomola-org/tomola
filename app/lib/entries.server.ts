@@ -964,8 +964,8 @@ async function viewsWithHtml(db: Db, rows: readonly ClassifiedViewRow[], viewer:
   const stale = rows.filter(r => (r.visibility === "visible" || r.visibility === "hidden") && (r.html === null || r.htmlVersion !== RENDER_VERSION));
   const snapshots = await resolveSavedMentionsFor(db, stale);
   const views = await Promise.all(rows.map(r => viewWithHtml(db, r, viewer, snapshots.get(r.id) ?? new Map())));
-  const images = await motionImages(db, views.map(view => view.html));
-  return views.map(view => ({ ...view, html: decorateMotionHtml(view.html, view.html, view.authorId, images) }));
+  const { images, ownedByEntry } = await motionImages(db, views);
+  return views.map(view => ({ ...view, html: decorateMotionHtml(view.html, view.html, ownedByEntry.get(view.id), images) }));
 }
 
 function toView(

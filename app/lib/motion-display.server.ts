@@ -1,8 +1,9 @@
 import { unescapeAttribute } from "./html-attribute";
-import { and, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "./db/client.server";
-import { media } from "./db/schema";
+import { entries, entryMedia, media } from "./db/schema";
 import { MEDIA_LIMITS, parseMediaImage } from "./media";
+import { ownerMediaReference } from "./media-ownership.server";
 import { siteUrl } from "./site-url";
 import { m } from "~/paraglide/messages.js";
 
@@ -23,11 +24,11 @@ export function motionCandidates(html: string) {
     return motion && still ? [{ motion, still }] : [];
   });
 }
-type Image = { id: string; width: number; height: number; animated: boolean; uploadedBy: string; durationMs: number | null };
-export function decorateMotionHtml(html: string, original: string, authorId: string, images: ReadonlyMap<string, Image>, interactive = true) {
+type Image = { id: string; width: number; height: number; animated: boolean; durationMs: number | null };
+export function decorateMotionHtml(html: string, original: string, ownedMotions: ReadonlySet<string> | undefined, images: ReadonlyMap<string, Image>, interactive = true) {
   const valid = (motion: ReturnType<typeof path>, still: ReturnType<typeof path>) => {
     const a = motion && images.get(motion.id), b = still && images.get(still.id);
-    return a?.animated && !b?.animated && b && a.uploadedBy === authorId && a.width === motion!.width && a.height === motion!.height && b.width === still!.width && b.height === still!.height;
+    return a?.animated && !b?.animated && b && ownedMotions?.has(a.id) && a.width === motion!.width && a.height === motion!.height && b.width === still!.width && b.height === still!.height;
   };
   const authored = new Set(motionCandidates(original).filter(pair => valid(pair.motion, pair.still)).map(pair => `${pair.motion.id}:${pair.still.id}`));
   let shown = 0;
@@ -54,8 +55,18 @@ export function decorateMotionHtml(html: string, original: string, authorId: str
     return `<span class="inline-block max-w-full" data-motion-figure data-motion-duration="${images.get(motion.id)!.durationMs ?? 0}">${image}<span class="block ui-meta"><a href="${url}" ${interactive ? "data-motion-open" : ""} data-motion-back="${escape(m.motion_show_still())}">${escape(m.motion_show())}</a></span><span class="block ui-meta" data-motion-note hidden role="status">${escape(m.motion_original_text())}</span></span>`;
   });
 }
-export async function motionImages(db: Db, html: string[]) {
-  const ids = [...new Set(html.flatMap(value => [...value.matchAll(/\/media\/([a-f0-9]{64})-/g)].map(match => match[1])))];
-  const rows = ids.length ? await db.select({ id: media.id, width: media.width, height: media.height, animated: media.animated, uploadedBy: media.uploadedBy, durationMs: media.durationMs }).from(media).where(and(inArray(media.id, ids), isNull(media.deletedAt))) : [];
-  return new Map(rows.map(row => [row.id, row]));
+export async function motionImages(db: Db, sources: readonly { id: number; html: string }[]) {
+  const ids = [...new Set(sources.flatMap(({ html }) => [...html.matchAll(/\/media\/([a-f0-9]{64})-/g)].map(match => match[1])))];
+  const rows = ids.length ? await db.select({ id: media.id, width: media.width, height: media.height, animated: media.animated, durationMs: media.durationMs }).from(media).where(and(inArray(media.id, ids), isNull(media.deletedAt))) : [];
+  const motions = rows.filter(row => row.animated).map(row => row.id);
+  const references = motions.length ? await db.select({ entryId: entryMedia.entryId, mediaId: entryMedia.mediaId })
+    .from(entryMedia).innerJoin(entries, eq(entries.id, entryMedia.entryId)).innerJoin(media, eq(media.id, entryMedia.mediaId))
+    .where(and(inArray(entryMedia.entryId, sources.map(source => source.id)), inArray(entryMedia.mediaId, motions), ownerMediaReference())) : [];
+  const ownedByEntry = new Map<number, Set<string>>();
+  for (const ref of references) {
+    const owned = ownedByEntry.get(ref.entryId) ?? new Set<string>();
+    owned.add(ref.mediaId);
+    ownedByEntry.set(ref.entryId, owned);
+  }
+  return { images: new Map(rows.map(row => [row.id, row])), ownedByEntry };
 }

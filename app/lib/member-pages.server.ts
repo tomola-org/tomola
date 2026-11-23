@@ -114,7 +114,8 @@ export async function loadMemberPageContent(db: Db, member: MemberPageIdentity, 
       }
       const displays = await loadEntryDisplays(db, [{ id: row.id, kind: "topic", lang: row.lang as Lang, sourceHash: row.sourceHash }], { ...opts, variant: "full" });
       const { decorateMotionHtml, motionImages } = await import("./motion-display.server");
-      html = decorateMotionHtml(html, html, member.userId, await motionImages(db, [html]));
+      const { images, ownedByEntry } = await motionImages(db, [{ id: row.id, html }]);
+      html = decorateMotionHtml(html, html, ownedByEntry.get(row.id), images);
       intro = { id: row.id, lang: row.lang as Lang, title: row.title, headline: (await headlineFromBody(row.body)), html, display: displays.get(row.id)! };
     }
   }
