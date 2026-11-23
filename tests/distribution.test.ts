@@ -453,6 +453,9 @@ describe("through every path of the application (the route harness)", () => {
       for (const id of [hidden, plain.id]) {
         const response = await stancesMd(as, id);
         expect(response.status).toBe(status);
+        for (const header of ["content-type", "cache-control"]) {
+          expect(response.headers.get(header)).toBe(missing.headers.get(header));
+        }
         expect(await response.text()).toBe(missingText);
       }
     }
