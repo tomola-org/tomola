@@ -1,4 +1,5 @@
 import { fetchClientMetadataResource } from "@better-auth/cimd/node";
+import { createCimdMetadataSources, type MetadataSources } from "./cimd-cache.server";
 
 export type MetadataFetch = typeof fetchClientMetadataResource;
 export const DCR_JWKS_DISCOVERY_ID = "tomola-dcr-jwks";
@@ -11,12 +12,13 @@ const MAX_ORIGIN_ACTIVE = 4;
 const MAX_STARTS = 120;
 const MAX_ORIGIN_STARTS = 30;
 
-type Resource = { request: Request; key: string; signal: AbortSignal };
+type Resource = { request: Request; url: string; key: string; signal: AbortSignal };
 type Snapshot = { body: Uint8Array<ArrayBuffer> | null; init: ResponseInit };
 
 function resource(input: Parameters<MetadataFetch>[0], init?: RequestInit): Resource {
   const request = new Request(input, init);
-  return { request, key: JSON.stringify([request.url, request.method, [...request.headers]]), signal: request.signal };
+  const url = typeof input === "string" ? input : request.url;
+  return { request, url, key: JSON.stringify([url, request.method, [...request.headers]]), signal: request.signal };
 }
 
 function respond(snapshot: Snapshot): Response {
@@ -124,50 +126,73 @@ export function sharedMetadataFetch(fetch?: MetadataFetch): MetadataFetch {
   return transport;
 }
 
+const sourcesByTransport = new WeakMap<MetadataFetch, MetadataSources>();
+export function sharedMetadataSources(fetch?: MetadataFetch): MetadataSources {
+  const keys = sharedMetadataFetch(fetch);
+  let sources = sourcesByTransport.get(keys);
+  if (!sources) {
+    sources = createCimdMetadataSources(keys);
+    sourcesByTransport.set(keys, sources);
+  }
+  return sources;
+}
+
 const NEED_RESOURCE = Symbol("OAuth client resource needed");
 
 // The provider still chooses and validates every URL. Capture a cache miss in
 // the transaction, then fetch only after its caller has rolled the transaction
 // back. Retry the provider with the prepared bytes and the client lock held.
 export async function withPreparedMetadata<T>(
-  fetch: MetadataFetch,
+  sources: MetadataSources,
   signal: AbortSignal,
-  run: (preparedFetch: MetadataFetch, requirePrepared: () => void) => Promise<T>,
+  run: (preparedSources: MetadataSources, requirePrepared: () => void) => Promise<T>,
 ): Promise<T> {
   const prepared = new Map<string, { url: string; respond: () => Response }>();
-  let pending: Resource | undefined;
-  const preparedFetch: MetadataFetch = async (input, init) => {
+  type FetchKind = "document" | "keys";
+  let pending: (Resource & { kind: FetchKind }) | undefined;
+  const prepare = (kind: FetchKind): MetadataFetch => async (input, init) => {
     const needed = resource(input, init);
+    needed.key = kind + needed.key;
     const supply = prepared.get(needed.key);
     if (supply) return supply.respond();
-    pending ??= needed;
+    pending ??= { ...needed, kind };
     throw NEED_RESOURCE;
+  };
+  const confirmations = new Map<string, string>();
+  const preparedSources: MetadataSources = {
+    document: prepare("document"),
+    keys: prepare("keys"),
+    isFresh: sources.isFresh,
+    confirm: (clientId, body) => { confirmations.set(clientId, body); },
   };
   while (true) {
     signal.throwIfAborted();
     pending = undefined;
+    confirmations.clear();
     try {
-      return await run(preparedFetch, () => {
+      const result = await run(preparedSources, () => {
         if (pending) throw NEED_RESOURCE;
         signal.throwIfAborted();
       });
+      for (const [clientId, body] of confirmations) sources.confirm(clientId, body);
+      return result;
     } catch (error) {
       if (error !== NEED_RESOURCE || !pending) throw error;
-      const { key, request } = pending as Resource;
+      const { key, request, url, kind } = pending as Resource & { kind: FetchKind };
       // After verifying a client assertion the provider reads the client again.
       // A no-cache metadata document can require one conditional revalidation.
       const conditional = request.headers.has("if-none-match") || request.headers.has("if-modified-since");
-      const knownUrl = [...prepared.values()].some(resource => resource.url === request.url);
+      const knownUrl = [...prepared.values()].some(resource => resource.url === url);
       if (prepared.size >= 3 || (prepared.size === 2 && !(conditional && knownUrl))) {
         throw new MetadataFetchBusy("Too many client resources for one request");
       }
       try {
-        const response = await fetch(request.url, { method: request.method, headers: request.headers, redirect: "error", signal });
+        const response = await sources[kind](url, { method: request.method, headers: request.headers, redirect: "error", signal });
         const snapshot = await readSnapshot(response, signal);
-        prepared.set(key, { url: request.url, respond: () => respond(snapshot) });
+        prepared.set(key, { url, respond: () => respond(snapshot) });
       } catch (failure) {
         if (failure instanceof MetadataFetchBusy || signal.aborted) throw failure;
-        prepared.set(key, { url: request.url, respond: () => { throw failure; } });
+        prepared.set(key, { url, respond: () => { throw failure; } });
       }
     }
   }

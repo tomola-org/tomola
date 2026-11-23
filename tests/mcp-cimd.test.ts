@@ -9,12 +9,28 @@ const fake = vi.hoisted(() => ({ lookup: vi.fn(), request: vi.fn() }));
 import { fetchClientMetadataResource } from "@better-auth/cimd/node";
 import { fetchMcpClientMetadata, MetadataFetchBusy, sharedMetadataFetch, withPreparedMetadata, type MetadataFetch } from "~/lib/mcp/cimd.server";
 import { deferred } from "./helpers/deferred";
+import { CIMD_CACHE, createCimdMetadataSources } from "~/lib/mcp/cimd-cache.server";
 
 // The production transport is an external ESM package. Update Node's live builtin bindings too.
 beforeAll(() => {
   vi.spyOn(dns, "lookup").mockImplementation(fake.lookup);
   vi.spyOn(https, "request").mockImplementation(fake.request);
   syncBuiltinESMExports();
+});
+
+it("keeps a bounded cache of CIMD documents and evicts the least recently used", async () => {
+  const upstream: MetadataFetch = async input => Response.json({
+    client_id: String(input), client_name: "Fixture", redirect_uris: ["https://client.example/callback"],
+  });
+  const cache = createCimdMetadataSources(upstream);
+  const id = (index: number) => `https://client.example/${index}`;
+  const add = async (index: number) => cache.confirm(id(index), await (await cache.document(id(index))).text());
+  for (let index = 0; index < CIMD_CACHE.maxEntries; index++) await add(index);
+  expect(cache.isFresh(id(0))).toBe(true);
+  await add(CIMD_CACHE.maxEntries);
+  expect(cache.isFresh(id(0))).toBe(true);
+  expect(cache.isFresh(id(1))).toBe(false);
+  expect(cache.isFresh(id(CIMD_CACHE.maxEntries))).toBe(true);
 });
 
 describe("shared CIMD transport admission", () => {
@@ -100,7 +116,7 @@ describe("shared CIMD transport admission", () => {
       return Response.json({});
     });
     const urls = [1, 2, 3].map(index => `https://client.example/${index}`);
-    await expect(withPreparedMetadata(upstream, new AbortController().signal, async (fetch, requirePrepared) => {
+    await expect(withPreparedMetadata({ document: upstream, keys: upstream, isFresh: () => false, confirm: () => {} }, new AbortController().signal, async ({ keys: fetch }, requirePrepared) => {
       inside = true;
       try {
         for (const url of urls) await fetch(url);

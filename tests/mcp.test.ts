@@ -36,6 +36,7 @@ import * as markdown from "~/lib/markdown.server";
 import * as markdownBudget from "~/lib/markdown-budget.server";
 import { MarkdownBudgetError, MarkdownBusyError } from "~/lib/markdown-budget.server";
 import { handleOAuthHttp } from "~/lib/mcp/oauth-http.server";
+import { CIMD_CACHE } from "~/lib/mcp/cimd-cache.server";
 import { mcpText, PRIVATE_RECORDS_RESPONSE, redactCredentialLinks } from "~/lib/mcp/output.server";
 import { loader as loginLoader, action as loginAction } from "~/routes/mcp-login";
 import { action as confirmAction } from "~/routes/auth-confirm";
@@ -70,6 +71,18 @@ let cimdConditionalFetches = 0;
 const cachedCimdId = "https://cacheable-client.example.net/metadata.json";
 const revalidatedCimdId = "https://revalidated-client.example.net/metadata.json";
 const firstCimdFetches = new Map<string, number>();
+const managedCimdId = "https://managed-client.example.net/metadata.json";
+const managedCimdMaxAge = 60;
+const logoutMetadata = {
+  backchannel_logout_uri: "https://client.example.net/logout",
+  backchannel_logout_session_required: true,
+  post_logout_redirect_uris: ["https://client.example.net/signed-out"],
+  enable_end_session: true,
+};
+const noClientLogout = { backchannelLogoutUri: null, backchannelLogoutSessionRequired: null, postLogoutRedirectUris: null, enableEndSession: null };
+let managedCimdStatus = 200;
+let managedCimdRedirect = "/callback";
+let managedCimdFetches = 0;
 const a: McpClientIdentity = { key: "oauth:client-a", id: "client-a", name: "A", uri: "https://a.example.org", tokenId: null };
 const b: McpClientIdentity = { key: "oauth:client-b", id: "client-b", name: "B", uri: "https://b.example.org", tokenId: null };
 
@@ -98,6 +111,13 @@ beforeAll(async () => {
   vi.stubEnv("ENABLED_LANGS", "ja,en");
   auth = createAuth(db, { baseURL: base, secret: "test-secret-0123456789abcdef0123456789abcdef", sendMagicLink: async ({ token, metadata }) => { sent.push({ token, metadata }); const outcome = magicLinkOutcome.getStore(); if (outcome) outcome.result = "sent"; }, metadataFetch: async (input, init) => {
     if (String(input) === cimdJwksUri) return Response.json({ keys: [cimdJwk] });
+    if (String(input) === managedCimdId) {
+      managedCimdFetches += 1;
+      if (managedCimdStatus !== 200) return new Response(null, { status: managedCimdStatus });
+      return Response.json({ client_id: managedCimdId, client_name: "Cache fixture", application_type: "native",
+        redirect_uris: [base + managedCimdRedirect], grant_types: ["authorization_code", "refresh_token"],
+        token_endpoint_auth_method: "none", ...logoutMetadata }, { headers: { "Cache-Control": `max-age=${managedCimdMaxAge}` } });
+    }
     if (String(input) === cimdJwtId) {
       if (new Headers(init?.headers).get("if-none-match") === cimdJwtCacheHeaders.ETag) {
         cimdConditionalFetches += 1;
@@ -129,7 +149,9 @@ const formPost = (path: string, params: Record<string, string>) => fetch(`${base
 async function register(metadata: object = {}) {
   const response = await fetch(`${base}/api/auth/oauth2/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "Local fixture", application_type: "native", redirect_uris: [`${base}/callback`], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none", scope: "read draft offline_access", ...metadata }) });
   expect(response.status, await response.clone().text()).toBe(201);
-  return (await response.json()).client_id as string;
+  const result = await response.json();
+  for (const field of Object.keys(logoutMetadata)) expect(result).not.toHaveProperty(field);
+  return result.client_id as string;
 }
 async function authorize(clientId: string, credentials: Record<string, string> = {}, scope = "read draft offline_access") {
   const verifier = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij";
@@ -143,7 +165,7 @@ async function authorize(clientId: string, credentials: Record<string, string> =
   expect(request.clientId).toBe(clientId);
   expect(request.scopes).toEqual(["read", "draft", "offline_access"]);
   expect(request.redirectOrigin).toBe(new URL(base).origin);
-  expect(request.registration).toBe(clientId === cimdId || clientId === cimdJwtId ? "cimd" : "dcr");
+  expect(request.registration).toBe(clientId.startsWith("https:") ? "cimd" : "dcr");
   const consentHeaders = new Headers({ cookie, origin: base });
   const consent = await auth.api.oauth2Consent({ request: new Request(`${base}/mcp/consent`, { method: "POST", headers: consentHeaders }), body: { accept: true, scope: "read draft offline_access", oauth_query: query }, headers: consentHeaders });
   const callback = new URL((await authorizationRedirect(consent))!, base);
@@ -817,6 +839,101 @@ describe("OAuth registration and immediate revocation", () => {
       expect(Buffer.from(value, "base64url")).toEqual(Buffer.from(signature, "base64url"));
       expect((await modern("server/discover", `${header}.${payload}.${value}`)).status).toBe(401);
     }
+  });
+
+  it("uses local logout for registered clients and discovery metadata", async () => {
+    const clientId = await register(logoutMetadata);
+    const client = () => db.query.oauthClient.findFirst({ where: eq(oauthClient.clientId, clientId) });
+    expect(await client()).toMatchObject(noClientLogout);
+    const { loader } = await import("~/routes/mcp-metadata");
+    const rootMetadata = await (await loader({ request: new Request(`${base}/.well-known/oauth-authorization-server/api/auth`) } as never)).json();
+    const issuerMetadata = await (await fetch(`${base}/api/auth/.well-known/oauth-authorization-server`)).json();
+    for (const document of [rootMetadata, issuerMetadata]) {
+      expect(document).toMatchObject({ client_id_metadata_document_supported: true, revocation_endpoint: `${base}/api/auth/oauth2/revoke` });
+      for (const field of ["backchannel_logout_supported", "backchannel_logout_session_supported", "end_session_endpoint"]) {
+        expect(document).not.toHaveProperty(field);
+      }
+    }
+
+    const { action: logout } = await import("~/routes/logout");
+    const { token } = sent.at(-1)!;
+    await auth.api.signInMagicLink({ body: { email: "other@example.com" }, headers: new Headers() });
+    const signedIn = await auth.api.magicLinkVerify({ query: { token: sent.at(-1)!.token }, headers: new Headers(), asResponse: true });
+    expect(sent.at(-1)!.token).not.toBe(token);
+    const logoutCookie = signedIn.headers.getSetCookie().map(value => value.split(";")[0]).join("; ");
+    const current = await auth.api.getSession({ headers: new Headers({ cookie: logoutCookie }) });
+    expect(current).not.toBeNull();
+    await db.update(oauthClient).set({ backchannelLogoutUri: logoutMetadata.backchannel_logout_uri, backchannelLogoutSessionRequired: true,
+      postLogoutRedirectUris: logoutMetadata.post_logout_redirect_uris, enableEndSession: true }).where(eq(oauthClient.clientId, clientId));
+    await db.insert(oauthRefreshToken).values({
+      id: "logout-fixture", token: "logout-fixture", clientId, userId: current!.user.id, sessionId: current!.session.id,
+      createdAt: new Date(), expiresAt: new Date(Date.now() + 60_000), scopes: ["read"],
+    });
+    const outbound = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external fetch"));
+    try {
+      const response = await logout({ request: new Request(`${base}/logout`, { method: "POST", body: new URLSearchParams(), headers: { origin: base, cookie: logoutCookie } }) } as never);
+      expect(response.headers.get("location")).toMatch(/^\//);
+      expect(outbound).not.toHaveBeenCalled();
+    } finally { outbound.mockRestore(); }
+    expect(await db.query.oauthRefreshToken.findFirst({ where: eq(oauthRefreshToken.id, "logout-fixture") })).toMatchObject({ revoked: expect.any(Date), sessionId: null });
+    expect(await client()).toMatchObject({ backchannelLogoutUri: logoutMetadata.backchannel_logout_uri });
+  });
+
+  it("shares validated CIMD metadata across authorization, refresh and revocation", async () => {
+    const issued = await authorize(managedCimdId);
+    expect(managedCimdFetches).toBe(1);
+    expect(await db.query.oauthClient.findFirst({ where: eq(oauthClient.clientId, managedCimdId) })).toMatchObject(noClientLogout);
+    const refresh = (refreshToken: string) => formPost("/api/auth/oauth2/token", { grant_type: "refresh_token", client_id: managedCimdId, refresh_token: refreshToken });
+    const refreshed = await refresh(issued.refresh_token);
+    expect(refreshed.status, await refreshed.clone().text()).toBe(200);
+    const refreshToken = (await refreshed.json()).refresh_token as string;
+    await db.update(oauthClient).set({ disabled: true }).where(eq(oauthClient.clientId, managedCimdId));
+    expect((await refresh(refreshToken)).status).toBe(400);
+    await db.update(oauthClient).set({ disabled: false }).where(eq(oauthClient.clientId, managedCimdId));
+    const spare = "spare-refresh-fixture";
+    await db.insert(oauthRefreshToken).values({
+      id: spare, token: hashMagicLinkToken(spare), clientId: managedCimdId, userId: "member", scopes: ["read", "offline_access"],
+      createdAt: new Date(), expiresAt: new Date(Date.now() + 60_000),
+    });
+    const revocation = await formPost("/api/auth/oauth2/revoke", { client_id: managedCimdId, token: spare, token_type_hint: "refresh_token" });
+    expect(revocation.status, await revocation.clone().text()).toBe(200);
+    expect(managedCimdFetches).toBe(1);
+
+    const now = Date.now();
+    const originalDate = Date;
+    const pastFreshness = (managedCimdMaxAge + 1) * 1000;
+    let advanced = now + pastFreshness;
+    // The test clock exposes Date.now through a proxy getter.
+    globalThis.Date = new Proxy(originalDate, { get: (target, key) => key === "now" ? () => advanced : Reflect.get(target, key) });
+    const warnings = vi.spyOn(console, "warn");
+    try {
+      managedCimdRedirect = "/new-callback";
+      const updated = await refresh(refreshToken);
+      expect(updated.status, await updated.clone().text()).toBe(200);
+      expect(managedCimdFetches).toBe(2);
+      expect(await db.query.oauthClient.findFirst({ where: eq(oauthClient.clientId, managedCimdId) })).toMatchObject({ redirectUris: [base + managedCimdRedirect] });
+      const oldRedirect = new URLSearchParams({ client_id: managedCimdId, redirect_uri: `${base}/callback`, response_type: "code", scope: "read", code_challenge_method: "S256", code_challenge: "a".repeat(43) });
+      const refused = await fetch(`${base}/api/auth/oauth2/authorize?${oldRedirect}`, { redirect: "manual", headers: { cookie } });
+      expect(refused.status).toBe(400);
+      expect(refused.headers.get("location")).toBeNull();
+      expect(managedCimdFetches).toBe(2);
+
+      const input = (await updated.json()).refresh_token as string;
+      advanced = now + 2 * pastFreshness;
+      managedCimdStatus = 503;
+      const continued = await refresh(input);
+      expect(continued.status, await continued.clone().text()).toBe(200);
+      expect(managedCimdFetches).toBe(3);
+      expect(warnings.mock.calls.filter(args => args.some(value => String(value).includes("Using stored CIMD metadata")))).toHaveLength(1);
+      expect((await fetch(`${base}/api/auth/oauth2/authorize?${oldRedirect}`, { redirect: "manual", headers: { cookie } })).status).toBe(400);
+      advanced += CIMD_CACHE.staleSeconds * 1000;
+      const last = (await continued.json()).refresh_token as string;
+      expect((await refresh(last)).status).toBe(400);
+      managedCimdStatus = 200;
+      const grant = await db.query.oauthConsent.findFirst({ where: eq(oauthConsent.clientId, managedCimdId) });
+      expect(await revokeConnection(db, "member", grant!.id)).toBe(true);
+      expect((await refresh(last)).status).toBe(400);
+    } finally { globalThis.Date = originalDate; warnings.mockRestore(); }
   });
 
   it("keeps unauthenticated authorization errors local for DCR and CIMD clients", async () => {

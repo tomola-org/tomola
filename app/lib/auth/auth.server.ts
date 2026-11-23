@@ -24,16 +24,16 @@ import { authPlugins, hashMagicLinkToken, type SendMagicLink } from "./plugins";
 import { hasSharedInvitationCookie, readInvitationCookie } from "./invitation-cookie.server";
 import { invitationRequired, magicLinkInvitationContext } from "./invitation-ref.server";
 import type { SignupInvitationGrant } from "./signup-invitation.server";
-import { sharedMetadataFetch, type MetadataFetch } from "~/lib/mcp/cimd.server";
+import { sharedMetadataSources, type MetadataFetch } from "~/lib/mcp/cimd.server";
+import type { MetadataSources } from "~/lib/mcp/cimd-cache.server";
 
 type AuthOptions = { baseURL: string; secret: string; sendMagicLink: SendMagicLink; metadataFetch?: MetadataFetch };
 const g = globalThis as { __tomolaAuth?: Promise<Auth>; __tomolaAuthOptions?: WeakMap<object, AuthOptions> };
 // Configuration must survive the same module reloads as the auth singleton.
 const originalOptions = g.__tomolaAuthOptions ??= new WeakMap<object, AuthOptions>();
-export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: MetadataFetch) {
+export function createAuth(db: Db, opts: AuthOptions, preparedMetadata?: MetadataSources) {
   const google = googleLoginConfig();
-  const prepareRemoteKeys = Boolean(preparedMetadataFetch);
-  const metadataFetch = preparedMetadataFetch ?? sharedMetadataFetch(opts.metadataFetch);
+  const metadataSources = preparedMetadata ?? sharedMetadataSources(opts.metadataFetch);
   const signupGrants = new Map<string, SignupInvitationGrant>();
   const writes = sessionWriteScope(db);
   const sessionCreation = new AsyncLocalStorage<{ sourceSessionId?: string }>();
@@ -59,7 +59,7 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
       reauthenticatedAt: { type: "date", required: false, input: false, returned: false },
       reauthenticationMethod: { type: "string", required: false, input: false, returned: false },
     } },
-    database: sessionAdapter(db, prepareRemoteKeys, signupGrants, writes),
+    database: sessionAdapter(db, signupGrants, writes),
     socialProviders: google ? { google: {
       ...google, disableDefaultScope: true, scope: ["openid", "email"], includeGrantedScopes: false,
       disableIdTokenSignIn: true, overrideUserInfoOnSignIn: false,
@@ -104,7 +104,7 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
       const result = ctx.context.returned;
       if (result && typeof result === "object" && "challenge" in result && typeof result.challenge === "string") return ctx.json({ ...result, userVerification: "required" });
     }) },
-    plugins: [...authPlugins(opts.sendMagicLink, { baseURL: opts.baseURL, metadataFetch, prepareRemoteKeys }), passkeySessionPlugin],
+    plugins: [...authPlugins(opts.sendMagicLink, { baseURL: opts.baseURL, metadataSources }), passkeySessionPlugin],
     // Better Auth disables origin checks by default under NODE_ENV=test. Always enable them in every environment.
     // disableIpTracking: do not store IP addresses in sessions (minimize personal data). This also disables Better Auth's own HTTP rate limit
     // based on IPs, but the app has its own login rate limit (magic-link.server.ts) and an HTTP endpoint allowlist (endpoints.server.ts).
@@ -231,16 +231,16 @@ export function createAuth(db: Db, opts: AuthOptions, preparedMetadataFetch?: Me
 export type Auth = ReturnType<typeof createAuth>;
 
 // Recreate plugins: OAuth discovery initialization mutates plugin options, so reusing plugin instances registers CIMD twice.
-export function bindAuthToDatabase(auth: Auth, db: Db, metadataFetch?: MetadataFetch): Auth {
+export function bindAuthToDatabase(auth: Auth, db: Db, metadataSources?: MetadataSources): Auth {
   const opts = originalOptions.get(auth);
   if (!opts) throw new Error("Unknown authentication configuration");
-  return createAuth(db, opts, metadataFetch);
+  return createAuth(db, opts, metadataSources);
 }
 
-export function authMetadataFetch(auth: Auth): MetadataFetch {
+export function authMetadataSources(auth: Auth): MetadataSources {
   const opts = originalOptions.get(auth);
   if (!opts) throw new Error("Unknown authentication configuration");
-  return sharedMetadataFetch(opts.metadataFetch);
+  return sharedMetadataSources(opts.metadataFetch);
 }
 
 export function authActiveSecret(auth: Auth): string {

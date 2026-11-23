@@ -10,6 +10,7 @@ import { RETENTION, DAY_MS } from "~/lib/retention";
 import { invitationRequired } from "./invitation-ref.server";
 import { redeemSignupInvitation, type SignupInvitationGrant } from "./signup-invitation.server";
 import { DCR_JWKS_DISCOVERY_ID } from "~/lib/mcp/cimd.server";
+import { disabledClientLogout } from "~/lib/mcp/oauth-client-metadata.server";
 
 type Adapter = ReturnType<ReturnType<typeof drizzleAdapter>>;
 type SessionQuery = Parameters<Adapter["findOne"]>[0];
@@ -27,12 +28,13 @@ function allowed(value: unknown, model: string): boolean {
 
 // Enforce the lifetime at the authoritative read, including library middleware
 // that calls getSession internally instead of the app's session helper.
-function wrap<T extends Pick<Adapter, "create" | "findOne" | "findMany">>(adapter: T, db: Db, prepareRemoteKeys: boolean,
+function wrap<T extends Pick<Adapter, "create" | "findOne" | "findMany">>(adapter: T, db: Db,
   createUser: Adapter["create"], makeAdapter: (db: Db) => Adapter): T {
   return {
     ...adapter,
     create: query => {
       if (query.model === "user") return createUser(query);
+      if (query.model === "oauthClient") return adapter.create({ ...query, data: { ...query.data, ...disabledClientLogout } });
       // Roll back duplicate assertion inserts to a savepoint so the provider
       // can read the existing row and return invalid_client.
       if (query.model === "oauthClientAssertion" && is(db, PgTransaction)) {
@@ -42,17 +44,23 @@ function wrap<T extends Pick<Adapter, "create" | "findOne" | "findMany">>(adapte
     },
     findOne: async <R>(query: Parameters<Adapter["findOne"]>[0]) => {
       const value = await adapter.findOne<R>(bounded(query));
-      if (prepareRemoteKeys && query.model === "oauthClient") {
-        const client = value as { clientDiscoveryId?: string; tokenEndpointAuthMethod?: string; jwks?: string; jwksUri?: string } | null;
+      if (query.model === "oauthClient" && value) {
+        const client = value as { clientDiscoveryId?: string; tokenEndpointAuthMethod?: string; jwksUri?: string };
         // Better Auth chooses the remote JWKS transport by discovery id. Use the
         // staged transport for this read without changing the stored DCR client.
-        if (!client?.clientDiscoveryId && client?.tokenEndpointAuthMethod === "private_key_jwt" && client.jwksUri) {
-          return { ...value, clientDiscoveryId: DCR_JWKS_DISCOVERY_ID };
+        if (!client.clientDiscoveryId && client.tokenEndpointAuthMethod === "private_key_jwt" && client.jwksUri) {
+          return { ...value, ...disabledClientLogout, clientDiscoveryId: DCR_JWKS_DISCOVERY_ID };
         }
+        return { ...value, ...disabledClientLogout };
       }
       return allowed(value, query.model) ? value : null;
     },
-    findMany: async <R>(query: Parameters<Adapter["findMany"]>[0]) => (await adapter.findMany<R>(bounded(query))).filter(value => allowed(value, query.model)),
+    findMany: async <R>(query: Parameters<Adapter["findMany"]>[0]) => {
+      const values = await adapter.findMany<R>(bounded(query));
+      // Keep session-bound token revocation while suppressing client logout delivery.
+      if (query.model === "oauthClient") return values.map(value => ({ ...value, ...disabledClientLogout }));
+      return values.filter(value => allowed(value, query.model));
+    },
   };
 }
 
@@ -67,7 +75,7 @@ export function sessionWriteScope(db: Db) {
   } };
 }
 
-export function sessionAdapter(db: Db, prepareRemoteKeys = false, signupGrants = new Map<string, SignupInvitationGrant>(), scope = sessionWriteScope(db)): ReturnType<typeof drizzleAdapter> {
+export function sessionAdapter(db: Db, signupGrants = new Map<string, SignupInvitationGrant>(), scope = sessionWriteScope(db)): ReturnType<typeof drizzleAdapter> {
   return options => {
     const makeAdapter = (connection: Db) => drizzleAdapter(connection, { provider: "pg", schema })(options);
     function forConnection(connection: Db): Adapter {
@@ -87,7 +95,7 @@ export function sessionAdapter(db: Db, prepareRemoteKeys = false, signupGrants =
           signupGrants.delete(id);
         }
       };
-      const wrapped = wrap(adapter, connection, prepareRemoteKeys, createUser, makeAdapter);
+      const wrapped = wrap(adapter, connection, createUser, makeAdapter);
       const result: Adapter = {
         ...wrapped,
         create: query => {

@@ -1,4 +1,4 @@
-import { oauthProviderAuthServerMetadata } from "@better-auth/oauth-provider";
+import { mcpAuthorizationServerMetadata } from "~/lib/mcp/oauth-http.server";
 import { authBaseURL, getAuth } from "~/lib/auth/auth.server";
 import { MCP_RESOURCE_SCOPES } from "~/lib/connect-paths";
 import { villagesEnabled } from "~/lib/villages-enabled.server";
@@ -10,5 +10,5 @@ export async function loader({ request }: Route.LoaderArgs) {
   if (new URL(request.url).pathname.includes("oauth-protected-resource")) return Response.json({
     resource: `${origin}/mcp`, authorization_servers: [`${origin}/api/auth`], scopes_supported: [...MCP_RESOURCE_SCOPES, ...(villagesEnabled() ? ["media"] : [])], bearer_methods_supported: ["header"], resource_name: "tomola",
   });
-  return oauthProviderAuthServerMetadata(await getAuth())(request);
+  return mcpAuthorizationServerMetadata(await getAuth(), request);
 }
