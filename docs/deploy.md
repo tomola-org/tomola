@@ -447,9 +447,21 @@ workers, keep it stopped. A database hold alone cannot protect against old code.
 See [older-image recovery](runbooks/retention.md#rolling-back-to-an-image-without-preservation-support)
 for status checks and the separate no-preservation cleanup path.
 
-If the previous image can read and write the current database, including after a
-compatible migration, select it by its recorded SHA and keep its matching
-configuration:
+A code-only rollback is allowed only when every migration applied since the
+previous image meets at least one of the following conditions.
+
+- It made no changes to the database schema or data.
+- It is numbered `0132` or later, passed the
+  [migration compatibility lint](#migration-compatibility-during-deployment),
+  and its required compatibility notes were reviewed against the previous image.
+- [Section 8](#8-database) explicitly documents that migration as compatible
+  with the previous release.
+
+Migrations through `0131` have no compatibility notes. Treat any of them that
+changed the database as incompatible unless section 8 records its compatibility
+with the previous release. If any applied migration meets none of the conditions,
+follow the database restore procedure below. Otherwise select the previous image
+by its recorded SHA and keep its matching configuration.
 
 ```sh
 export TOMOLA_REVISION=<previous-full-SHA>
@@ -459,16 +471,15 @@ docker compose up -d --no-build --force-recreate app
 curl --fail https://forum.example.org/readyz
 ```
 
-Migrations move forward only. If a migration changed the schema or data,
-switching the image does not undo it. If the previous image cannot read and
-write the changed database, stop writes and the app. Restore the pre-update
-dump into a separate empty recovery database and validate it offline
-with operator commands from the matching old image, keeping the application and
-workers stopped, before selecting that database through a Compose
-configuration override of `DATABASE_URL`. Do not run the current migration
-code on that recovery database before starting the old image. Keep the
-failed database for investigation; do not start by overwriting it. Restore
-loses writes after the backup, which is why draining precedes that backup.
+Migrations move forward only. A code-only rollback leaves schema and data
+changes in place. When the rollback conditions above are unmet, stop writes
+and the app. Restore the pre-update dump into a separate empty recovery
+database and validate it offline with operator commands from the matching old
+image, keeping the application and workers stopped, before selecting that
+database through a Compose configuration override of `DATABASE_URL`. Do not run
+the current migration code on that recovery database before starting the old
+image. Keep the failed database intact for investigation. Restore loses writes
+after the backup, which is why draining precedes it.
 The stop grace period must exceed HTTP and worker shutdown limits.
 
 For a retention-capable image matching the restored schema, follow the procedure
@@ -535,11 +546,12 @@ Passkeys are bound to the host name where members registered them. Before enabli
 
 ### Migration compatibility during deployment
 
-During a rolling deployment, the previous and new application versions can read
-and write the same database after the new version applies its migrations. A
-code-only rollback also runs the previous version against that migrated database.
-Apply migrations only when the previous version can keep reading and writing
-without application changes.
+When the previous and new application versions run side by side, such as
+during a rolling or blue-green deployment, both versions must be able to read
+and write the same database after the new version applies its migrations. The
+previous version must also be able to read and write that database after a
+code-only rollback. Choose migrations that preserve those reads and writes
+without changes to the previous version.
 
 - **Additions and relaxed constraints.** Add tables, nullable columns, columns
   with compatible defaults, and non-unique indexes. Relax constraints while
@@ -559,14 +571,24 @@ without application changes.
   worker claims only kinds for which it has a registered handler, so an old
   worker leaves the new payloads for a worker that understands them.
 
-Starting at migration `0132`, the lint flags table, column and type drops,
-table, column and constraint renames, column type changes, `SET NOT NULL`, added
-`NOT NULL` columns without defaults, `ADD CONSTRAINT`, `DROP CONSTRAINT`, unique indexes, dropped
-defaults, row updates, deletes and truncations, replaced or dropped functions,
-and added or dropped triggers. Constraints, unique indexes and trigger creation
-on a table created earlier in the same migration are allowed. The lint also
-flags the constraint statements used to relax an existing constraint, so explain
-how the previous version's writes still work in that case.
+The following statements require compatibility notes starting at migration
+`0132`.
+
+- Drops of tables, columns, types, indexes, views, materialized views, functions,
+  procedures and triggers. A `DROP INDEX` needs no note if the lint can match
+  every index to a creation earlier in the same migration.
+- Renames of tables, columns, constraints, types, enum values, functions and
+  indexes, and `ALTER TABLE … SET SCHEMA`.
+- Column type changes, `SET NOT NULL`, added `NOT NULL` or `PRIMARY KEY` columns
+  without defaults, and `DROP DEFAULT`.
+- `ADD CONSTRAINT`, `DROP CONSTRAINT` and `CREATE UNIQUE INDEX` on existing
+  tables. The lint also flags the statements used to relax an existing
+  constraint. Explain how the previous version's writes still work in that case.
+- `UPDATE`, `DELETE`, `TRUNCATE`, `INSERT … ON CONFLICT … DO UPDATE` and
+  `MERGE`.
+- `CREATE OR REPLACE` for functions, views and procedures, `CREATE TRIGGER`
+  on existing tables (including `CREATE OR REPLACE TRIGGER`), and
+  `ALTER TABLE … DISABLE TRIGGER`.
 
 Place `-- compat: <one English sentence explaining why the previous release can still read and write>`
 on its own line immediately above each flagged statement. The note applies to
@@ -579,7 +601,10 @@ also runs in `pnpm test:fast`, `pnpm check:focused`, `pnpm check:integration` an
 
 ### Retiring per-post signing
 
-The migration sets `profiles.sign_posts` to false and keeps the column, historical signatures and challenge table. The previous application version can run against the migrated database. Check AI-draft review and passkey-only login and key removal after deploying.
+Migration `0131` sets `profiles.sign_posts` to false and keeps the column,
+historical signatures and challenge table. The previous application version can
+run against the migrated database. Check AI-draft review and passkey-only login
+and key removal after deploying.
 
 ### pgvector (permission for `CREATE EXTENSION vector`)
 

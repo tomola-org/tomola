@@ -50,7 +50,7 @@ Write new strings in `messages/en.json` and `messages/ja.json`. Write nothing in
 
 ## Integration and release candidates
 
-`pnpm check:integration` runs, in order, the runner checks, lint and disclosure baselines, the type check, every PGlite unit test, the build, the page JavaScript budgets, and four concurrent browser groups: three private groups and one public-reading group. All ordinary browser groups reuse that invocation's build output through `node server.ts`; they never rebuild per group. Each group uses one worker and an independent source copy, build output, generated files, dependency cache, PGlite data and seeded sessions. Files are assigned in one place, `scripts/browser-groups.ts`, using measured serial file times to balance the private groups; new files fall back to their test declarations. A file's serial scenarios stay together. `E2E_GROUPS=3` through `6` selects the total group count, including the single public-reading group.
+`pnpm check:integration` runs, in order, the runner checks, lint baseline, migration compatibility lint, disclosure baseline, type check, every PGlite unit test, build, page JavaScript budgets, and four concurrent browser groups (three private groups and one public-reading group). All ordinary browser groups reuse that invocation's build output through `node server.ts`; they never rebuild per group. Each group uses one worker and an independent source copy, build output, generated files, dependency cache, PGlite data and seeded sessions. Files are assigned in one place, `scripts/browser-groups.ts`, using measured serial file times to balance the private groups; new files fall back to their test declarations. A file's serial scenarios stay together. `E2E_GROUPS=3` through `6` selects the total group count, including the single public-reading group.
 
 Ordinary build-backed tests use `NODE_ENV=test`, all software languages by default, fake translation and embeddings, local fake SMTP and a local TLS proxy. Their purpose is application behavior with the ordinary fixtures. Service workers are blocked in ordinary scenarios so module interception and isolated fixtures remain effective; worker registration, caching and offline behavior stay in the production suite. Production startup, language-release gates, CSP and the production proxy contract remain covered separately by `e2e-prod/` with its existing production settings.
 
@@ -110,7 +110,7 @@ A date-only `--since` value means midnight UTC. Prefer a timestamp with an expli
 
 ## Deployment checks and concurrent development
 
-For migrations, follow [Migration compatibility during deployment](deploy.md#migration-compatibility-during-deployment) and run `node scripts/check-migration-compat.mjs`. The migration lint also runs in focused, integration and release checks.
+For migrations, follow [Migration compatibility during deployment](deploy.md#migration-compatibility-during-deployment) and run `node scripts/check-migration-compat.mjs`. The migration lint also runs in `pnpm test:fast`, `pnpm check:focused`, `pnpm check:integration` and `pnpm check:release`.
 
 Before admitting members or changing a main journey, identify the deployment features and clients being tested. Check the journey from an invitation through sign-in, posting, replying and reading a translation. For an isolated screen change, prioritize that interaction. Verify actual client connections and devices separately; automated test counts do not establish usability or deployment readiness. Record changes to that scope for the people responsible for the deployment.
 
