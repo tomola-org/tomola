@@ -685,6 +685,7 @@ export const topicListingStats = pgTable("topic_listing_stats", {
 export const entryMedia = pgTable("entry_media", {
   entryId: bigint("entry_id", { mode: "number" }).notNull().references(() => entries.id, { onDelete: "cascade" }),
   mediaId: text("media_id").notNull().references(() => media.id, { onDelete: "cascade" }),
+  isOwnerReference: boolean("is_owner_reference"),
 }, t => [primaryKey({ columns: [t.entryId, t.mediaId] }), index("entry_media_media_idx").on(t.mediaId, t.entryId)]);
 
 // Embedding dimensions (gemini-embedding-001 outputDimensionality; use the same dimensions even if EMBEDDING_MODEL changes).
