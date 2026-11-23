@@ -176,7 +176,7 @@ export async function confirmationForDraftPreview(db: Db, draft: DraftRow, posti
     return undefined;
   }
 }
-function routeOperation(path: string, form: FormData): { operation: WriteOperation; id: number | null } {
+export function routeOperation(path: string, form: FormData): { operation: WriteOperation; id: number | null } {
   const intent = formString(form, "intent");
   if (path === "/t/new" && intent !== "draft") return { operation: "create-topic", id: null };
   let match = /^\/t\/(\d+)$/.exec(path);
@@ -226,7 +226,7 @@ export async function previewDraftPublication(db: Db, userId: string, pathname: 
     const lastEditor = { id: draft.clientId ?? (draft.via === "api" ? `token:${draft.tokenId ?? "deleted"}` : null), name: draft.clientName, uri: draft.clientUri, at: (draft.clientUpdatedAt ?? (draft.via === "api" ? draft.updatedAt : null))?.toISOString() ?? null };
     const targetContext = await draftTargetContext(tx, target);
     return {
-      content, language, current, target, lastEditor, targetContext, signatureRequired: false,
+      operation, content, language, current, target, lastEditor, targetContext, signatureRequired: false,
       viewed: viewed ? { title: viewed.title, body: viewed.body, lang: viewed.lang } : null,
       ...(village ? { village } : {}),
       ...(confirm ? { confirmation: draftConfirmation(userId, publication) } : {}),

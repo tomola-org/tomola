@@ -33,7 +33,7 @@ The server supplies author labels, post/reply/supplement categories and local so
 
 Normal questions and answers live only in the requesting browser's transient component state and the in-flight request. They are not written to conversation records, jobs, application logs, browser storage or shared caches. The page has no history lookup. Responses are private and not cacheable. POST forms also keep question text out of URLs before hydration. Provider and content-bearing database errors are converted to fixed error codes without logging their detail.
 
-Choosing **Ask the writer this question in a reply** explicitly saves the question text as the member's own ordinary reply draft. It does not copy the AI answer or publish anything. The member reviews and submits it through the existing draft/signing flow.
+Choosing **Ask the writer this question in a reply** explicitly saves the question text as the member's own ordinary reply draft. It does not copy the AI answer or publish anything. The member reviews and publishes it from the draft screen.
 
 Choosing **Report an error in this answer** first reveals an unchecked consent box. Only an agreed submission stores the question, verified answer, source target and reporting account in `ai_question_reports`. A signed, hour-lived receipt binds the transient answer to its member, target, question, model, language and range; it is not a server-side conversation identifier. Other members cannot reuse it. Reporting neither sends email nor publishes content.
 

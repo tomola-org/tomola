@@ -218,7 +218,7 @@ Machine-facing details should not clutter manual reading, while AI representatio
 
 **Operating distinction.** Test notices (`TOMOLA_SITE_STAGE=test`), site participation conditions, public reading and general registration are separate. A test notice does not change read permissions or participation conditions. Current code can open existing eligible posts through `PUBLIC_READING`, but has no approved general-registration flow. A setting's existence does not establish readiness for members, disclosure review or readiness to open a site.
 
-**Required scope of checks.** Actual client connections, passkeys on supported devices, restoration, data-destination/usage terms and languages need checks under actual deployment conditions. Signed and unsigned member paths are separate. Test counts, completed design documents or storage in a particular region alone establish neither readiness for members nor all processing locations.
+**Required scope of checks.** Actual client connections, passkeys on supported devices, restoration, data-destination/usage terms and languages need checks under actual deployment conditions. Check passkey sign-in and confirmation when publishing AI drafts. Test counts, completed design documents or storage in a particular region alone establish neither readiness for members nor all processing locations.
 
 ## 36 Keep future integrations outside current permissions
 

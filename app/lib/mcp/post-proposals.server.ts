@@ -106,7 +106,7 @@ export async function getEntryEditReview(db: Db, userId: string, id: number, now
 }
 
 // Run through the ordinary browser write and edit transactions. The submitted text is
-// checked against the locked proposal so the signed payload and applied text agree.
+// checked against the locked proposal so the reviewed and applied text agree.
 export async function applyEntryEdit(tx: Tx, userId: string, id: number, form: {
   version: number; entryId: number; kind: "topic" | "reply"; title: string | null; body: string; lang: string;
 }, now = new Date()) {

@@ -4,6 +4,7 @@ import type { PublicVillage } from "~/lib/villages.server";
 export type WriteOperation = "create-topic" | "create-reply" | "publish-draft" | "edit-topic" | "edit-reply" | "change-handle" | "change-display-name" | "remove-passkey" | "delete-account";
 export type SigningContent = { title: string | null; body: string; lang: string | null };
 export type SigningPreview = {
+  operation: "publish-draft";
   village?: PublicVillage;
   content: SigningContent;
   language: LanguageDecision | null;

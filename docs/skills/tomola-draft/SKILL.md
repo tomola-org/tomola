@@ -11,7 +11,7 @@ Start with `tomola_capabilities` to check the connection and the member's writin
 
 When villages are enabled, use the slug of an active joined shared village or the member's own `@handle`. Another member's personal village is not a valid topic destination. Creating a draft with an omitted or `null` village saves no explicit choice; update omission preserves a saved choice and `null` clears it. Publication resolves an unspecified destination to the current default or personal village. Replies inherit their thread's place. An invalid explicit choice must be corrected, not silently replaced.
 
-Return `approvalUrl` to the member with a concise account of the proposed text. The member opens the link to review the latest draft and publish it in the browser. If they have enabled passkey confirmation, they sign it there. Leave that confirmation to the member. Use `tomola_draft_status` to check the result and get `entryUrl` once published.
+Return `approvalUrl` to the member with a concise account of the proposed text. The member opens the link to review the latest draft and publish it in the browser. Use `tomola_draft_status` to check the result and get `entryUrl` once published.
 
 For a change to the member's published post or reply, request both `read` and `draft` and call `tomola_entry_edit_prepare` with the target `entryId` and the proposed fields. For deletion, call `tomola_entry_delete_prepare` with `entryId`. Share `approvalUrl` and let the member review the diff or deletion impact and confirm in the browser. When an edit proposal has a conflict, read the current post and prepare a new proposal for review.
 

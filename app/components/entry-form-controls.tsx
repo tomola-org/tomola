@@ -29,6 +29,7 @@ function confirmationFailureMessage(error: unknown, draftConflictMessage?: strin
   if (error instanceof ConfirmationRequestError && error.message === "maintenance_readonly") return error.explanation || m.maintenance_readonly();
   if (error instanceof ConfirmationRequestError && error.message === "login_required") return m.signing_login_required();
   if (error instanceof ConfirmationRequestError && error.message === "draft_conflict") return draftConflictMessage ?? m.ai_write_conflict();
+  // POST /signing returns signing_closed (409) for retired challenge requests.
   if (error instanceof ConfirmationRequestError && error.message === "signing_closed") return m.draft_review_reload();
   if (error instanceof Error && error.message === "body_too_complex") return m.error_body_too_complex();
   if (error instanceof TypeError || error instanceof ConfirmationRequestError && error.message === "network_failed") return m.signing_network_failed();

@@ -58,7 +58,7 @@
   "routes/reply-edit": 302251,
   "routes/saved": 268692,
   "routes/search": 254166,
-  "routes/settings": 332774,
+  "routes/settings": 332769,
   "routes/settings-chat": 252973,
   "routes/settings-connections": 246642,
   "routes/settings-delete-account": 254077,

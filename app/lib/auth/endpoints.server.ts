@@ -6,7 +6,7 @@
 //     calls auth.api.magicLinkVerify directly. No HTTP endpoints are used.
 //   - Session reads and logout also call auth.api directly on the server (app/lib/auth/session.server.ts, app/routes/logout.tsx).
 //   - The browser calls only the two passkey login endpoints. Registration uses /passkeys with mandatory user verification and existing-key proof;
-//     deletion uses the signed /settings action. Better Auth's registration, listing, deletion and renaming HTTP endpoints remain closed.
+//     deletion uses the /settings action with recent reauthentication. Better Auth's registration, listing, deletion and renaming HTTP endpoints remain closed.
 // To add an endpoint, add its method and path here. Matching is exact, including case and trailing slashes.
 
 export const AUTH_BASE_PATH = "/api/auth";

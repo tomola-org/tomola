@@ -85,7 +85,7 @@ test("the emailed link opens a confirm page: opening it (as a mail scanner does)
     await requestMagicLink(p, "pat@example.com");
     await expect(p.getByText(enMessages.login_sent.replace("{email}", "pat@example.com"), { exact: true })).toBeVisible();
     await p.goto("/");
-    await expect(p).toHaveURL(/\/login$/);
+    await expect(p).toHaveURL(test.info().config.metadata.publicReading ? "/" : /\/login$/);
   } finally { await victim.close(); }
 
   // A person opens the page and presses the button to sign in and reach onboarding. A double-click does not send a second request or show "無効".
@@ -99,7 +99,7 @@ test("the emailed link opens a confirm page: opening it (as a mail scanner does)
   await page.getByRole("combobox", { name: enMessages.onboarding_home_area, exact: true }).click();
   await page.getByRole("listbox").getByRole("option", { name: enMessages.language_name_en, exact: true }).click();
   await completeTrialFields(page);
-  await page.getByRole("button", { name: enMessages.onboarding_join }).click();
+  await page.getByRole("button", { name: enMessages.onboarding_join, exact: true }).click();
   await expect(page).toHaveURL(new URL("/", state().baseURL).href);
   await expect(page.locator('[data-member-menu-trigger][title="@pat"]')).toBeVisible();
 });
@@ -247,7 +247,7 @@ test("authentication routing blocks unused sign-in and serves passkey options", 
 });
 
 test("a member signs in with a passkey and confirms its removal by email link", async () => {
-  // Use the member still signed in with a recent email login from the earlier tests.
+  // Use the member signed in with a recent email login when accepting the invitation.
   // Do not request more email from the shared browser IP because the per-email/IP limit is 5 per 15 minutes.
   await page.goto("/");
   await expect(page.locator('[data-member-menu-trigger][title="@pat"]')).toBeVisible();

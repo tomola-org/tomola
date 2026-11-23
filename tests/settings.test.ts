@@ -7,6 +7,8 @@ import { createTopic } from "~/lib/entries.server";
 import { changeHomeArea, getProfile, HOME_AREA_CHANGE_DAYS, nextHomeAreaChangeAt, updatePreferences } from "~/lib/profiles.server";
 import { setVote } from "~/lib/votes.server";
 import { addMember, createTestDb } from "./helpers/db";
+import { renderInRouter } from "./helpers/render-in-router";
+import { routeElement } from "./helpers/route-fixtures";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -192,6 +194,18 @@ describe("/settings (route)", () => {
     }))));
     expect(result).toMatchObject({ status: 400 });
     expect(await getProfile(h.db, h.ids.hana)).toEqual(before);
+  });
+
+  it("omits the signing toggle for a member with a retired signing preference", async () => {
+    const route = await import("~/routes/settings");
+    const as = "old_settings_writer";
+    const id = await h.signIn(as);
+    await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, id));
+    const loaderData = await route.loader(h.args(h.request("/settings", { as })));
+    const html = await renderInRouter(() => routeElement(route.default, { loaderData }), "/settings");
+    expect(html).toContain('id="settings-passkeys"');
+    expect(html).not.toContain('value="sign-posts"');
+    expect(html).not.toContain('name="signPosts"');
   });
 
 });

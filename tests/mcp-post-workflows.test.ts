@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { draftReceipts, drafts, entries, entryEditProposals, memberSignatures, signingChallenges } from "~/lib/db/schema";
+import { draftReceipts, drafts, entries, entryEditProposals, memberSignatures, profiles, signingChallenges } from "~/lib/db/schema";
 import { publishDraft } from "~/lib/drafts.server";
 import { previewDraftPublication } from "~/lib/signing.server";
 import { createReply, createTopic, deleteOwnEntry, editEntry } from "~/lib/entries.server";
@@ -59,23 +59,31 @@ describe("MCP post approvals through the browser routes", () => {
     expect(await getClientDraftStatus(h.db, owner, client, made.id)).toEqual({ draftId: made.id, status: "published" });
   });
 
-  it("requires the draft confirmation route before consuming a client reply from an unsigned session", async () => {
-    const { action } = await import("~/routes/topic");
-    const topic = success(await createTopic(h.db, owner, { body: "The reply destination.", lang: "en" }));
-    const made = success(await createClientDraft(h.db, owner, client, { kind: "reply", threadId: topic.id, lang: "en", body }));
-    const submit = () => h.outcome(() => action(h.args(h.request(`/t/${topic.id}`, { as: "workflow_owner",
+  it.each(["topic", "reply"] as const)("requires confirmation for a linked client %s draft with a retired signing preference", async kind => {
+    const as = `linked_${kind}_writer`;
+    const author = await h.signIn(as);
+    await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, author));
+    const threadId = kind === "reply" ? success(await createTopic(h.db, author, { body: "The reply destination.", lang: "en" })).id : undefined;
+    const { action } = kind === "topic" ? await import("~/routes/topic-new") : await import("~/routes/topic");
+    const editorPath = threadId ? `/t/${threadId}` : "/t/new";
+    const params = threadId ? { id: String(threadId) } : undefined;
+    const made = success(await createClientDraft(h.db, author, client, { kind, threadId, lang: "en", body }));
+    const submit = () => h.outcome(() => action(h.args(h.request(editorPath, { as,
       form: { body, lang: "en", fromDraft: String(made.id), fromDraftVersion: "1" },
-    }), { id: String(topic.id) })));
+    }), params)));
     expect(await submit()).toMatchObject({ status: 409, value: { data: { error: "confirmation_required" } } });
+    expect(await getClientDraftStatus(h.db, author, client, made.id)).toMatchObject({ status: "pending", version: 1 });
+    expect(await h.db.select().from(entries).where(and(eq(entries.authorId, author), eq(entries.body, body)))).toEqual([]);
     const { action: draftAction } = await import("~/routes/draft");
     const path = `/drafts/${made.id}`;
     const form = { intent: "publish", version: "1", body, lang: "en" };
-    const { confirmation } = await previewDraftPublication(h.db, owner, path, await h.request(path, { form }).formData());
-    const approval = h.request(path, { as: "workflow_owner", form: { ...form, confirmation: confirmation! } });
+    const { confirmation } = await previewDraftPublication(h.db, author, path, await h.request(path, { form }).formData());
+    const approval = h.request(path, { as, form: { ...form, confirmation: confirmation! } });
     expect(await h.outcome(() => draftAction(h.args(approval, { id: String(made.id) })))).toMatchObject({ status: 302 });
     expect(await submit()).toMatchObject({ status: 409 });
-    const [reply] = await h.db.select().from(entries).where(eq(entries.threadId, topic.id));
-    expect(await getClientDraftStatus(h.db, owner, client, made.id)).toMatchObject({ status: "published", entryUrl: expect.stringContaining(`#c-${reply.id}`) });
+    const [published] = await h.db.select().from(entries).where(and(eq(entries.authorId, author), eq(entries.body, body)));
+    const entryPath = threadId ? `/t/${threadId}#c-${published.id}` : `/t/${published.id}`;
+    expect(await getClientDraftStatus(h.db, author, client, made.id)).toMatchObject({ status: "published", entryUrl: expect.stringContaining(entryPath) });
   });
 
   it("keeps edit proposals private and binds the browser approval to the saved proposal", async () => {
@@ -100,7 +108,7 @@ describe("MCP post approvals through the browser routes", () => {
     expect(await submit(request({ ...form, signatureAssertion: "invalid-json" }))).toMatchObject({ status: 302, location: `/t/${topic.id}?edited=${topic.id}` });
     expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.entryId, topic.id))).toEqual([]);
     expect(await h.db.select().from(signingChallenges).where(eq(signingChallenges.userId, owner))).toEqual([]);
-expect(await getClientEntryEdit(h.db, owner, client, id)).toBeNull();
+    expect(await getClientEntryEdit(h.db, owner, client, id)).toBeNull();
     expect(await h.db.select({ title: entryEditProposals.title, body: entryEditProposals.body, state: entryEditProposals.state }).from(entryEditProposals)
       .where(eq(entryEditProposals.id, id))).toEqual([{ title: null, body: null, state: "applied" }]);
     expect(await getClientEntryEditStatus(h.db, owner, client, id)).toMatchObject({ status: "applied", version: 2 });

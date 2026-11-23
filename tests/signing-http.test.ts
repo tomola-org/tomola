@@ -2,27 +2,44 @@ import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import { BASE, setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
 import { createTopic, createReply } from "~/lib/entries.server";
 import { createDraft, getDraft } from "~/lib/drafts.server";
-import { drafts, entries, memberSignatures, profiles, session, signingChallenges } from "~/lib/db/schema";
+import { drafts, entries, memberSignatures, passkey, profiles, session, signingChallenges, user } from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { action as createApiDraft } from "~/routes/api.drafts";
 import { action as autosave } from "~/routes/draft-autosave";
 import { action as publishDraftScreen } from "~/routes/draft";
 import { action as publishPreview, loader as loadDraftPreview } from "~/routes/draft-preview";
 import { action as reviewDraft } from "~/routes/signing";
+import { action as saveSettings } from "~/routes/settings";
+import { action as deleteAccount } from "~/routes/settings-delete-account";
 import { createApiToken } from "~/lib/tokens.server";
 import { createClientDraft, updateClientDraft } from "~/lib/mcp/drafts.server";
 import { withMemberWrite } from "~/lib/signing.server";
 import { changeVillageMembership, ensureLanguageVillages, setDefaultVillage } from "~/lib/villages.server";
-import type { SigningPreview } from "~/lib/signing";
+import type { SigningPreview, WriteOperation } from "~/lib/signing";
+import { signingCredential } from "./helpers/signing";
 let h: RouteHarness;
 let queries: string[] | null = null;
 beforeAll(async () => {
   h = await setupRouteHarness({ logger: { logQuery(query) { queries?.push(query); } } });
-
 });
 afterAll(() => h.restore());
 
-it.each([{}, { signatureChallenge: "retired", signatureAssertion: "invalid-json" }])("accepts ordinary browser writes with retired signing fields %j", async legacy => {
+const retiredFields = { signatureChallenge: "retired", signatureAssertion: "invalid-json" };
+
+function reviewRequest(path: string, fields: Record<string, string>, as?: string, headers?: Record<string, string>) {
+  const basis = h.request("/signing", { as, headers });
+  return h.args(new Request(basis, {
+    method: "POST", body: JSON.stringify({ intent: "preview", pathname: path, fields: Object.entries(fields) }),
+  }));
+}
+
+async function expectLegacyPreview(as: string, path: string, fields: Record<string, string>, operation: WriteOperation) {
+  const response = await reviewDraft(reviewRequest(path, fields, as));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ operation, signatureRequired: false, lastEditor: null });
+}
+
+it.each([{}, retiredFields])("accepts ordinary browser writes with retired signing fields %j", async legacy => {
   const as = Object.keys(legacy).length ? "old_form_writer" : "ordinary_writer";
   const author = await h.signIn(as);
   await h.db.update(profiles).set({ signPosts: true }).where(eq(profiles.userId, author));
@@ -33,17 +50,19 @@ it.each([{}, { signatureChallenge: "retired", signatureAssertion: "invalid-json"
   const draft = await createDraft(h.db, author, { kind: "topic", body: "Unpublished draft", lang: "ja" });
   if (!draft.ok) throw new Error(draft.error);
   const cases = [
-    ["topic-new", "/t/new", {}, { body: "New topic", lang: "ja" }],
-    ["topic", `/t/${topic.id}`, { id: String(topic.id) }, { body: "New reply", lang: "ja" }],
-    ["topic-edit", `/t/${topic.id}/edit`, { id: String(topic.id) }, { title: "Edited title", body: "Edited topic" }],
-    ["reply-edit", `/c/${reply.id}/edit`, { id: String(reply.id) }, { body: "Edited reply" }],
-    ["draft", `/drafts/${draft.id}`, { id: String(draft.id) }, { intent: "publish", version: "1", body: "Published draft", lang: "ja" }],
-    ["settings", "/settings", {}, { intent: "display-name", displayName: "Example Writer", displayNameLatin: "" }],
-    ["settings", "/settings", {}, { intent: "handle", handle: `${as}_new` }],
+    ["topic-new", "/t/new", {}, { body: "New topic", lang: "ja" }, "create-topic"],
+    ["topic", `/t/${topic.id}`, { id: String(topic.id) }, { body: "New reply", lang: "ja" }, "create-reply"],
+    ["topic-edit", `/t/${topic.id}/edit`, { id: String(topic.id) }, { title: "Edited title", body: "Edited topic" }, "edit-topic"],
+    ["reply-edit", `/c/${reply.id}/edit`, { id: String(reply.id) }, { body: "Edited reply" }, "edit-reply"],
+    ["draft", `/drafts/${draft.id}`, { id: String(draft.id) }, { intent: "publish", version: "1", body: "Published draft", lang: "ja" }, "publish-draft"],
+    ["settings", "/settings", {}, { intent: "display-name", displayName: "Example Writer", displayNameLatin: "" }, "change-display-name"],
+    ["settings", "/settings", {}, { intent: "handle", handle: `${as}_new` }, "change-handle"],
   ] as const;
-  for (const [name, path, params, fields] of cases) {
+  for (const [name, path, params, fields, operation] of cases) {
     const { action } = await import(`../app/routes/${name}.tsx`);
-    const request = h.request(path, { as, form: { ...fields, ...legacy } as Record<string, string> });
+    const form = { ...fields, ...legacy } as Record<string, string>;
+    if (legacy === retiredFields && operation !== "publish-draft") await expectLegacyPreview(as, path, form, operation);
+    const request = h.request(path, { as, form });
     expect(await h.outcome(() => action(h.args(request, params))), name).toMatchObject({ status: 302 });
   }
   const stored = await h.db.select().from(entries).where(eq(entries.authorId, author));
@@ -53,6 +72,52 @@ it.each([{}, { signatureChallenge: "retired", signatureAssertion: "invalid-json"
   expect(await h.db.select().from(profiles).where(eq(profiles.userId, author))).toMatchObject([{ handle: `${as}_new`, displayName: "Example Writer", signPosts: true }]);
   expect(await h.db.select().from(memberSignatures)).toEqual([]);
   expect(await h.db.select().from(signingChallenges)).toEqual([]);
+});
+
+it("lets pages loaded before the update remove a spare passkey and delete the account", async () => {
+  const as = "old_account_settings";
+  const id = await h.signIn(as);
+  const spare = await signingCredential(h.db, id);
+  const last = await signingCredential(h.db, id);
+  await h.db.update(profiles).set({ signPosts: true, passkeyOnly: true }).where(eq(profiles.userId, id));
+  await h.db.update(session).set({ loginMethod: "passkey", reauthenticationMethod: "passkey", reauthenticatedAt: new Date() }).where(eq(session.userId, id));
+  const remove = { intent: "delete-passkey", passkeyId: spare.id, ...retiredFields };
+  await expectLegacyPreview(as, "/settings", remove, "remove-passkey");
+  expect(await h.outcome(() => saveSettings(h.args(h.request("/settings", { as, form: remove })))))
+    .toMatchObject({ status: 302, location: "/settings?saved=passkey-removed#settings-passkeys" });
+  expect(await h.db.select().from(passkey).where(eq(passkey.userId, id))).toMatchObject([{ id: last.id }]);
+  expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.userId, id))).toEqual([]);
+  expect(await h.db.select().from(signingChallenges).where(eq(signingChallenges.userId, id))).toEqual([]);
+
+  const path = "/settings/delete-account";
+  const quit = { intent: "delete-account", confirmation: as, ...retiredFields };
+  await expectLegacyPreview(as, path, quit, "delete-account");
+  expect(await h.outcome(() => deleteAccount(h.args(h.request(path, { as, form: quit })))))
+    .toMatchObject({ status: 302, location: "/login?account-deleted=1" });
+  expect(await h.db.select().from(user).where(eq(user.id, id))).toEqual([]);
+});
+
+it("keeps the preview guards and does no additional database work for a known operation", async () => {
+  const as = "old_preview_writer";
+  const id = await h.signIn(as);
+  const path = "/t/999999/edit";
+  expect(await h.outcome(() => reviewDraft(reviewRequest(path, {})))).toMatchObject({ status: 302, location: "/login" });
+  expect(await h.outcome(() => reviewDraft(reviewRequest(path, {}, as, { origin: "https://other.example" })))).toMatchObject({ status: 403 });
+  async function previewQueries(run: () => Promise<void>) {
+    const recorded: string[] = [];
+    queries = recorded;
+    try { await run(); } finally { queries = null; }
+    return recorded;
+  }
+  const unknown = await previewQueries(async () => {
+    const response = await reviewDraft(reviewRequest("/settings", { intent: "sign-posts" }, as));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_target" });
+  });
+  expect(unknown.length).toBeGreaterThan(0);
+  expect(await previewQueries(() => expectLegacyPreview(as, path, {}, "edit-topic"))).toEqual(unknown);
+  await h.db.update(profiles).set({ suspendedUntil: new Date(Date.now() + 86_400_000) }).where(eq(profiles.userId, id));
+  expect(await h.outcome(() => reviewDraft(reviewRequest(path, {}, as)))).toMatchObject({ status: 302, location: "/suspended" });
 });
 
 it("refuses the old challenge operation without issuing a challenge", async () => {
@@ -94,16 +159,12 @@ describe("AI draft confirmation through browser routes", () => {
     expect(response.status).toBe(201);
     return (await response.json()).id as number;
   }
-  function reviewRequest(path: string, fields: Record<string, string>, as?: string, headers?: Record<string, string>) {
-    const basis = h.request("/signing", { as, headers });
-    return h.args(new Request(basis, {
-      method: "POST", body: JSON.stringify({ intent: "preview", pathname: path, fields: Object.entries(fields) }),
-    }));
-  }
   async function review(path: string, fields: Record<string, string>, as = "review_owner") {
     const response = await reviewDraft(reviewRequest(path, fields, as));
     expect(response.status).toBe(200);
-    return await response.json() as SigningPreview;
+    const preview = await response.json() as SigningPreview;
+    expect(preview.operation).toBe("publish-draft");
+    return preview;
   }
   function publish(id: number, fields: Record<string, string>, fromPreview = false, as = "review_owner") {
     const path = pathFor(id) + (fromPreview ? "/preview" : "");

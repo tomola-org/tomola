@@ -1,7 +1,7 @@
 import type { Route } from "./+types/signing";
 import { requireMember, requireWriter } from "~/lib/auth/session.server";
 import { assertSameOrigin } from "~/lib/http/csrf.server";
-import { previewDraftPublication, SigningError, signingErrorResponse } from "~/lib/signing.server";
+import { previewDraftPublication, routeOperation, SigningError, signingErrorResponse } from "~/lib/signing.server";
 import { hitMemberLimit, rateLimitHeaders } from "~/lib/rate-limit.server";
 import { MarkdownBusyError } from "~/lib/markdown-budget.server";
 import { SIGNATURE_ASSERTION_FIELD, SIGNATURE_CHALLENGE_FIELD } from "~/lib/signing";
@@ -26,7 +26,11 @@ export async function action({ request }: Route.ActionArgs) {
       form.append(name, value);
     }
     await requireWriter(request);
-    const result = await previewDraftPublication(db, user.id, body.pathname, form);
+    const { operation } = routeOperation(body.pathname, form);
+    // Pages loaded before signatures were retired still preview ordinary writes before submitting.
+    const result = operation === "publish-draft"
+      ? await previewDraftPublication(db, user.id, body.pathname, form)
+      : { operation, signatureRequired: false, lastEditor: null };
     return Response.json(result, { headers: { "Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer" } });
   } catch (error) {
     if (error instanceof MarkdownBusyError) return Response.json({ error: "rate_limited" }, { status: 503, headers: { "Retry-After": "1", "Cache-Control": "no-store" } });

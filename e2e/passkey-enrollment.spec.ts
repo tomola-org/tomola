@@ -124,10 +124,31 @@ test("passkey-only sign-in rejects a pending email code and accepts a verified p
     await page.goto("/settings#settings-passkeys");
     await waitForClientRoute(page);
     const signing: string[] = [];
-    page.on("request", request => { if (new URL(request.url()).pathname === "/signing") signing.push(request.url()); });
+    let removals = 0;
+    page.on("request", request => {
+      const path = new URL(request.url()).pathname;
+      if (path === "/signing") signing.push(request.url());
+      if (request.method() === "POST" && /^\/settings(?:\.data)?$/.test(path)) removals++;
+    });
     const keys = page.locator("#settings-passkeys");
     const spare = keys.getByRole("listitem").filter({ hasText: "予備の端末" });
-    await spare.getByRole("button", { name: m.settings_passkeys_remove, exact: true }).click();
+    const remove = spare.getByRole("button", { name: m.settings_passkeys_remove, exact: true });
+    const clickRemove = async (decision: "dismiss" | "accept") => {
+      await Promise.all([
+        page.waitForEvent("dialog").then(async dialog => {
+          await dialog[decision]();
+          expect(dialog.type()).toBe("confirm");
+          expect(dialog.message()).toBe(m.settings_passkeys_remove_confirm);
+        }),
+        remove.click(),
+      ]);
+    };
+    await clickRemove("dismiss");
+    await page.reload();
+    await waitForClientRoute(page);
+    await expect(spare).toBeVisible();
+    expect(removals).toBe(0);
+    await clickRemove("accept");
     await expect(keys.getByRole("status").filter({ hasText: m.settings_passkeys_removed })).toBeVisible();
     await expect(spare).toHaveCount(0);
     await expect(keys.getByRole("button", { name: m.settings_passkeys_remove, exact: true })).toBeDisabled();

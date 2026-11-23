@@ -78,7 +78,7 @@ export function PasskeySettings({ passkeys, login, saved, returnTo }: { passkeys
               {p.createdAt && <span className="ui-meta text-muted-foreground">{m.settings_passkeys_created({ date: p.createdAt.slice(0, 10) })}</span>}
               {p.backedUp && <span className="ui-meta text-muted-foreground">{m.settings_passkeys_synced()}</span>}
               {!removeReady && !(last && login.protected) ? <Link to={removeReauth} className={`${buttonVariants({ variant: "outline" })} ms-auto`}>{m.settings_passkeys_remove()}</Link> : <Form method="post" action={settingsPath} className="ms-auto" onSubmit={(e) => {
-                  if (!login.protected && !window.confirm(m.settings_passkeys_remove_confirm())) e.preventDefault();
+                  if (!window.confirm(m.settings_passkeys_remove_confirm())) e.preventDefault();
                 }}>
                 <input type="hidden" name="intent" value="delete-passkey" />
                 <input type="hidden" name="passkeyId" value={p.id} />

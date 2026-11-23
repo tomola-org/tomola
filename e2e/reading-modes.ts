@@ -65,6 +65,7 @@ export const publicOnly = [
   ["return-reading", ".*"],
 ] as const;
 export const bothModes = [
+  ["auth", "the emailed link opens a confirm page|a member signs in with a passkey and confirms its removal"],
   ["draft-preview", ".*"],
   ["ai-draft", "AI draft confirmation|imported text stays private"],
   ["passkey-enrollment", "legacy publication form"],
