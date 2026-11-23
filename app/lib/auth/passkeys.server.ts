@@ -1,9 +1,9 @@
 import { isDeletedIdentity } from "../deleted-member";
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { generateAuthenticationOptions, generateRegistrationOptions, verifyRegistrationResponse, type AuthenticationResponseJSON, type RegistrationResponseJSON } from "@simplewebauthn/server";
 import type { Db, Tx } from "~/lib/db/client.server";
-import { passkey, passkeyRecoveries, passkeyRecoveryPermits, profiles, session, signingChallenges, user } from "~/lib/db/schema";
+import { account, passkey, passkeyRecoveries, passkeyRecoveryPermits, profiles, session, signingChallenges, user } from "~/lib/db/schema";
 import { boundChallenge, canonicalSigningJson, lockSigningMember, SIGNING_TTL_MS, SigningError, signingSite, transportsOf, verifySignedAssertion } from "~/lib/signing.server";
 import { enqueue } from "~/lib/jobs/queue.server";
 import { SEND_PASSKEY_NOTICE_JOB } from "~/lib/jobs/mail-kinds";
@@ -169,16 +169,51 @@ export async function enqueuePasskeyNotice(tx: Db, userId: string, action: Passk
   await enqueue(tx, SEND_PASSKEY_NOTICE_JOB, { userId, action, name, at: at.toISOString(), recoveryId }, { dedupeKey: `passkey-notice:${randomUUID()}`, runAt: at });
 }
 
-// Called only from the operator CLI after independent identity checks.
-export async function recoverPasskeys(db: Db, operator: { id: string; email: string }, userId: string, note: string, identityVerification: string, now?: Date) {
+type OperatorIdentity = { id: string; email: string };
+async function requirePasskeyOperator(tx: Tx, operator: OperatorIdentity, userId: string) {
   if (isDeletedIdentity(operator.id, operator.email) || !isOperatorEmail(operator.email) || operator.id === userId) throw new SigningError("operator_required");
+  const [actual] = await tx.select({ email: user.email }).from(user).where(eq(user.id, operator.id));
+  if (actual?.email !== operator.email) throw new SigningError("operator_required");
+}
+
+export type LoginMethodOperation =
+  | { kind: "list-passkeys" | "remove-all-passkeys" | "unlink-google" }
+  | { kind: "remove-passkey"; id: string };
+
+export function manageMemberLoginMethods(db: Db, operator: OperatorIdentity, userId: string, operation: LoginMethodOperation) {
+  return db.transaction(async tx => {
+    await requirePasskeyOperator(tx, operator, userId);
+    await lockSigningMember(tx, userId);
+    const [profile] = await tx.select({ passkeyOnly: profiles.passkeyOnly }).from(profiles).where(eq(profiles.userId, userId));
+    if (!profile) throw new SigningError("not_a_member");
+    const at = new Date();
+    if (operation.kind === "unlink-google") {
+      const removed = await tx.delete(account).where(and(eq(account.userId, userId), eq(account.providerId, "google"))).returning({ id: account.id });
+      if (!removed.length) throw new SigningError("google_not_connected", 404);
+      await enqueuePasskeyNotice(tx, userId, "google_disconnected", "", at);
+      return { removedIds: removed.map(row => row.id), at };
+    }
+    const keys = await tx.select({ id: passkey.id, name: passkey.name, addedAt: passkey.createdAt }).from(passkey)
+      .where(eq(passkey.userId, userId)).orderBy(asc(passkey.createdAt), asc(passkey.id));
+    if (operation.kind === "list-passkeys") return { keys };
+    const selected = operation.kind === "remove-passkey" ? keys.filter(key => key.id === operation.id) : keys;
+    if (!selected.length) throw new SigningError("passkey_not_found", 404);
+    if (protectedLogin(profile) && selected.length === keys.length) throw new SigningError("last_passkey", 409);
+    const removedIds = selected.map(key => key.id);
+    await tx.delete(passkey).where(and(eq(passkey.userId, userId), inArray(passkey.id, removedIds)));
+    for (const key of selected) await enqueuePasskeyNotice(tx, userId, "removed", key.name ?? "", at);
+    return { removedIds, at };
+  });
+}
+
+// Called only from the operator CLI after independent identity checks.
+export async function recoverPasskeys(db: Db, operator: OperatorIdentity, userId: string, note: string, identityVerification: string, now?: Date) {
   if (note.trim().length < 10 || note.length > 4000) throw new SigningError("recovery_note_required", 400);
   if (!identityVerification?.trim() || identityVerification.length > 4000) throw new SigningError("recovery_verification_required", 400);
   return db.transaction(async tx => {
+    await requirePasskeyOperator(tx, operator, userId);
     await lockSigningMember(tx, userId);
     const checkedAt = now ?? new Date();
-    const [actualOperator] = await tx.select({ email: user.email }).from(user).where(eq(user.id, operator.id));
-    if (!actualOperator || actualOperator.email !== operator.email || !isOperatorEmail(actualOperator.email)) throw new SigningError("operator_required");
     const [member] = await tx.select({ email: user.email, passkeyOnly: profiles.passkeyOnly, passkeyEnrolledAt: profiles.passkeyEnrolledAt }).from(profiles).innerJoin(user, eq(user.id, profiles.userId)).where(eq(profiles.userId, userId));
     if (!member || !protectedLogin(member)) throw new SigningError("recovery_not_available", 409);
     const expiresAt = new Date(checkedAt.getTime() + 30 * 60 * 1000);

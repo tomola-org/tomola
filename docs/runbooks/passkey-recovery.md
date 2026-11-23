@@ -17,7 +17,22 @@ docker compose exec app pnpm exec tsx scripts/recover-passkeys.ts operator@examp
   'Member reported losing access to all passkeys' 'Verified in a call to the previously recorded number. Operator and time recorded.'
 ```
 
-3. The command revokes the member’s old passkeys, challenges, previous recovery permit, sessions, API tokens, MCP connections, and Open in AI links. The worker sends a dedicated registration link to the account’s email address. The link permits one registration with user verification within 30 minutes of issuance. A successful registration consumes the permit, records the completion time in the recovery log, and opens a passkey session while preserving the login preference.
+3. The command revokes the member’s old passkeys, challenges, previous recovery permit, outstanding email sign-in codes and links, sessions, API tokens, MCP connections, and Open in AI links. The worker sends a dedicated registration link to the account’s email address. The link permits one registration with user verification within 30 minutes of issuance. A successful registration consumes the permit, records the completion time in the recovery log, and opens a passkey session while preserving the login preference.
 4. Ask the member to try logging in with the new key. If the permit expires, check the identity evidence before issuing a new one. Verify delivery through the job status if the member does not receive the link.
 
 Historical signatures and their public keys remain available through the personal export. Use the device or credential provider’s backup options to establish a second working way to use a passkey.
+
+## List or remove a member’s sign-in methods
+
+Use a registered operator account other than the member’s. Check the environment and the member’s address before running a command. To remove a particular passkey, use the ID shown by the list command. Each removal requires a reason and `--confirm`.
+
+```sh
+pnpm exec tsx --env-file-if-exists=.env scripts/recover-passkeys.ts list-passkeys operator@example.org member@example.org
+pnpm exec tsx --env-file-if-exists=.env scripts/recover-passkeys.ts remove-passkey operator@example.org member@example.org '<passkey-id>' 'Member confirmed the device was lost' --confirm
+pnpm exec tsx --env-file-if-exists=.env scripts/recover-passkeys.ts remove-all-passkeys operator@example.org member@example.org 'Member asked to replace all keys' --confirm
+pnpm exec tsx --env-file-if-exists=.env scripts/recover-passkeys.ts unlink-google operator@example.org member@example.org 'Member asked to disconnect Google' --confirm
+```
+
+For Docker Compose, run the same commands with `docker compose exec app` and omit `--env-file-if-exists=.env`. Store the removal receipt in the private incident record. It contains the operator and member IDs, the affected record IDs, the reason, and the time. The worker emails the member about each removed passkey or Google disconnection.
+
+A member who uses passkey-only sign-in must keep at least one passkey. To replace all their keys, follow the recovery procedure above. Use the credential revocation action in the operator’s member search when you also need to end sessions and other active access.
