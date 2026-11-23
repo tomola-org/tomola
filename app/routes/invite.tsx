@@ -145,7 +145,7 @@ export async function action({ request, params }: Route.ActionArgs) {
   }
   const auth = await getAuth();
   const pending = prepareLoginCode(request, email, intent === "login-resend");
-  const outcome: MagicLinkOutcome = {};
+  const outcome: MagicLinkOutcome = invitation.kind === "individual" ? { individualInvitationId: invitation.ref.id } : {};
   const browser = pending.browser;
   try {
     // Passing request enables origin validation. asResponse: false makes rejection an exception instead of a Response.
@@ -155,13 +155,11 @@ export async function action({ request, params }: Route.ActionArgs) {
       request,
       asResponse: false,
     });
-    if (invitation.kind === "shared") {
-      await sharedInvitationContext.run(invitation.ref.id, () => magicLinkOutcome.run(outcome, send));
-      if (outcome.result !== "sent") {
-        const error = outcome.result === "invitation_unavailable" ? "invitation_unavailable" : "later";
-        return { sentTo: null, error };
-      }
-    } else await send();
+    await magicLinkOutcome.run(outcome, () => invitation.kind === "shared" ? sharedInvitationContext.run(invitation.ref.id, send) : send());
+    if (outcome.result !== "sent") {
+      const error = invitation.kind === "shared" && outcome.result === "invitation_unavailable" ? "invitation_unavailable" : "later";
+      return { sentTo: null, error };
+    }
   } catch (error) {
     // 403 origin rejection means the opened address differs from configuration. Other rejections indicate invalid input.
     if (isOriginRejected(error)) return { sentTo: null, error: "origin_mismatch" as const };
@@ -233,7 +231,7 @@ export default function Invite({ loaderData, actionData }: Route.ComponentProps)
         <p className="ui-help">{m.shared_invite_switch_account()}</p>
         <Link to="/" className="underline">{m.confirm_home()}</Link>
       </> : unavailable ? <Link to="/login" className="underline">{m.invite_invalid_login()}</Link> : loaderData.codePending ? <>
-        <p className="break-words">{m.invite_sent({ email: loaderData.codePending.email })}</p>
+        {(loaderData.shared || sendError !== "later") && <p className="break-words">{m.invite_sent({ email: loaderData.codePending.email })}</p>}
         <LoginCodeForm key={loaderData.codePending.revision} state={loaderData.codePending} invalid={!!codeError} limited={actionData && "limited" in actionData ? actionData.limited : undefined} resentNotice={sendError !== "later"} invitation />
         {actionData && "error" in actionData && actionData.error === "origin_mismatch" && <p className="text-destructive">{m.auth_origin_mismatch()}</p>}
       </> : !loaderData.valid ? <>

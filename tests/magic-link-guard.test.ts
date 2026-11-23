@@ -2,12 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAppAuth } from "~/lib/auth/auth.server";
 import { addressHasher, settleMagicLinkMail } from "~/lib/auth/magic-link.server";
 import { hashMagicLinkToken } from "~/lib/auth/plugins";
-import { cleanupExpiredLimits, hitRateLimit } from "~/lib/rate-limit.server";
+import { cleanupExpiredLimits, hitRateLimit, MAGIC_LINK_IP_LIMIT } from "~/lib/rate-limit.server";
 import { verification } from "~/lib/db/schema";
 import { createMailer } from "~/lib/mail/mail.server";
 import { createMemoryMailbox } from "~/lib/mail/transports.server";
 import { createInvitation } from "~/lib/invitations.server";
 import { addMember, createTestDb } from "./helpers/db";
+import { seedRateLimit } from "./helpers/fixtures";
 import { user } from "~/lib/db/schema";
 import { setTestLocale } from "./stubs/paraglide-runtime";
 
@@ -255,6 +256,65 @@ describe("the login and invitation screens say what happened to the request", ()
       const invitedToken = tokenIn(box.sent.at(-1)!.text);
       const invitedCookie = (invitation as { init: { headers: Headers } }).init.headers.getSetCookie()[0].split(";")[0];
       expect((await h.outcome(() => confirm(h.args(h.request("/auth/confirm", { form: { token: invitedToken }, headers: { cookie: invitedCookie } }))))).status).toBe(303);
+    } finally {
+      h.restore();
+    }
+  });
+
+  it.each([false, true])("reports individual invitation delivery for a recipient with membership %s", async existing => {
+    const { setupRouteHarness } = await import("./helpers/route-harness");
+    const { renderInRouter } = await import("./helpers/render-in-router");
+    const { routeElement } = await import("./helpers/route-fixtures");
+    const { m } = await import("~/paraglide/messages.js");
+    const { default: Invite, action, loader } = await import("~/routes/invite");
+    const h = await setupRouteHarness();
+    process.env.TRUSTED_PROXY_HOPS = "1";
+    try {
+      const email = "individual-recipient@example.com";
+      if (existing) await addMember(h.db, "individual-recipient", "individual_recipient", { email });
+      const { token, expiresAt } = await createInvitation(h.db, { email });
+      const path = `/invite/${token}`;
+      let now = new Date();
+      const mail = vi.fn(async () => {});
+      const globals = globalThis as { __tomolaAuth?: Promise<unknown> };
+      globals.__tomolaAuth = Promise.resolve(createAppAuth(h.db, { baseURL: BASE, secret: SECRET, now: () => now,
+        mailer: () => ({ kind: "memory", from: "test@example.com", send: mail }) }));
+      const submit = (ip: string, cookie = "") => action(h.args(h.request(path, {
+        form: cookie ? { intent: "login-resend" } : {}, headers: { "x-forwarded-for": ip, cookie },
+      }), { token }));
+      const screen = (cookie = "") => loader(h.args(h.request(path, { headers: { cookie } }), { token }));
+      const later = { sentTo: null, error: "later" } as const;
+      const assertLater = async (actionData: Awaited<ReturnType<typeof submit>>, cookie = "") => {
+        expect(actionData).toEqual(later);
+        const loaderData = await screen(cookie);
+        const html = await renderInRouter(() => routeElement(Invite, { loaderData, actionData: later }), path);
+        expect(html).toContain(m.login_try_later());
+        expect(html).not.toContain(m.invite_sent({ email }));
+      };
+
+      const cappedIp = "198.51.100.81";
+      await seedRateLimit(h.db, `magic-link:ip:${cappedIp}`, MAGIC_LINK_IP_LIMIT, now);
+      await assertLater(await submit(cappedIp));
+      expect(mail).not.toHaveBeenCalled();
+
+      const ip = "198.51.100.82";
+      const sent = await submit(ip);
+      expect(sent).toMatchObject({ data: { sentTo: email, error: null } });
+      expect(mail).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ to: email }));
+      const cookie = (sent as { init: { headers: Headers } }).init.headers.getSetCookie().map(value => value.split(";")[0]).join("; ");
+      const loaderData = await screen(cookie);
+      expect(loaderData.codePending?.email).toBe(email);
+      expect(await renderInRouter(() => routeElement(Invite, { loaderData }), path)).toContain(m.invite_sent({ email }));
+
+      mail.mockRejectedValueOnce(new Error("mail transport unavailable"));
+      await assertLater(await submit(ip, cookie), cookie);
+      expect((await screen(cookie)).codePending).toEqual(loaderData.codePending);
+      expect(mail).toHaveBeenCalledTimes(2);
+
+      // The invitation remains valid when the route reads it, then expires before the sender reads it.
+      now = expiresAt;
+      await assertLater(await submit(ip));
+      expect(mail).toHaveBeenCalledTimes(2);
     } finally {
       h.restore();
     }

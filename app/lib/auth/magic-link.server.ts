@@ -6,7 +6,7 @@ import { inArray, sql } from "drizzle-orm";
 import type { Db } from "~/lib/db/client.server";
 import { invitations, user, verification } from "~/lib/db/schema";
 import { clientAddress } from "~/lib/http/client-ip.server";
-import { normalizeEmail } from "~/lib/invitations.server";
+import { findValidInvitationById, normalizeEmail } from "~/lib/invitations.server";
 import { mailDecoyTo, type Mailer } from "~/lib/mail/mail.server";
 import { defaultUiLocale } from "~/lib/enabled-langs.server";
 import { magicLinkMail, mailLocale, passkeyOnlyLoginMail } from "~/lib/mail/magic-link.server";
@@ -43,9 +43,8 @@ export async function isKnownAddress(db: Db, email: string, now: Date = new Date
   return result.rows[0]?.known === true;
 }
 
-// A login screen asks for the outcome of its own request: it runs signInMagicLink inside this store, and the sender below records what happened and then waits for the
-// mail provider to accept the message. Calls made outside a store (invitations, scripts, tests) keep the unobserved behaviour: the response never depends on the recipient.
-export type MagicLinkOutcome = { result?: "sent" | "unregistered" | "later" | "invitation_unavailable" };
+// Login and invitation screens run signInMagicLink inside this store to wait for the provider and read the result. An individual invitation supplies its server-validated ID.
+export type MagicLinkOutcome = { individualInvitationId?: string; result?: "sent" | "unregistered" | "later" | "invitation_unavailable" };
 export const magicLinkOutcome = new AsyncLocalStorage<MagicLinkOutcome>();
 export const sharedInvitationContext = new AsyncLocalStorage<string | null>();
 
@@ -73,12 +72,11 @@ export function addressHasher(secret: string): (email: string) => string {
 // Magic-link delivery (Better Auth's sendMagicLink). Both the Better Auth HTTP endpoint (/api/auth/sign-in/magic-link,
 // closed by app/lib/auth/endpoints.server.ts) and direct auth.api calls must pass through here.
 //   Before returning, while the caller waits: count email/IP pairs, recipients and source IPs. Obtain the IP according to trusted-proxy settings
-//   (app/lib/http/client-ip.server.ts); omit the per-IP limit if unavailable. Count rejected requests too, then return immediately.
+//   (app/lib/http/client-ip.server.ts). Valid shared invitations spend their link's allowance instead of the source IP's sending allowance.
 //   Afterward, without waiting: check the recipient (existing user or valid invitation), compose the email, and send it.
 // To prevent response timing from revealing membership, run the same counter updates before returning for every address.
 // If rate-limited or the recipient is unknown, send nothing and throw no exception, so the caller responds as if sent. Only record the outcome.
-// The login screens are the exception: they say whether the address is registered (app/lib/auth/login-request.server.ts checks that first, behind its own
-// per-source allowance), and they run this inside magicLinkOutcome, so the result is recorded for them and the mail is awaited. Callers outside it keep the behaviour above.
+// Login checks registration before requesting mail, behind its lookup allowance. Invitation screens ask for the delivery result after validating the invitation.
 // Before calling sendMagicLink, Better Auth writes a verification row with the token hash as identifier (with the plugin's magic-link: namespace) and the email address as value.
 // Delete that row when not sending, since anyone could otherwise leave rows for unknown addresses. Sent rows remain until the token is consumed or expires after 15 minutes
 // (hitRateLimit removes expired rows).
@@ -104,10 +102,11 @@ export function createMagicLinkSender(deps: {
     const email = normalizeEmail(rawEmail);
     const ip = ctx?.headers ? clientAddress(ctx.headers) : ctx?.request ? clientAddress(ctx.request) : null;
     const byPair = await hitRateLimit(db, { key: `magic-link:email-ip:${addressHash(`${email}:${ip ?? "unknown"}`)}`, ...MAGIC_LINK_EMAIL_IP_LIMIT, now });
-    const byIp = ip === null ? null : await hitRateLimit(db, { key: `magic-link:ip:${ip}`, ...MAGIC_LINK_IP_LIMIT, now });
+    const sharedLink = sharedLinkId === null ? null : await findSharedInvitation(db, { id: sharedLinkId });
+    const sharedLinkValid = sharedLink !== null && sharedInvitationStatus(sharedLink, now) === "valid";
+    const byIp = ip === null || sharedLinkValid ? null : await hitRateLimit(db, { key: `magic-link:ip:${ip}`, ...MAGIC_LINK_IP_LIMIT, now });
     let limited = !byPair.allowed ? "address" : byIp && !byIp.allowed ? "ip" : null;
 
-    const sharedLink = sharedLinkId === null ? null : await findSharedInvitation(db, { id: sharedLinkId });
     if (sharedLinkId !== null && !limited) {
       const byShortWindow = await hitRateLimit(db, { key: `shared-invite:email-15m:${addressHash(email)}`, limit: 3, windowSeconds: 900, now });
       const byLongWindow = byShortWindow.allowed
@@ -144,8 +143,7 @@ export function createMagicLinkSender(deps: {
       return;
     }
 
-    if (sharedLinkId !== null && !isDeletedIdentity(undefined, email)
-      && (!sharedLink || sharedInvitationStatus(sharedLink, now) !== "valid")) {
+    if (sharedLinkId !== null && !sharedLinkValid && !isDeletedIdentity(undefined, email)) {
       await cleanup();
       if (observed) observed.result = "invitation_unavailable";
       return;
@@ -164,7 +162,15 @@ export function createMagicLinkSender(deps: {
       };
       try {
         if (limited) return await refuse(`rate limited (${limited})`);
-        if (isDeletedIdentity(undefined, email) || (sharedLinkId === null && !(await (deps.isKnown ?? isKnownAddress)(db, email, now)))) {
+        if (observed?.individualInvitationId) {
+          // Eligibility for an invitation request comes from the invitation, even if its status changes during submission.
+          const invitation = await findValidInvitationById(db, observed.individualInvitationId, now);
+          if (invitation?.email !== email) {
+            await cleanup();
+            observed.result = "invitation_unavailable";
+            return;
+          }
+        } else if (isDeletedIdentity(undefined, email) || (sharedLinkId === null && !(await (deps.isKnown ?? isKnownAddress)(db, email, now)))) {
           await refuse("no member or invitation");
           if (observed) observed.result = "unregistered";
           return;

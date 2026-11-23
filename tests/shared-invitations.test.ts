@@ -8,8 +8,10 @@ import { rateLimits, sharedInvitations, suspendedEmailHashes, user } from "~/lib
 import { addMember, createTestDb } from "./helpers/db";
 import { suspendedEmailHash } from "~/lib/suspended-email.server";
 import { createSharedInvitation } from "~/lib/shared-invitations.server";
+import { MAGIC_LINK_EMAIL_IP_LIMIT, MAGIC_LINK_IP_LIMIT } from "~/lib/rate-limit.server";
 import { action as invitesAction, headers as invitesHeaders } from "~/routes/invites-new";
 import { action as adminAction } from "~/routes/admin-invitations";
+import { seedRateLimit } from "./helpers/fixtures";
 import { setupRouteHarness } from "./helpers/route-harness";
 
 afterEach(() => { vi.unstubAllEnvs(); });
@@ -100,7 +102,63 @@ it("uses the same observed outcome and one awaited delivery for new, existing, a
   expect(isKnown).not.toHaveBeenCalled();
 });
 
-it("caps shared delivery across links and sources while sharing the usual address cap", async () => {
+async function deliver(send: ReturnType<typeof createMagicLinkSender>, link: string | null, email: string, ip: string) {
+  const outcome: MagicLinkOutcome = {};
+  const headers = new Headers({ "x-forwarded-for": ip });
+  await sharedInvitationContext.run(link, () => magicLinkOutcome.run(outcome, () => send({ email, url: BASE, token: randomBytes(24).toString("base64url") }, { headers })));
+  return outcome.result;
+}
+
+it("gives shared links and ordinary delivery separate allowances on the same source", async () => {
+  vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
+  const db = await createTestDb();
+  const now = new Date("2026-01-01T00:00:01Z");
+  const ip = "198.51.100.30";
+  const ipKey = eq(rateLimits.key, `magic-link:ip:${ip}`);
+  await db.insert(sharedInvitations).values(["workshop", "second-workshop"].map(id => ({
+    id, tokenHash: id, label: id, createdBy: issuer.id, maxUses: 10, expiresAt: new Date("2026-01-02T00:00:00Z"),
+  })));
+  const mail = vi.fn(async () => {});
+  const send = createMagicLinkSender({ db, baseURL: BASE, secret: authSecret(), now: () => now, isKnown: async () => true,
+    mailer: () => ({ kind: "memory", from: "test@example.com", send: mail }) });
+
+  for (let i = 1; i <= 30; i++) expect(await deliver(send, "workshop", `guest-${i}@example.com`, ip)).toBe("sent");
+  expect(await deliver(send, "workshop", "next-guest@example.com", ip)).toBe("later");
+  expect(await db.$count(rateLimits, ipKey)).toBe(0);
+  for (let i = 1; i <= 20; i++) expect(await deliver(send, null, `member-${i}@example.com`, ip)).toBe("sent");
+  expect(await deliver(send, null, "next-member@example.com", ip)).toBe("later");
+  expect(await deliver(send, "second-workshop", "other-guest@example.com", ip)).toBe("sent");
+  expect(await db.select({ count: rateLimits.count }).from(rateLimits).where(ipKey)).toEqual([{ count: 21 }]);
+  expect(mail).toHaveBeenCalledTimes(51);
+});
+
+it("applies the source sending allowance to unavailable shared links", async () => {
+  vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
+  const db = await createTestDb();
+  const now = new Date("2026-01-01T00:00:01Z");
+  const expiresAt = new Date("2026-01-02T00:00:00Z");
+  const fixture = { createdBy: issuer.id, maxUses: 1, expiresAt };
+  await db.insert(sharedInvitations).values([
+    { ...fixture, id: "expired", tokenHash: "expired", label: "Expired", expiresAt: now },
+    { ...fixture, id: "revoked", tokenHash: "revoked", label: "Revoked", revokedAt: now },
+    { ...fixture, id: "full", tokenHash: "full", label: "Full", usedCount: 1 },
+  ]);
+  const mail = vi.fn(async () => {});
+  const send = createMagicLinkSender({ db, baseURL: BASE, secret: authSecret(), now: () => now,
+    mailer: () => ({ kind: "memory", from: "test@example.com", send: mail }) });
+
+  for (const [i, link] of ["missing", "expired", "revoked", "full"].entries()) {
+    const ip = `198.51.100.${i + 1}`;
+    const key = `magic-link:ip:${ip}`;
+    await seedRateLimit(db, key, { ...MAGIC_LINK_IP_LIMIT, limit: 19 }, now);
+    expect(await deliver(send, link, `first-${link}@example.com`, ip)).toBe("invitation_unavailable");
+    expect(await deliver(send, link, `second-${link}@example.com`, ip)).toBe("later");
+    expect(await db.select({ count: rateLimits.count }).from(rateLimits).where(eq(rateLimits.key, key))).toEqual([{ count: 21 }]);
+  }
+  expect(mail).not.toHaveBeenCalled();
+});
+
+it("caps shared delivery across links and sources while sharing the usual address allowances", async () => {
   vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
   const db = await createTestDb();
   const hour = Math.floor(Date.now() / 3_600_000) * 3_600_000;
@@ -113,27 +171,29 @@ it("caps shared delivery across links and sources while sharing the usual addres
   const send = createMagicLinkSender({ db, baseURL: BASE, secret, now: () => now, isKnown: async () => true,
     mailer: () => ({ kind: "memory", from: "test@example.com", send: mail }) });
   let source = 0;
-  async function deliver(email: string, link: string | null) {
-    const outcome: MagicLinkOutcome = {};
-    const headers = new Headers({ "x-forwarded-for": `198.51.100.${++source}` });
-    await sharedInvitationContext.run(link, () => magicLinkOutcome.run(outcome, () => send({ email, url: BASE, token: randomBytes(24).toString("base64url") }, { headers })));
-    return outcome.result;
-  }
+  const nextSource = (email: string, link: string | null) => deliver(send, link, email, `198.51.100.${++source}`);
   for (const minutes of [0, 15]) {
     now = new Date(hour + minutes * 60_000 + 1_000);
-    for (const link of ["delivery-a", "delivery-b", "delivery-b"]) expect(await deliver("capped@example.com", link)).toBe("sent");
-    expect(await deliver("capped@example.com", "delivery-a")).toBe("later");
+    for (const link of ["delivery-a", "delivery-b", "delivery-b"]) expect(await nextSource("capped@example.com", link)).toBe("sent");
+    expect(await nextSource("capped@example.com", "delivery-a")).toBe("later");
   }
   now = new Date(hour + 30 * 60_000);
-  expect(await deliver("capped@example.com", "delivery-a")).toBe("later");
-  for (let i = 0; i < 28; i++) expect(await deliver(`link_cap_${i}@example.com`, "delivery-a")).toBe("sent");
-  expect(await deliver("link_capped@example.com", "delivery-a")).toBe("later");
+  expect(await nextSource("capped@example.com", "delivery-a")).toBe("later");
+  for (let i = 0; i < 28; i++) expect(await nextSource(`link_cap_${i}@example.com`, "delivery-a")).toBe("sent");
+  expect(await nextSource("link_capped@example.com", "delivery-a")).toBe("later");
 
   const address = "standard_cap@example.com";
   const hash = addressHasher(secret)(address);
   await db.insert(rateLimits).values({ key: `magic-link:email:${hash}`, count: 28, windowStart: new Date(hour), expiresAt: new Date(hour + 3_600_000) });
-  expect(await deliver(address, null)).toBe("sent");
-  expect(await deliver(address, "delivery-b")).toBe("sent");
-  expect(await deliver(address, null)).toBe("later");
-  expect(await deliver(address, "delivery-b")).toBe("later");
+  expect(await nextSource(address, null)).toBe("sent");
+  expect(await nextSource(address, "delivery-b")).toBe("sent");
+  expect(await nextSource(address, null)).toBe("later");
+  expect(await nextSource(address, "delivery-b")).toBe("later");
+
+  const pairAddress = "standard_pair_cap@example.com";
+  const ip = "198.51.100.100";
+  const pair = addressHasher(secret)(`${pairAddress}:${ip}`);
+  await seedRateLimit(db, `magic-link:email-ip:${pair}`, MAGIC_LINK_EMAIL_IP_LIMIT, now);
+  expect(await deliver(send, "delivery-b", pairAddress, ip)).toBe("later");
+  expect(await nextSource(pairAddress, "delivery-b")).toBe("sent");
 });
