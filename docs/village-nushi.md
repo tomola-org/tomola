@@ -63,7 +63,13 @@ Publication rechecks settings, expiry, allowances and all supporting source revi
 
 Callers see answers and failures in the topic. Cited authors may receive one citation notification per UTC day and can opt out in account settings. AI replies do not notify followers. Citation notices and email contain only a short label and link. The answer text stays out of notifications and email. When the recipient prefers immediate email, the email job is queued with the notice. A permanent delivery failure does not cause another job to be queued.
 
-Source-attribution snapshots belonging to the member are included in personal exports, without other members' snapshots or AI answer text. Account deletion anonymizes their saved author labels.
+While a topic still supports Nushi, a withdrawn answer is represented by its position, withdrawal reason and any replacement link. Answer URLs return 404 when the topic is unavailable for Nushi.
+
+Daily maintenance erases a member-deleted post's saved quotations, quotation translations and author attribution from Nushi answers when it erases the post after 30 days. It also clears affected answer translations and residual chat answer text and translations. The answer keeps its number, position and any replacement link. Preservation holds, open appeals and reversible operator deletions use the same rules as the source post. Consented or audited report evidence follows its own retention policy.
+
+Source-attribution snapshots belonging to the member are included in personal exports, without other members' snapshots or AI answer text. Both account deletion choices anonymize attribution in saved posting Nushi answers and their source records. Stored quotes from retained posts remain under the shared departed-member label. Posts selected for deletion enter the same 30-day cleanup.
+
+Posting and chat quota reservations are counted by UTC day. Daily maintenance removes reservations from past days, and account deletion removes keys identifying the departing member from both tables.
 
 ## Reports and operational review
 
