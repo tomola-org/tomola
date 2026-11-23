@@ -2,7 +2,6 @@ import { hasPostAiMaterial, hasPostAiMaterialInstructionWarning } from "~/lib/po
 import { renderNushiThread } from "~/lib/nushi-html.server";
 import { readNushiAnswer, threadNushi, canRefreshNushi } from "~/lib/nushi.server";
 import { nushiPreferences, nushiTopicDisabled } from "~/lib/nushi-settings.server";
-import { nushiPlace } from "~/lib/nushi-materials.server";
 import { nushiEnabled } from "~/lib/nushi-config.server";
 import { getDb } from "~/lib/db/client.server";
 import { nushiRequests } from "~/lib/db/schema";
@@ -296,17 +295,14 @@ async function loaderImplementation({ request, params }: Route.LoaderArgs) {
     };
   })();
   const nushiPromise = (async () => {
-    const nushi = topicVisible ? await threadNushi(db, topic.id, [topic.id, ...replies.map(reply => reply.id)], displayLang) : { answers: [], requests: [] };
+    const nushi = topicVisible ? await threadNushi(db, topic.id, [topic.id, ...replies.map(reply => reply.id)], displayLang) : { available: false, answers: [], requests: [] };
     const refreshable = await Promise.all(nushi.answers.map(async answer => await canRefreshNushi(db, answer, user?.id) ? answer.id : null));
     return { nushi, refreshable: refreshable.filter((id): id is number => id !== null) };
   })();
-  const writerPromise = (async () => {
-    const canWriteReply = !!user && !!profile && topicVisible && (await getWriter(db, user.id, { profile })).ok;
-    return { canWriteReply, nushiAvailable: canWriteReply && !!await nushiPlace(db, topic.id) };
-  })();
+  const writerPromise = user && profile && topicVisible ? getWriter(db, user.id, { profile }).then(result => result.ok) : Promise.resolve(false);
   const [
     stancePart, parents, target, postedNotice, village, share, { nushi, refreshable }, nushiPreference, nushiTopic,
-    { canWriteReply, nushiAvailable }, nushiReply, material, saved, replyLangCount, articleViews,
+    canWriteReply, nushiReply, material, saved, replyLangCount, articleViews,
   ] = await Promise.all([
     stancePromise,
     loadReplyLocations(db, [topic.id], [...new Set([...parentIds, ...missingRootIds])], { viewer, lang: carriedLang }),
@@ -324,7 +320,7 @@ async function loaderImplementation({ request, params }: Route.LoaderArgs) {
     topicVisible ? hasPostAiMaterial(db, topic.id) : null,
     user && topicReadable ? isTopicSaved(db, user.id, topic.id) : null,
     thread.replyCount >= 2 && topicVisible ? countReplyLanguages(db, topic.id) : 0,
-    writerPromise.then(({ canWriteReply }) => canWriteReply ? articleReadingDisplay(db, topic.id) : null),
+    writerPromise.then(canWriteReply => canWriteReply ? articleReadingDisplay(db, topic.id) : null),
     countCrawler ? countReading(db, topic.id, { method: "ai_crawler", readerId: user?.id, display: browserReading }) : undefined,
   ]);
   const nushiView = { ...nushi, ...nushiPreference, setting: nushiTopic };
@@ -414,7 +410,7 @@ async function loaderImplementation({ request, params }: Route.LoaderArgs) {
       ...(user?.id === topic.authorId ? [{ href: `/t/${topic.id}/ai-materials/edit`, label: material ? m.ai_material_title() : m.ai_material_add() }] : []),
     ],
     nushi: renderNushiThread(nushiView, [{ id: topic.id }, ...replies.map(reply => ({ id: reply.id, nushiParentId: reply.nushiParentId }))], { threadId: topic.id, member: !!user, back: `/t/${topic.id}${url.search}`, refreshable, reply: nushiReply && !nushiReply.hidden && nushiReply.threadId === topic.id ? nushiReply.id : undefined }),
-    nushiAvailable,
+    nushiAvailable: canWriteReply && nushi.available,
     reader: !user,
     askAi: user && topic.visibility === "visible" && postAskAiEnabled()
       ? { href: `/t/${topic.id}/ask?${new URLSearchParams({ lang: displayLang })}`, label: m.post_ask_entry() } : null,

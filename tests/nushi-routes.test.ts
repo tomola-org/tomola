@@ -4,10 +4,11 @@ import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
 import { expectModerationReauthentication, withStaleSession } from "./helpers/reauth";
 import { createTopic } from "~/lib/entries.server";
 import { buildThreadMarkdown } from "~/lib/md/thread.server";
-import { moderationActions, nushiAnswers, nushiReports, nushiRequests, rateLimits } from "~/lib/db/schema";
+import { entries, moderationActions, nushiAnswers, nushiReports, nushiRequests, rateLimits } from "~/lib/db/schema";
 import { personalVillage } from "~/lib/personal-villages.server";
-import { setVillageNushi } from "~/lib/nushi-settings.server";
+import { setTopicNushi, setVillageNushi } from "~/lib/nushi-settings.server";
 import { processNushiRequest } from "~/lib/nushi.server";
+import { REPLIES_PER_PAGE } from "~/lib/pagination";
 import { action } from "~/routes/nushi-action";
 import { loader as read } from "~/routes/nushi-read";
 import { loader as readPage } from "~/routes/nushi-answer";
@@ -154,6 +155,48 @@ it("lets readers clear hide preferences on topics without answers while Nushi is
     expect(await controls(visitor)).toBe("");
     expect(await controls({ as })).toBe("");
   } finally { vi.stubEnv("VILLAGE_NUSHI", "1"); }
+});
+
+it("links to available Nushi reply targets across pages and stance filters", async () => {
+  const { loader } = await import("~/routes/topic");
+  const { m } = await import("~/paraglide/messages.js");
+  const owner = h.ids.znushi_route_owner;
+  const village = (await personalVillage(h.db, owner))!;
+  const [topic] = await h.db.insert(entries).values({ kind: "topic", authorId: owner, villageId: village.id,
+    asksStance: true, title: "Orchard access", body: "Should the orchard be open?", lang: "en",
+  }).returning();
+  const reply = { kind: "reply", threadId: topic.id, authorId: owner, lang: "en" } as const;
+  const [call] = await h.db.insert(entries).values({ ...reply, body: "@nushi orchard", stanceTag: "agree" }).returning();
+  const [request] = await h.db.insert(nushiRequests).values({ entryId: call.id, threadId: topic.id, villageId: village.id,
+    callerId: owner, revision: 0, sourceHash: "fixture", state: "answered", expiresAt: new Date(),
+  }).returning();
+  const [answer] = await h.db.insert(nushiAnswers).values({ requestId: request.id,
+    answer: { status: "not_confirmed", readings: [], citations: [] },
+    scope: { posts: 0, from: null, to: null, truncated: false, materialLanguage: "en", answerLangCode: null, materialIndex: [] },
+    lang: "en", engine: "fake", model: "fake", promptVersion: "fixture",
+  }).returning();
+  await h.db.insert(entries).values(Array.from({ length: REPLIES_PER_PAGE - 1 }, () => ({ ...reply, body: "Orchard notes." })));
+  const [response] = await h.db.insert(entries).values({ ...reply, nushiParentId: answer.id,
+    authorId: h.ids.znushi_route_reader, body: "Thank you for checking.", stanceTag: "disagree",
+  }).returning();
+  const paths = ["page=2", "tag=disagree"].map(query => `/t/${topic.id}?lang=en&${query}`);
+  const load = (path: string) => loader(h.args(h.request(path), { id: String(topic.id) }));
+  const answerPath = `/nushi/${answer.id}`;
+  const readAnswer = () => read(h.args(h.request(`${answerPath}.json`), { id: String(answer.id) }));
+
+  expect((await readAnswer()).status).toBe(200);
+  for (const path of paths) {
+    const page = await load(path);
+    expect(page.replies.map(entry => entry.id)).toEqual([response.id]);
+    expect(page.nushi.entries[response.id]).toContain(`href="${answerPath}"`);
+  }
+  expect(await setTopicNushi(h.db, owner, topic.id, true)).toBe(true);
+  expect((await h.outcome(readAnswer)).status).toBe(404);
+  for (const path of paths) {
+    const html = (await load(path)).nushi.entries[response.id];
+    expect(html).toContain(m.reply_target_link());
+    expect(html).not.toContain(`href="${answerPath}"`);
+  }
 });
 
 it("requires a recent sign-in before resolving a Nushi report", async () => {

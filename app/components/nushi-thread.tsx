@@ -3,6 +3,7 @@ import { Button } from "./ui/button";
 import { m } from "~/paraglide/messages.js";
 
 type NushiView = {
+  available: boolean;
   answers: NushiAnswerView[];
   requests: Array<{ id: string; entryId: number; state: string; failure: string | null }>;
   hide: boolean; citations: boolean; setting: boolean | null;
@@ -10,7 +11,7 @@ type NushiView = {
 export default function NushiThreadEntry({ entryId, view, member, nushiParentId, refreshable = [] }: { entryId: number; view: NushiView; member: boolean; nushiParentId?: number | null; refreshable?: number[] }) {
   const target = nushiParentId ? <>{m.nushi_name()} · {m.reply_target_link()}</> : null;
   return <div className="space-y-3">
-    {target && <p className="ui-meta">{view.answers.some(answer => answer.id === nushiParentId)
+    {target && <p className="ui-meta">{view.available
       ? <a className="underline" href={`/nushi/${nushiParentId}`}>{target}</a> : target}</p>}
     {view.answers.filter(answer => answer.entryId === entryId).map(answer => <NushiAnswer key={answer.id} answer={answer} hide={view.hide} member={member} refresh={refreshable.includes(answer.id)} />)}
     {view.requests.filter(request => request.entryId === entryId).map(request => <NushiCallStatus key={request.id} state={request.state} failure={request.failure} />)}

@@ -183,11 +183,14 @@ export async function readNushiAnswer(db: Db, id: number, language?: Lang, env: 
     labels: await nushiSourceLabels(db, id) };
 }
 export async function threadNushi(db: Db, threadId: number, entryIds: number[], language: Lang) {
-  if (!nushiEnabled()) return { answers: [], requests: [] };
-  const requests = await db.select().from(nushiRequests).where(and(eq(nushiRequests.threadId, threadId), inArray(nushiRequests.entryId, entryIds))).orderBy(asc(nushiRequests.createdAt), asc(nushiRequests.id));
+  if (!nushiEnabled()) return { available: false, answers: [], requests: [] };
+  const [place, requests] = await Promise.all([
+    nushiPlace(db, threadId),
+    db.select().from(nushiRequests).where(and(eq(nushiRequests.threadId, threadId), inArray(nushiRequests.entryId, entryIds))).orderBy(asc(nushiRequests.createdAt), asc(nushiRequests.id)),
+  ]);
   const latest = new Map(requests.map(request => [request.entryId, request.id]));
   const answers = requests.length ? await db.select({ id: nushiAnswers.id }).from(nushiAnswers).where(inArray(nushiAnswers.requestId, requests.map(request => request.id))).orderBy(asc(nushiAnswers.createdAt), asc(nushiAnswers.id)) : [];
-  return { answers: (await Promise.all(answers.map(answer => readNushiAnswer(db, answer.id, language)))).filter(answer => answer !== null),
+  return { available: place !== null, answers: (await Promise.all(answers.map(answer => readNushiAnswer(db, answer.id, language)))).filter(answer => answer !== null),
     requests: requests.filter(request => request.state !== "answered" && latest.get(request.entryId) === request.id).map(request => ({ id: request.id, entryId: request.entryId, state: request.state, failure: request.failure })) };
 }
 
