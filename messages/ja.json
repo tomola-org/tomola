@@ -804,6 +804,7 @@
   "objections_back": "問いに戻る",
   "edit_locked_title": "この問いは編集できません",
   "edit_locked_body": "立場が付いたため、題と本文は固定されています。補足は返信で書いてください。命題や条件を変えるときは、別の立て方の問いを立ててください。",
+  "edit_locked_unsaved": "保存されなかったあなたの直し",
   "edit_locked_reply": "返信を書く",
   "edit_locked_notice": "立場が付いたため、題と本文は編集できません。",
   "edit_lock_warning": "あなた以外の会員が立場を選ぶと、題と本文は編集できなくなります。",

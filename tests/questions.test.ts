@@ -259,7 +259,9 @@ describe("the lock: once stance_locked_at is set, the author cannot edit the tit
     expect(await editEntry(h.db, hana, q, { title: before.title, body: before.body }, { kind: "topic", now: t(9) })).toEqual({ ok: true, id: q, threadId: q, changed: false });
     // UI: show guidance instead of the form when the loader returns locked; submitted requests return to that guidance.
     expect(await load<{ locked: boolean; asksStance: boolean }>("topic-edit", "hana", `/t/${q}/edit`, { id: String(q) })).toMatchObject({ locked: true, asksStance: true });
-    expect(await submit("topic-edit", "hana", `/t/${q}/edit`, { title: "別の題", body: "別の本文" }, { id: String(q) })).toMatchObject({ status: 302, location: `/t/${q}/edit` });
+    expect(await submit("topic-edit", "hana", `/t/${q}/edit`, { title: "別の題", body: "別の本文" }, { id: String(q) })).toMatchObject({
+      status: 409, location: null, value: { data: { error: "locked", values: { title: "別の題", body: "別の本文" } } },
+    });
     expect(await row(q)).toEqual(before);
   });
 

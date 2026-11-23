@@ -1,4 +1,4 @@
-import { enforceMemberLimit } from "~/lib/http/limits.server";
+import { hitMemberLimit, rateLimitHeaders } from "~/lib/rate-limit.server";
 import { MarkdownBusyError, withMarkdownRead } from "~/lib/markdown-budget.server";
 import { data, redirect } from "react-router";
 import type { Route } from "./+types/reply-edit";
@@ -31,9 +31,10 @@ export async function action({ request, params }: Route.ActionArgs) {
   try {
     assertSameOrigin(request);
     const { user, db } = await requireWriter(request);
-    await enforceMemberLimit(db, "edit", user.id);
+    const rate = await hitMemberLimit(db, "edit", user.id);
     const id = parseId(params.id);
     const form = await request.formData();
+    if (!rate.allowed) return data({ error: "rate_limited", values: editFormValues(form), conflict: undefined }, { status: 429, headers: { ...rateLimitHeaders(rate), "Cache-Control": "private, no-store" } });
     const { body, stanceTag, lang } = readEntryForm(form);
     // The author may change tags when editing; 「印なし」 removes one. Replies to non-question topics have neither selector nor tag, which remains unchanged.
     const res = await withMemberWrite(db, user.id, request, form, tx => editEntry(tx, user.id, id, { body, stanceTag, ...(form.has("lang") ? { lang } : {}) }, { kind: "reply", expectedVersion: editFormVersion(form) }));
@@ -52,6 +53,10 @@ export async function action({ request, params }: Route.ActionArgs) {
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: m.edit_reply_title() }];
+}
+
+export function headers({ actionHeaders }: Route.HeadersArgs) {
+  return actionHeaders;
 }
 
 export default function ReplyEdit({ loaderData, actionData }: Route.ComponentProps) {

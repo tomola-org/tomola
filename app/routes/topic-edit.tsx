@@ -1,4 +1,4 @@
-import { enforceMemberLimit } from "~/lib/http/limits.server";
+import { hitMemberLimit, rateLimitHeaders } from "~/lib/rate-limit.server";
 import { MarkdownBusyError, withMarkdownRead } from "~/lib/markdown-budget.server";
 import { LongFormBody } from "~/components/long-form-body";
 import { data, Link, redirect } from "react-router";
@@ -79,8 +79,9 @@ export async function action({ request, params }: Route.ActionArgs) {
     const viewer = await getViewer(db, user);
     const found = await getEditableEntry(db, user.id, id, { kind: "topic", viewer });
     if (found.ok && found.entry.mode === "moderator-fix") await requirePrivilegedWriteSession(request);
-    await enforceMemberLimit(db, "edit", user.id);
+    const rate = await hitMemberLimit(db, "edit", user.id);
     if (!found.ok) failure(found.error);
+    if (!rate.allowed) return data({ error: "rate_limited", fix: found.entry.mode === "moderator-fix", values: editFormValues(form), conflict: undefined }, { status: 429, headers: { ...rateLimitHeaders(rate), "Cache-Control": "private, no-store" } });
     // Assigned moderators and operators may correct typos in locked questions (fix_entry).
     if (found.entry.mode === "moderator-fix") {
       const note = formString(form, "note");
@@ -95,8 +96,7 @@ export async function action({ request, params }: Route.ActionArgs) {
     const res = await withMemberWrite(db, user.id, request, form, tx => editEntry(tx, user.id, id, { title, body, ...(form.has("lang") ? { lang } : {}) }, { kind: "topic", expectedVersion: editFormVersion(form) }));
     if (res.ok) throw redirect(editedLocation(`/t/${res.id}`, res.id));
     if (res.error === "not_found" || res.error === "forbidden") failure(res.error);
-    // The first stance arrived between loading and submission; reopen this screen to switch to guidance.
-    if (res.error === "locked") throw redirect(`/t/${id}/edit`);
+    if (res.error === "locked") return data({ error: res.error, fix: false, values: editFormValues(form), conflict: undefined }, { status: 409, headers: { "Cache-Control": "private, no-store" } });
     return data({ error: res.error, fix: false, values: editFormValues(form), conflict: editConflict(res.error, `/t/${id}/edit`) }, { status: res.error === "edit_conflict" ? 409 : 400 });
   }
   catch (error) {
@@ -106,6 +106,10 @@ export async function action({ request, params }: Route.ActionArgs) {
     return data({ error: code, fix: formString(form, "sourceHash") !== "", values: editFormValues(form), conflict: editConflict(code, `/t/${parseId(params.id)}/edit`) }, { status: error instanceof SigningFailureResponse ? error.status : 503, headers: error instanceof SigningFailureResponse ? { "Cache-Control": "private, no-store" } : { "Retry-After": "1" } });
   }
 
+}
+
+export function headers({ actionHeaders }: Route.HeadersArgs) {
+  return actionHeaders;
 }
 
 export function meta({}: Route.MetaArgs) {
@@ -119,11 +123,18 @@ export default function TopicEdit({ loaderData, actionData }: Route.ComponentPro
     <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm"><span>{m.field_village()}</span><span className="wrap-anywhere">{loaderData.destination}</span></div>
     <p className="ui-help text-muted-foreground">{m.village_public_reach()}</p>
   </div>;
-  if (locked) {
+  if (locked || actionData?.error === "locked") {
+    const submitted = actionData?.values;
     return (
       <main className="space-y-4">
         <h1 className="text-2xl font-bold">{m.edit_locked_title()}</h1>
         <p>{m.edit_locked_body()}</p>{materialLink}
+        {actionData?.error === "rate_limited" && <p role="alert" className="text-destructive">{m.error_rate_limited()}</p>}
+        {submitted && <section className="space-y-2 rounded border p-3">
+          <h2 className="font-semibold">{m.edit_locked_unsaved()}</h2>
+          <p dir="auto" className="whitespace-pre-wrap wrap-anywhere font-medium">{submitted.title}</p>
+          <pre dir="auto" className="whitespace-pre-wrap wrap-anywhere">{submitted.body}</pre>
+        </section>}
         <p className="flex flex-wrap items-center gap-4">
           <Link to={`/t/${entry.id}#reply`} className="underline">
             {m.edit_locked_reply()}

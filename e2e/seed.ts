@@ -20,6 +20,7 @@ import { inviteUrl } from "../app/lib/site-url";
 import { ensureLanguageVillages } from "../app/lib/villages.server";
 import { villagesEnabled } from "../app/lib/villages-enabled.server";
 import { createProfile } from "../app/lib/profiles.server";
+import { hitRateLimit, MEMBER_RATE_LIMITS } from "../app/lib/rate-limit.server";
 
 const db = await getDb();
 if (villagesEnabled()) await ensureLanguageVillages(db);
@@ -229,6 +230,16 @@ try {
   await seedConfirmReasons(relatedDb);
   const { seedMembers } = await import("./seed-members");
   await seedMembers(relatedDb, path.dirname(process.env.PGLITE_DATA_DIR!), process.env.BETTER_AUTH_URL!);
+  const limitedEditors = await relatedDb.select({ id: profiles.userId }).from(profiles)
+    .where(inArray(profiles.handle, ["edit_fields_topic_limit", "edit_fields_reply_limit"]));
+  const now = new Date();
+  const editAllowance = MEMBER_RATE_LIMITS.edit;
+  const nextWindow = new Date(now.getTime() + editAllowance.windowSeconds * 1000);
+  for (const editor of limitedEditors) {
+    for (const time of [now, nextWindow]) {
+      await hitRateLimit(relatedDb, { ...editAllowance, key: `member:edit:${editor.id}`, cost: editAllowance.limit, now: time });
+    }
+  }
   const { seedDraftConfirmations } = await import("./seed-draft-confirmations");
   await seedDraftConfirmations(relatedDb, path.dirname(process.env.PGLITE_DATA_DIR!));
   // A charged failure with only input usage, in a separate budget from public translations.

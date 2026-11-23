@@ -1191,6 +1191,7 @@
   "objections_back": "Back to the question",
   "edit_locked_title": "This question can no longer be edited",
   "edit_locked_body": "A stance has been chosen, so the title and body are fixed. To add details, write a reply. To change the proposition or its conditions, ask the question another way.",
+  "edit_locked_unsaved": "Your unsaved edit",
   "edit_locked_reply": "Write a reply",
   "edit_locked_notice": "A stance has been chosen, so the title and body can no longer be edited.",
   "edit_lock_warning": "Once a member other than you has chosen a stance, the title and body can no longer be edited.",
