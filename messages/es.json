@@ -1880,7 +1880,7 @@
   "villages_title": "Aldeas",
   "villages_joined_heading": "Unidas",
   "village_language_name": "Aldea de {language}",
-  "village_open": "Aldea abierta",
+  "village_open": "Pública · acceso libre",
   "village_members": [
     {
       "declarations": [
@@ -1915,8 +1915,8 @@
   "village_changed": "El destino difiere del mostrado. Compruebe el destino y vuelva a enviarlo.",
   "village_create": "Crear una aldea",
   "village_kind": "Tipo de aldea",
-  "village_invite_public": "Aldea solo por invitación",
-  "village_kind_fixed": "Los miembros publican y chatean. No es necesario unirse para leer ni responder. No podrá cambiar esto más adelante.",
+  "village_invite_public": "Pública · publican los miembros",
+  "village_kind_fixed": "Los miembros publican y chatean. Cualquiera puede leer y cualquier miembro puede responder. No podrá cambiar esto más adelante.",
   "village_name_field": "Nombre de la aldea",
   "village_slug_field": "Nombre de dirección (slug)",
   "village_slug_help": "Ejemplo: ai-art (dirección /v/ai-art). Letras minúsculas, números y guiones, hasta 63 caracteres. Algunas palabras, como ja y new, están reservadas.",
@@ -2460,8 +2460,8 @@
       }
     }
   ],
-  "village_invite_only": "Solo por invitación",
-  "village_invite_only_help": "Solo las personas invitadas pueden unirse. Para leer y responder no hace falta unirse.",
+  "village_invite_only": "Pública · publican los miembros",
+  "village_invite_only_help": "Solo los miembros invitados pueden publicar y chatear. Cualquiera puede leer y cualquier miembro puede responder.",
   "village_kind_open_option": "Cualquiera puede unirse",
   "village_kind_invite_option": "Solo pueden unirse las personas que usted invite",
   "village_language_description": "Una aldea para personas cuyo idioma principal es el {language}. Los miembros comienzan aquí cuando se unen. Las publicaciones se pueden leer en cualquier idioma.",

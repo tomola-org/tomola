@@ -1292,7 +1292,7 @@
   "villages_title": "村",
   "villages_joined_heading": "已加入",
   "village_language_name": "{language}村",
-  "village_open": "开放的村",
+  "village_open": "公开 · 自由加入",
   "village_members": [
     {
       "declarations": [
@@ -1325,8 +1325,8 @@
   "village_changed": "发布位置与显示的不一致。请确认发布位置后再提交一次。",
   "village_create": "创建村",
   "village_kind": "村的类型",
-  "village_invite_public": "仅限邀请的村",
-  "village_kind_fixed": "成员可发帖和聊天。无需加入即可阅读和回复。创建后无法更改。",
+  "village_invite_public": "公开 · 成员发帖",
+  "village_kind_fixed": "由成员发帖和聊天。任何人均可阅读，任何成员均可回复。创建后无法更改。",
   "village_name_field": "村的名称",
   "village_slug_field": "地址中的名称（slug）",
   "village_slug_help": "例如：ai-art（地址为 /v/ai-art）。小写字母、数字和连字符，最多 63 个字符。部分词语（例如 ja 和 new）为保留词。",
@@ -1776,8 +1776,8 @@
       }
     }
   ],
-  "village_invite_only": "仅限邀请",
-  "village_invite_only_help": "只有受邀者才能加入。无需加入即可阅读和回复。",
+  "village_invite_only": "公开 · 成员发帖",
+  "village_invite_only_help": "仅受邀成员可以发帖和聊天。任何人均可阅读，任何成员均可回复。",
   "village_kind_open_option": "任何人都可以加入",
   "village_kind_invite_option": "只有你邀请的人才能加入",
   "village_language_description": "面向主要使用{language}的成员的村落。成员注册后即会从这里开始。帖子可以用任何语言阅读。",

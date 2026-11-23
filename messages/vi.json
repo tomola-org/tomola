@@ -1792,7 +1792,7 @@
   "villages_title": "Các làng",
   "villages_joined_heading": "Đã tham gia",
   "village_language_name": "Làng {language}",
-  "village_open": "Làng mở",
+  "village_open": "Công khai · tự do tham gia",
   "village_members": [
     {
       "declarations": [
@@ -1825,8 +1825,8 @@
   "village_changed": "Nơi đăng khác với nơi đăng đang hiển thị. Hãy kiểm tra lại nơi đăng và gửi lại.",
   "village_create": "Tạo một làng",
   "village_kind": "Loại làng",
-  "village_invite_public": "Làng chỉ dành cho người được mời",
-  "village_kind_fixed": "Thành viên có thể đăng bài và trò chuyện. Không cần tham gia vẫn có thể đọc và trả lời. Bạn không thể thay đổi điều này sau đó.",
+  "village_invite_public": "Công khai · chỉ thành viên đăng bài",
+  "village_kind_fixed": "Thành viên đăng bài và trò chuyện. Bất kỳ ai cũng có thể đọc, và bất kỳ thành viên nào cũng có thể trả lời. Bạn không thể thay đổi điều này sau đó.",
   "village_name_field": "Tên làng",
   "village_slug_field": "Tên địa chỉ (slug)",
   "village_slug_help": "Ví dụ: ai-art (địa chỉ /v/ai-art). Chữ thường, chữ số và dấu gạch nối, tối đa 63 ký tự. Một số từ, chẳng hạn như ja và new, đã được dành riêng.",
@@ -2354,8 +2354,8 @@
       }
     }
   ],
-  "village_invite_only": "Chỉ dành cho người được mời",
-  "village_invite_only_help": "Chỉ những người được mời mới có thể tham gia. Bạn không cần tham gia vẫn có thể đọc và trả lời.",
+  "village_invite_only": "Công khai · chỉ thành viên đăng bài",
+  "village_invite_only_help": "Chỉ những thành viên được mời mới có thể đăng bài và trò chuyện. Bất kỳ ai cũng có thể đọc, và bất kỳ thành viên nào cũng có thể trả lời.",
   "village_kind_open_option": "Bất kỳ ai cũng có thể tham gia",
   "village_kind_invite_option": "Chỉ những người bạn mời mới có thể tham gia",
   "village_language_description": "Làng dành cho những người có ngôn ngữ chính là {language}. Các thành viên sẽ bắt đầu tại đây khi họ tham gia. Bài đăng có thể đọc được bằng bất kỳ ngôn ngữ nào.",

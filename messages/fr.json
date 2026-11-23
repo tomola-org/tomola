@@ -1880,7 +1880,7 @@
   "villages_title": "Villages",
   "villages_joined_heading": "Rejoints",
   "village_language_name": "Village {language}",
-  "village_open": "Village ouvert",
+  "village_open": "Public · adhésion libre",
   "village_members": [
     {
       "declarations": [
@@ -1915,8 +1915,8 @@
   "village_changed": "La destination diffère de celle qui était affichée. Vérifiez la destination, puis envoyez à nouveau.",
   "village_create": "Créer un village",
   "village_kind": "Type de village",
-  "village_invite_public": "Village sur invitation uniquement",
-  "village_kind_fixed": "Les membres publient et discutent. Lire et répondre ne nécessitent pas de rejoindre le village. Ce choix ne pourra plus être modifié.",
+  "village_invite_public": "Public · publications par les membres",
+  "village_kind_fixed": "Les membres publient et discutent. Tout le monde peut lire, et chaque membre peut répondre. Vous ne pourrez plus modifier cela ultérieurement.",
   "village_name_field": "Nom du village",
   "village_slug_field": "Nom dans l’adresse (slug)",
   "village_slug_help": "Exemple : ai-art (adresse /v/ai-art). Lettres minuscules, chiffres et traits d’union, jusqu’à 63 caractères. Certains mots, comme ja et new, sont réservés.",
@@ -2460,8 +2460,8 @@
       }
     }
   ],
-  "village_invite_only": "Sur invitation uniquement",
-  "village_invite_only_help": "Seules les personnes invitées peuvent rejoindre. Lire et répondre ne nécessitent pas de rejoindre le village.",
+  "village_invite_only": "Public · publications par les membres",
+  "village_invite_only_help": "Seuls les membres invités peuvent publier et discuter. Tout le monde peut lire, et chaque membre peut répondre.",
   "village_kind_open_option": "Tout le monde peut rejoindre",
   "village_kind_invite_option": "Seules les personnes que vous invitez peuvent rejoindre",
   "village_language_description": "Un village pour les personnes dont la langue principale est le {language}. Les membres commencent ici lorsqu’ils s’inscrivent. Les publications peuvent être lues dans n’importe quelle langue.",

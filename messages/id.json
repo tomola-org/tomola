@@ -1792,7 +1792,7 @@
   "villages_title": "Desa",
   "villages_joined_heading": "Diikuti",
   "village_language_name": "Desa {language}",
-  "village_open": "Desa terbuka",
+  "village_open": "Publik · bebas bergabung",
   "village_members": [
     {
       "declarations": [
@@ -1825,8 +1825,8 @@
   "village_changed": "Tujuan berbeda dari yang ditampilkan. Periksa tujuan dan kirim lagi.",
   "village_create": "Buat desa",
   "village_kind": "Jenis desa",
-  "village_invite_public": "Desa khusus undangan",
-  "village_kind_fixed": "Anggota mengunggah dan mengobrol. Membaca dan membalas tidak memerlukan bergabung. Anda tidak dapat mengubah ini nanti.",
+  "village_invite_public": "Publik · anggota mengunggah",
+  "village_kind_fixed": "Anggota mengunggah dan mengobrol. Siapa pun dapat membaca, dan anggota mana pun dapat membalas. Anda tidak dapat mengubah ini nanti.",
   "village_name_field": "Nama desa",
   "village_slug_field": "Nama alamat (slug)",
   "village_slug_help": "Contoh: ai-art (alamat /v/ai-art). Huruf kecil, angka, dan tanda hubung, hingga 63 karakter. Beberapa kata, seperti ja dan new, sudah dipesan.",
@@ -2354,8 +2354,8 @@
       }
     }
   ],
-  "village_invite_only": "Khusus undangan",
-  "village_invite_only_help": "Hanya orang yang diundang yang dapat bergabung. Membaca dan membalas tidak memerlukan bergabung.",
+  "village_invite_only": "Publik · anggota mengunggah",
+  "village_invite_only_help": "Hanya anggota yang diundang yang dapat mengunggah dan mengobrol. Siapa pun dapat membaca, dan anggota mana pun dapat membalas.",
   "village_kind_open_option": "Siapa saja dapat bergabung",
   "village_kind_invite_option": "Hanya orang yang Anda undang yang dapat bergabung",
   "village_language_description": "Desa untuk orang-orang dengan bahasa utama {language}. Anggota memulainya di sini saat bergabung. Unggahan dapat dibaca dalam bahasa apa pun.",
