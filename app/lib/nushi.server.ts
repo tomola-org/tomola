@@ -161,19 +161,21 @@ export async function readNushiAnswer(db: Db, id: number, language?: Lang, env: 
   if (!Number.isSafeInteger(id) || id < 1) return null;
   const [row] = await db.select({ answer: nushiAnswers, request: nushiRequests }).from(nushiAnswers).innerJoin(nushiRequests, eq(nushiRequests.id, nushiAnswers.requestId)).where(eq(nushiAnswers.id, id));
   if (!row) return null;
-  const available = !row.answer.hiddenAt && !!await nushiPlace(db, row.request.threadId, env);
-  const sources = available ? await db.select().from(nushiSources).where(eq(nushiSources.answerId, id)) : [];
-  const [call] = available ? await db.select({ parentId: entries.parentId }).from(entries).where(eq(entries.id, row.request.entryId)) : [];
+  const place = await nushiPlace(db, row.request.threadId, env);
+  if (!place) return null;
+  const position = { id, entryId: row.request.entryId, threadId: row.request.threadId };
+  const marker = (reason: string) => ({ ...position, hidden: true as const, reason, supersededById: row.answer.supersededById });
+  if (row.answer.hiddenAt) return marker(row.answer.hiddenReason ?? "disabled");
+  const sources = await db.select().from(nushiSources).where(eq(nushiSources.answerId, id));
+  const [call] = await db.select({ parentId: entries.parentId }).from(entries).where(eq(entries.id, row.request.entryId));
   const warningEntryIds = new Set([row.request.entryId, row.request.threadId, call?.parentId,
     ...row.answer.scope.materialIndex.map(material => Number(/^e-(\d+)-/.exec(material.id)?.[1]))].filter((id): id is number => id != null && Number.isSafeInteger(id)));
-  const current = available ? await publishedSnapshots(db, sources.map(source => ({ ...source, id: source.entryId, authorId: source.authorId ?? "" })), row.request.villageId, warningEntryIds) : null;
-  const common = { id, requestId: row.request.id, entryId: row.request.entryId, threadId: row.request.threadId };
-  if (!current) return { ...common, hidden: true as const, reason: row.answer.hiddenReason ?? (available ? "source_changed" : "disabled"), supersededById: row.answer.supersededById };
+  const current = await publishedSnapshots(db, sources.map(source => ({ ...source, id: source.entryId, authorId: source.authorId ?? "" })), row.request.villageId, warningEntryIds);
+  if (!current) return marker("source_changed");
   const [caller] = row.request.callerId ? await db.select({ handle: profiles.handle }).from(profiles).where(eq(profiles.userId, row.request.callerId)) : [];
-  const place = (await nushiPlace(db, row.request.threadId, env))!;
   const [translation] = language && language !== row.answer.lang ? await db.select().from(nushiTranslations).where(and(eq(nushiTranslations.answerId, id), eq(nushiTranslations.lang, language))) : [];
   const voiceHref = await nushiVoiceLink(db, row.request.villageId, row.answer.voiceEventId, env);
-  return { ...(voiceHref ? { voiceHref } : {}), id, requestId: row.request.id, entryId: row.request.entryId, threadId: row.request.threadId, hidden: false as const, sourcesChanged: row.answer.sourcesChanged || current.changed,
+  return { ...position, ...(voiceHref ? { voiceHref } : {}), requestId: row.request.id, hidden: false as const, sourcesChanged: row.answer.sourcesChanged || current.changed,
     answer: translation ? { ...row.answer.answer, readings: row.answer.answer.readings.map((reading, index) => ({ ...reading, text: translation.readings[index] ?? reading.text })) } : row.answer.answer,
     lang: translation?.lang ?? row.answer.lang, langCode: row.answer.scope.answerLangCode, originalLang: row.answer.lang, translated: !!translation, translationEngine: translation?.engine ?? null, translationModel: translation?.model ?? null,
     scope: { posts: row.answer.scope.posts, from: row.answer.scope.from, to: row.answer.scope.to, truncated: row.answer.scope.truncated }, engine: row.answer.engine, model: row.answer.model, promptVersion: row.answer.promptVersion, date: row.answer.createdAt.toISOString(),
@@ -228,7 +230,8 @@ export async function requestNushiAgain(db: Db, callerId: string, answerId: numb
 // Viewer-specific form eligibility stays out of shared JSON and Markdown data.
 export async function canRefreshNushi(db: Db, value: NonNullable<Awaited<ReturnType<typeof readNushiAnswer>>>, userId?: string) {
   if (!userId || (value.hidden ? value.reason !== "source_changed" : !value.sourcesChanged)) return false;
-  const [request] = await db.select().from(nushiRequests).where(eq(nushiRequests.id, value.requestId));
+  const [row] = await db.select({ request: nushiRequests }).from(nushiAnswers).innerJoin(nushiRequests, eq(nushiRequests.id, nushiAnswers.requestId)).where(eq(nushiAnswers.id, value.id));
+  const request = row?.request;
   if (!request || request.callerId !== userId || !(await getWriter(db, userId)).ok) return false;
   if ((await db.select({ id: nushiRequests.id }).from(nushiRequests).where(and(eq(nushiRequests.entryId, request.entryId), active())).limit(1)).length) return false;
   const [entry] = await db.select().from(entries).where(eq(entries.id, request.entryId));

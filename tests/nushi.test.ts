@@ -191,12 +191,13 @@ it.each(["body", "hidden", "deleted"])("withdraws all representations permanentl
   await f.db.update(entries).set({ hiddenAt: null, deletedAt: null }).where(eq(entries.id, f.source));
   expect(await readNushiAnswer(f.db, answer.id)).toMatchObject({ hidden: true });
 });
-it("keeps only globally hidden answers when the switch is restored; owner opt-out is permanent", async () => {
+it("withdraws reads while Nushi is off and keeps owner opt-out permanent", async () => {
   const f = await nushiFixture(), answer = await published(f);
-  vi.stubEnv("VILLAGE_NUSHI", ""); expect(await readNushiAnswer(f.db, answer.id)).toMatchObject({ hidden: true });
+  vi.stubEnv("VILLAGE_NUSHI", ""); expect(await readNushiAnswer(f.db, answer.id)).toBeNull();
   vi.stubEnv("VILLAGE_NUSHI", "1"); expect(await readNushiAnswer(f.db, answer.id)).toMatchObject({ hidden: false });
   expect(await setVillageNushi(f.db, "nushi-caller", f.village.id, false)).toBe(false);
   await setVillageNushi(f.db, "nushi-owner", f.village.id, false);
+  expect(await readNushiAnswer(f.db, answer.id)).toBeNull();
   await setVillageNushi(f.db, "nushi-owner", f.village.id, true);
   expect(await readNushiAnswer(f.db, answer.id)).toMatchObject({ hidden: true });
 });

@@ -3,12 +3,14 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
 import { expectModerationReauthentication, withStaleSession } from "./helpers/reauth";
 import { createTopic } from "~/lib/entries.server";
+import { buildThreadMarkdown } from "~/lib/md/thread.server";
 import { moderationActions, nushiAnswers, nushiReports, nushiRequests, rateLimits } from "~/lib/db/schema";
 import { personalVillage } from "~/lib/personal-villages.server";
 import { setVillageNushi } from "~/lib/nushi-settings.server";
 import { processNushiRequest } from "~/lib/nushi.server";
 import { action } from "~/routes/nushi-action";
 import { loader as read } from "~/routes/nushi-read";
+import { loader as readPage } from "~/routes/nushi-answer";
 import { loader as reports } from "~/routes/nushi-reports";
 
 let h: RouteHarness, answerId: number;
@@ -235,16 +237,31 @@ it("allows only the caller to refresh through a same-origin form and preserves w
   expect(await h.db.select().from(nushiRequests).where(eq(nushiRequests.entryId, topic.id))).toHaveLength(2);
 });
 
-it("excludes unavailable source text from JSON and Markdown while retaining a marker", async () => {
+it("serves just the marker in JSON and Markdown while its topic remains readable", async () => {
   const { entries } = await import("~/lib/db/schema");
   const topic = await createTopic(h.db, h.ids.znushi_route_owner, { body: "@nushi orchard unavailable", lang: "en" });
   if (!topic.ok) throw new Error(topic.error);
   const [request] = await h.db.select().from(nushiRequests).where(eq(nushiRequests.entryId, topic.id));
   await processNushiRequest(h.db, request.id);
   const [answer] = await h.db.select().from(nushiAnswers).where(eq(nushiAnswers.requestId, request.id));
-  await h.db.update(entries).set({ hiddenAt: new Date() }).where(eq(entries.id, topic.id));
+  await h.db.update(nushiAnswers).set({
+    hiddenAt: new Date(), hiddenReason: "source_changed", answer: { status: "not_confirmed", readings: [], citations: [] },
+  }).where(eq(nushiAnswers.id, answer.id));
   const json = await read(h.args(h.request(`/nushi/${answer.id}.json?lang=en`), { id: String(answer.id) }));
-  expect(await json.json()).toMatchObject({ hidden: true, reason: "source_changed" });
+  expect(await json.json()).toEqual({ id: answer.id, entryId: topic.id, threadId: topic.id, hidden: true, reason: "source_changed", supersededById: null });
   const markdown = await read(h.args(h.request(`/nushi/${answer.id}.md?lang=en`), { id: String(answer.id) }));
   expect(await markdown.text()).not.toContain(answer.answer.readings[0].text);
+  const mcpThread = () => buildThreadMarkdown(h.db, topic.id, { page: 1, lang: "en", displayLang: "en", sentences: true, k: null, readingMethod: "mcp" });
+  expect(await mcpThread()).toContain(`id: nushi-${answer.id}\n`);
+  for (const settings of [{ nushiDisabled: true }, { nushiDisabled: false, hiddenAt: new Date() }]) {
+    await h.db.update(entries).set(settings).where(eq(entries.id, topic.id));
+    for (const format of ["json", "md"]) {
+      const unavailable = await read(h.args(h.request(`/nushi/${answer.id}.${format}?lang=en`), { id: String(answer.id) }));
+      expect(unavailable.status).toBe(404);
+      expect(await unavailable.text()).toBe("Not found");
+    }
+    const page = await h.outcome(() => readPage(h.args(h.request(`/nushi/${answer.id}?lang=en`), { id: String(answer.id) })));
+    expect(page.status).toBe(404);
+    expect(await mcpThread() ?? "").not.toContain(`id: nushi-${answer.id}\n`);
+  }
 });

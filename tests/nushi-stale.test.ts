@@ -119,7 +119,9 @@ it.each(["deleted", "hidden", "private", "moved", "author", "history", "coalesce
     const [village] = await f.db.insert(villages).values({ kind: "open", slug: "other-stale-village" }).returning();
     await f.db.update(entries).set({ villageId: village.id }).where(eq(entries.id, f.source));
   } else await f.db.update(entries).set(kind === "deleted" ? { deletedAt: new Date() } : kind === "hidden" ? { hiddenAt: new Date() } : { authorId: "nushi-follower" }).where(eq(entries.id, f.source));
-  expect(await readNushiAnswer(f.db, f.answer.id)).toMatchObject({ hidden: true });
+  const view = await readNushiAnswer(f.db, f.answer.id);
+  if (kind === "private") expect(view).toBeNull();
+  else expect(view).toMatchObject({ hidden: true });
   expect((await f.db.select().from(nushiAnswers))[0].hiddenAt).not.toBeNull();
   expect((await nushiMarkdownBlocks(f.db, f.topic, [f.topic], "en")).join("\n")).not.toContain(f.answer.answer.citations[0].original.quote);
 });
@@ -192,7 +194,7 @@ it("allows a source-withdrawn answer to be refreshed while its public call survi
 it.each(["deleted", "hidden", "disabled"])("refuses refresh after the calling topic is %s", async kind => {
   const f = await fixture(); await edit(f);
   await f.db.update(entries).set(kind === "deleted" ? { deletedAt: new Date() } : kind === "hidden" ? { hiddenAt: new Date() } : { nushiDisabled: true }).where(eq(entries.id, f.topic));
-  expect(await canRefreshNushi(f.db, (await readNushiAnswer(f.db, f.answer.id))!, "nushi-caller")).toBe(false);
+  expect(await readNushiAnswer(f.db, f.answer.id)).toBeNull();
   expect(await requestNushiAgain(f.db, "nushi-caller", f.answer.id)).toBe(false);
 });
 it.each(["limit", "budget"])("retains the stale answer when refreshing reaches the %s", async failure => {

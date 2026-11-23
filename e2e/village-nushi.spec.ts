@@ -241,17 +241,18 @@ test("Nushi calls produce sourced public AI replies with independent reader and 
     await page.goto(`${topic}?lang=en`);
     await page.getByLabel(en.nushi_disable_topic, { exact: true }).check();
     await page.locator('form:has(input[value="topic"])').getByRole("button").click();
-    await expect(page.locator("[data-nushi-hidden]")).toHaveCount(1);
+    await expect(page.locator("[data-nushi-answer]")).toHaveCount(0);
+    await expect(page.locator("[data-nushi-hidden]")).toHaveCount(0);
     await caller.reload();
     await expect(caller.locator("[data-nushi-answer]")).toHaveCount(0);
-    await expect(caller.locator("[data-nushi-hidden]")).toHaveCount(1);
+    await expect(caller.locator("[data-nushi-hidden]")).toHaveCount(0);
     await expect(memberHide).toHaveCount(0);
     await guest.reload();
-    await expect(guest.locator("[data-nushi-hidden]")).toHaveCount(1);
+    await expect(guest.locator("[data-nushi-hidden]")).toHaveCount(0);
     await expect(guest.locator("[data-nushi-answer]")).toHaveCount(0);
     await expect(guestHide).toHaveCount(0);
     const withdrawn = await guest.request.get(`/nushi/${answerId}.json?lang=en`);
-    const data = await withdrawn.json(); expect(data.hidden).toBe(true); expect(data).not.toHaveProperty("answer");
+    expect(withdrawn.status()).toBe(404);
   } finally { await callerContext.close(); await guestContext.close(); }
 });
 
