@@ -7,9 +7,9 @@ import { commonmark, imageSchema, orderedListSchema, wrapInOrderedListInputRule,
 import { gfm, remarkGFMPlugin, strikethroughInputRule, strikethroughSchema, insertTableCommand, addRowAfterCommand, addColAfterCommand, selectRowCommand, selectColCommand, deleteSelectedCellsCommand } from "@milkdown/kit/preset/gfm";
 import { clipboard } from "@milkdown/kit/plugin/clipboard";
 import { history, undoCommand, redoCommand } from "@milkdown/kit/plugin/history";
-import { NodeSelection, Plugin, TextSelection, type SelectionBookmark, type EditorState } from "@milkdown/kit/prose/state";
+import { AllSelection, NodeSelection, Plugin, TextSelection, type SelectionBookmark, type EditorState } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
-import { Fragment, Slice, type Node as ProseNode } from "@milkdown/kit/prose/model";
+import { Fragment, Mark, Slice, type Node as ProseNode } from "@milkdown/kit/prose/model";
 import { lift } from "@milkdown/kit/prose/commands";
 import { liftListItem } from "@milkdown/kit/prose/schema-list";
 import { wrappingInputRule } from "@milkdown/kit/prose/inputrules";
@@ -260,11 +260,15 @@ export function RichTextEditor({ invalid, describedBy, placeholder, tall = false
     let unregisterMedia: (() => void) | undefined;
     let activationFrame = 0;
     const editor = Editor.make();
-    const write = (value: string) => {
-      body.value = value;
+    const validateBody = () => {
+      const value = body.value;
       const kind = body.dataset.bodyKind === "reply" ? "reply" : "topic";
       const bytesOnly = new TextEncoder().encode(value).byteLength > MAX_BODY_BYTES && bodyLength(value, kind) <= bodyLimit(kind);
       body.setCustomValidity(bodyWithinLimits(value, kind) ? "" : bodyLimitMessage(kind, bytesOnly));
+    };
+    const write = (value: string) => {
+      body.value = value;
+      validateBody();
       body.dispatchEvent(new Event("input", { bubbles: true }));
     };
     const synchronize = () => {
@@ -288,38 +292,78 @@ export function RichTextEditor({ invalid, describedBy, placeholder, tall = false
     };
     body.addEventListener(EDITOR_BODY_REPLACED_EVENT, replaceBody);
     const paste = (view: EditorView, event: ClipboardEvent) => {
+      if (initial === undefined || cancelled) return false;
       const text = event.clipboardData?.getData("text/plain") ?? "";
       const frontmatter = pasteFrontmatter && startsWithFrontmatter(text);
       if (frontmatter || text.includes("$")) {
         event.preventDefault();
         const literal = text.replace(/\r\n?/g, "\n");
-        let value = literal;
-        let caret = literal.length;
-        if (body.value && frontmatter) {
+        if (frontmatter) {
           // The form recognizes frontmatter at the start of the body.
-          value += "\n\n" + body.value;
-        } else if (body.value) {
-          // Serialize the selection replacement with a marker, then insert the
-          // clipboard text literally so Markdown escaping leaves it intact.
+          const value = body.value ? `${literal}\n\n${body.value}` : literal;
+          initial = undefined;
+          sync.current = null;
+          flushSync(() => { write(value); onFallback(); });
+          body.focus();
+          body.setSelectionRange(literal.length, literal.length);
+          return true;
+        }
+
+        let value = body.value;
+        let insertion = literal;
+        let start = value.length;
+        let end = start;
+        let caret: number | undefined;
+        const { selection, tr } = view.state;
+        if (selection instanceof AllSelection) {
+          start = 0;
+        } else if (value) {
+          // Locate the selection in Markdown while keeping its contents for native undo.
           const current = editor.action(getMarkdown());
           let prefix = "\uE000";
           while (current.includes(prefix + "\uE001")) prefix += prefix;
           const marker = prefix + "\uE001";
-          const marked = editor.action(ctx => ctx.get(serializerCtx)(view.state.tr.insertText(marker).doc));
-          const start = marked.indexOf(marker);
-          if (start >= 0) {
-            value = marked.slice(0, start) + literal + marked.slice(start + marker.length);
-            caret = start + literal.length;
+          const { $from, $to, empty, from, to } = selection;
+          const startMarks = $from.nodeAfter?.marks ?? $from.marks();
+          const endMarks = $to.nodeBefore?.marks ?? $to.marks();
+          const sourceRange = empty || (selection.ranges.length === 1 && $from.parent.inlineContent &&
+            $from.sameParent($to) && Mark.sameSet(startMarks, endMarks));
+          if (sourceRange) {
+            // Keep both markers inside the same formatting delimiters.
+            const marks = empty ? tr.storedMarks ?? $from.marks() : startMarks;
+            const node = tr.doc.type.schema.text(marker, marks);
+            tr.insert(to, node).insert(from, node);
           } else {
-            value = body.value + "\n\n" + literal;
-            caret = value.length;
+            // Keep the visual editor's replacement across formatting, blocks or cells.
+            tr.insertText(marker);
+          }
+          const marked = editor.action(ctx => ctx.get(serializerCtx)(tr.doc)).replace(/\r\n?/g, "\n");
+          const first = marked.indexOf(marker);
+          const last = marked.indexOf(marker, first + marker.length);
+          if (first >= 0 && !sourceRange) {
+            start = 0;
+            insertion = marked.slice(0, first) + literal + marked.slice(first + marker.length);
+            caret = first + literal.length;
+          } else if (first >= 0 && last >= 0) {
+            start = first;
+            end = last - marker.length;
+            value = marked.slice(0, first) + marked.slice(first + marker.length, last) + marked.slice(last + marker.length);
+          } else {
+            insertion = "\n\n" + literal;
           }
         }
         initial = undefined;
         sync.current = null;
-        flushSync(() => { write(value); onFallback(); });
+        flushSync(() => { if (body.value !== value) body.value = value; onFallback(); });
         body.focus();
-        body.setSelectionRange(caret, caret);
+        body.setSelectionRange(start, end);
+        let inserted = false;
+        try { inserted = body.ownerDocument.execCommand?.("insertText", false, insertion) ?? false; }
+        catch { /* Native insertion is unavailable. */ }
+        if (!inserted) body.setRangeText(insertion, start, end, "end");
+        if (caret !== undefined) body.setSelectionRange(caret, caret);
+        validateBody();
+        if (!inserted) body.dispatchEvent(new Event("input", { bubbles: true }));
         return true;
       }
       if (!event.clipboardData?.getData("text/html") && /!\[/.test(text)) {

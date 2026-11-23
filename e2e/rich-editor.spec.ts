@@ -253,7 +253,7 @@ test("math and frontmatter stay in Markdown; native validation and a literal fro
   } finally { await context.close(); }
 });
 
-test("literal paste keeps its position when switching to Markdown", async ({ browser }) => {
+test("literal paste keeps its position and can be undone after switching to Markdown", async ({ browser }) => {
   const { context, page } = await member(browser, "paste_at_selection", 8);
   try {
     await newPost(page);
@@ -264,8 +264,25 @@ test("literal paste keeps its position when switching to Markdown", async ({ bro
     await paste(page, "", "$x$");
     await expect(body(page)).toBeFocused();
     await expect(body(page)).toHaveValue("Before $x$ after.\n");
-    await page.keyboard.type("!");
-    await expect(body(page)).toHaveValue("Before $x$! after.\n");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(body(page)).toHaveValue("Before replace after.\n");
+
+    await body(page).fill("Before **replace** after.\n");
+    await mode(page, true);
+    await selectText(rich(page), "replace");
+    await paste(page, "", "$x$");
+    await expect(body(page)).toHaveValue("Before **$x$** after.\n");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(body(page)).toHaveValue("Before **replace** after.\n");
+
+    await body(page).fill("First paragraph.\n\n**Bold** and plain.\n");
+    await mode(page, true);
+    await rich(page).press("ControlOrMeta+a");
+    await paste(page, "", "$x$");
+    await expect(body(page)).toBeFocused();
+    await expect(body(page)).toHaveValue("$x$");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(body(page)).toHaveValue("First paragraph.\n\n**Bold** and plain.\n");
 
     await body(page).fill("First paragraph.\n\n**Bold** and plain.");
     await mode(page, true);
@@ -273,6 +290,16 @@ test("literal paste keeps its position when switching to Markdown", async ({ bro
     await page.keyboard.press("ArrowRight");
     await paste(page, "", " $5");
     await expect(body(page)).toHaveValue("First paragraph.\n\n**Bold** and plain $5.\n");
+    await page.keyboard.type("!");
+    await expect(body(page)).toHaveValue("First paragraph.\n\n**Bold** and plain $5!.\n");
+
+    await body(page).fill("Before replace after.");
+    await mode(page, true);
+    await selectText(rich(page), "replace");
+    await page.evaluate(() => { document.execCommand = () => false; });
+    await paste(page, "", "$x$");
+    await expect(body(page)).toHaveValue("Before $x$ after.\n");
+    await expect(page.getByRole("status").filter({ hasText: en.editor_mode_markdown_only })).toBeVisible();
   } finally { await context.close(); }
 });
 
