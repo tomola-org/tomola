@@ -30,10 +30,9 @@ export function runRetentionCleanup(db: Db, now = new Date(), options: Retention
     const oauthCutoff = daysBefore(now, RETENTION.oauthExpiryGraceDays);
     await drainRetentionRows(db, "oauth_access_tokens", oauthAccessToken, lt(oauthAccessToken.expiresAt, oauthCutoff), results);
     await drainRetentionRows(db, "oauth_client_assertions", oauthClientAssertion, lt(oauthClientAssertion.expiresAt, oauthCutoff), results);
-    // Keep rotated tokens through expiry and the replay window. Leave linked
+    // Keep refresh tokens through expiry and any replay window. Leave linked
     // access tokens to their own bounded drain so the foreign key cannot cascade.
-    await drainRetentionRows(db, "oauth_rotated_refresh_tokens", oauthRefreshToken, and(
-      isNotNull(oauthRefreshToken.rotatedAt),
+    await drainRetentionRows(db, "oauth_refresh_tokens", oauthRefreshToken, and(
       lt(oauthRefreshToken.expiresAt, oauthCutoff),
       or(isNull(oauthRefreshToken.rotationReplayExpiresAt), lt(oauthRefreshToken.rotationReplayExpiresAt, oauthCutoff)),
       sql`not exists (select 1 from ${oauthAccessToken} where ${oauthAccessToken.refreshId} = ${oauthRefreshToken.id})`,

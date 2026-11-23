@@ -14,7 +14,7 @@ const NOW = new Date("2030-03-31T12:00:00Z");
 const DAY = 86_400_000;
 const ago = (days: number) => new Date(NOW.getTime() - days * DAY);
 
-it("drains spent OAuth rows after expiry and grace while preserving live token references", async () => {
+it("drains expired OAuth rows after grace while preserving live token references", async () => {
   const db = await createTestDb();
   await addMember(db, "a", "alice");
   await db.insert(oauthClient).values({ id: "fixture", clientId: "fixture", redirectUris: ["https://client.example/callback"] });
@@ -25,19 +25,22 @@ it("drains spent OAuth rows after expiry and grace while preserving live token r
     ...expiries.map(value => ({ ...base, ...value, token: value.id, rotatedAt: ago(2), rotationReplayExpiresAt: ago(2) })),
     { ...base, id: "replay", token: "replay", expiresAt: ago(2), rotatedAt: ago(2), rotationReplayExpiresAt: NOW },
     { ...base, id: "linked", token: "linked", expiresAt: ago(2), rotatedAt: ago(2) },
-    { ...base, id: "unrotated", token: "unrotated", expiresAt: ago(2) },
+    ...expiries.map(({ id, expiresAt }) => ({ ...base, id: `unrotated-${id}`, token: `unrotated-${id}`, expiresAt })),
+    { ...base, id: "unrotated-linked", token: "unrotated-linked", expiresAt: ago(2) },
   ]);
   await db.insert(oauthAccessToken).values(expiries.map(value => ({
     ...base, ...value, token: value.id, refreshId: value.id === "current" ? "linked" : value.id,
   })));
+  await db.insert(oauthAccessToken).values({ ...base, id: "retained", token: "retained", expiresAt: ago(-1), refreshId: "unrotated-linked" });
   const result = await runRetentionCleanup(db, NOW);
-  for (const category of ["oauth_access_tokens", "oauth_client_assertions", "oauth_rotated_refresh_tokens"]) {
+  for (const category of ["oauth_access_tokens", "oauth_client_assertions"]) {
     expect(result[category]).toMatchObject({ removed: 1, stop: "complete" });
   }
-  expect((await db.select({ id: oauthRefreshToken.id }).from(oauthRefreshToken)).map(row => row.id).sort()).toEqual(["current", "grace", "linked", "replay", "unrotated"]);
-  for (const table of [oauthAccessToken, oauthClientAssertion]) {
-    expect((await db.select({ id: table.id }).from(table)).map(row => row.id).sort()).toEqual(["current", "grace"]);
-  }
+  expect(result.oauth_refresh_tokens).toMatchObject({ removed: 2, stop: "complete" });
+  expect((await db.select({ id: oauthRefreshToken.id }).from(oauthRefreshToken)).map(row => row.id).sort())
+    .toEqual(["current", "grace", "linked", "replay", "unrotated-current", "unrotated-grace", "unrotated-linked"]);
+  expect((await db.select({ id: oauthAccessToken.id }).from(oauthAccessToken)).map(row => row.id).sort()).toEqual(["current", "grace", "retained"]);
+  expect((await db.select({ id: oauthClientAssertion.id }).from(oauthClientAssertion)).map(row => row.id).sort()).toEqual(["current", "grace"]);
 });
 
 it("uses the supplied clock for notification, session, login, rate-limit and LLM expiry boundaries", async () => {

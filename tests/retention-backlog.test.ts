@@ -72,7 +72,7 @@ it("drains every maintenance category's 350-row backlog within one invocation", 
   await db.insert(oauthRefreshToken).values(each(i => ({ id: `rotation-${i}`, token: `rotation-${i}`, clientId: "rotation-live", userId: "a", scopes: ["read"],
     createdAt: OLD, expiresAt: new Date(NOW.getTime() + 900_000), rotationReplayExpiresAt: OLD, rotationReplayResponse: "encrypted-fixture-answer" })));
   const expiredOAuth = (i: number) => ({ id: `expired-${i}`, token: `expired-${i}`, clientId: "rotation-live", userId: "a", scopes: ["read"], createdAt: OLD, expiresAt: OLD });
-  await db.insert(oauthRefreshToken).values(each(i => ({ ...expiredOAuth(i), rotatedAt: OLD, rotationReplayExpiresAt: OLD })));
+  await db.insert(oauthRefreshToken).values(each(i => ({ ...expiredOAuth(i), ...(i % 2 === 0 ? { rotatedAt: OLD, rotationReplayExpiresAt: OLD } : {}) })));
   await db.insert(oauthAccessToken).values(each(i => ({ ...expiredOAuth(i), refreshId: `expired-${i}` })));
   await db.insert(oauthClientAssertion).values(each(i => ({ id: `expired-${i}`, expiresAt: OLD })));
   await db.insert(suspendedEmailHashes).values(each(i => ({ hash: `expired-hash-${i}`, expiresAt: OLD })));
