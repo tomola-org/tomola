@@ -3,7 +3,8 @@ import { and, eq } from "drizzle-orm";
 import { signingCredential } from "./helpers/signing";
 import { getAuth } from "~/lib/auth/auth.server";
 import { ALLOWED_AUTH_ENDPOINTS } from "~/lib/auth/endpoints.server";
-import { passkey, profiles, session, user } from "~/lib/db/schema";
+import { passkey, profiles, session, user, verification } from "~/lib/db/schema";
+import { recordPasskeyRevocation } from "~/lib/auth/login-method.server";
 import { action as authAction, loader as authLoader } from "~/routes/api.auth";
 import { action as enrollAction } from "~/routes/passkeys";
 import { action as settingsAction, loader as settingsLoader } from "~/routes/settings";
@@ -54,6 +55,20 @@ describe("the open passkey endpoints", () => {
     // rpID is the hostname of BETTER_AUTH_URL.
     expect(options.rpId).toBe("localhost");
     expect(res.headers.getSetCookie().some((c) => c.startsWith("better-auth.better-auth-passkey="))).toBe(true);
+  });
+
+  it("retains the revocation cutoff longer than a passkey authentication challenge", async () => {
+    const response = await call("GET", "/api/auth/passkey/generate-authenticate-options");
+    expect(response.status).toBe(200);
+    const { challenge } = await response.json();
+    const rows = await h.db.select().from(verification);
+    const issued = rows.find(row => row.value.includes(JSON.stringify(challenge)));
+    expect(issued).toBeDefined();
+    await recordPasskeyRevocation(h.db, h.ids.hana, new Date());
+    const [cutoff] = await h.db.select().from(verification).where(eq(verification.id, `passkey-revocation:${h.ids.hana}`));
+    const challengeLifetime = issued!.expiresAt.getTime() - issued!.createdAt.getTime();
+    expect(challengeLifetime).toBeGreaterThan(0);
+    expect(cutoff.expiresAt.getTime() - cutoff.createdAt.getTime()).toBeGreaterThan(challengeLifetime);
   });
 
   it("closes plugin registration and requires a session on the dedicated enrollment endpoint", async () => {

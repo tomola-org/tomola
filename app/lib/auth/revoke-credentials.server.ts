@@ -28,6 +28,7 @@ export async function revokeAllCredentials(db: Db, userId: string, now = new Dat
     await invalidateMemberLoginChallenges(tx, userId);
     await tx.update(signingChallenges).set({ usedAt: now }).where(and(eq(signingChallenges.userId, userId), isNull(signingChallenges.usedAt)));
     await tx.delete(passkeyRecoveryPermits).where(eq(passkeyRecoveryPermits.userId, userId));
+    // Use the same wall clock that timestamps Better Auth verification rows.
     await recordPasskeyRevocation(tx, userId, new Date());
     return { ok: true as const, tokens, sessions: sessions.length, connections: grants.length };
   });

@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, expect, it, vi } from "vitest";
 import { action, loader } from "~/routes/settings-delete-account";
 import { setupRouteHarness, type RouteHarness, BASE } from "./helpers/route-harness";
-import { apiTokens, oauthClient, oauthConsent, oauthRefreshToken, memberSignatures, signingChallenges, passkey, profiles, user } from "~/lib/db/schema";
+import { apiTokens, oauthClient, oauthConsent, oauthRefreshToken, memberSignatures, signingChallenges, passkey, profiles, user, verification } from "~/lib/db/schema";
 import { getAuth } from "~/lib/auth/auth.server";
 import { completeMagicLink } from "~/lib/auth/complete-magic-link.server";
 import { createApiToken, authenticateToken } from "~/lib/tokens.server";
@@ -63,4 +63,5 @@ it("invalidates the old session, PAT, read API, MCP bearer, OAuth consent/refres
   expect(await h.db.select().from(oauthConsent).where(eq(oauthConsent.userId, id))).toEqual([]);
   expect(await h.db.select().from(oauthRefreshToken).where(eq(oauthRefreshToken.userId, id))).toEqual([]);
   expect(await h.db.select().from(apiTokens).where(eq(apiTokens.userId, id))).toEqual([]);
+  expect(await h.db.select().from(verification).where(eq(verification.id, `passkey-revocation:${id}`))).toEqual([]);
 });
