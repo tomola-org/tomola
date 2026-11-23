@@ -1,4 +1,5 @@
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, is } from "drizzle-orm";
+import { PgTransaction } from "drizzle-orm/pg-core";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { passkey, profiles, pushSubscriptions, session } from "../db/schema";
 import { isDeletedIdentity } from "../deleted-member";
@@ -33,7 +34,9 @@ const g = globalThis as { __tomolaAuth?: Promise<Auth>; __tomolaAuthOptions?: We
 const originalOptions = g.__tomolaAuthOptions ??= new WeakMap<object, AuthOptions>();
 export function createAuth(db: Db, opts: AuthOptions, preparedMetadata?: MetadataSources) {
   const google = googleLoginConfig();
-  const metadataSources = preparedMetadata ?? sharedMetadataSources(opts.metadataFetch);
+  const sharedMetadata = sharedMetadataSources(opts.metadataFetch);
+  // An auth instance bound to an open transaction cannot observe its commit.
+  const metadataSources = preparedMetadata ?? (is(db, PgTransaction) ? { ...sharedMetadata, confirm: () => {} } : sharedMetadata);
   const signupGrants = new Map<string, SignupInvitationGrant>();
   const writes = sessionWriteScope(db);
   const sessionCreation = new AsyncLocalStorage<{ sourceSessionId?: string }>();
@@ -234,8 +237,7 @@ export type Auth = ReturnType<typeof createAuth>;
 export function bindAuthToDatabase(auth: Auth, db: Tx, metadataSources?: MetadataSources): Auth {
   const opts = originalOptions.get(auth);
   if (!opts) throw new Error("Unknown authentication configuration");
-  // Only callers that observe the outer commit can confirm an applied document.
-  return createAuth(db, opts, metadataSources ?? { ...sharedMetadataSources(opts.metadataFetch), confirm: () => {} });
+  return createAuth(db, opts, metadataSources);
 }
 
 export function authMetadataSources(auth: Auth): MetadataSources {
