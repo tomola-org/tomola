@@ -7,7 +7,7 @@ import { pickReasons, reasonsSeed, seededRandom, type ReasonCandidate, type Reas
 import { loadReasonCandidates, loadReasonExcerpts, loadReasonsPanel, REASON_EXCERPT_CHARS } from "~/lib/reasons.server";
 import { getEntryViews } from "~/lib/entries.server";
 import { POSITIONS, type Position } from "~/lib/stances";
-import { setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { loadReactions, setVote } from "~/lib/votes.server";
 import { addMember, createTestDb } from "./helpers/db";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
@@ -435,8 +435,8 @@ describe("loadReasonsPanel", () => {
   it("gives every reader the same replies in the same slots: a member, a moderator and an operator, with different stances and different languages", async () => {
     const w = await world();
     await manyReasons(w);
-    await setStance(w.db, "viewer", { questionId: w.q, position: "disagree", expectedVersion: 0 });
-    await setStance(w.db, "mod", { questionId: w.q, position: "agree", expectedVersion: 0 });
+    await setCurrentStance(w.db, "viewer", { questionId: w.q, position: "disagree", expectedVersion: 0 });
+    await setCurrentStance(w.db, "mod", { questionId: w.q, position: "agree", expectedVersion: 0 });
     const picks = await Promise.all(Object.values(viewers).map((viewer) => loadReasonsPanel(w.db, w.q, { viewer, now: NOW })));
     expect(picks[1].pick).toEqual(picks[0].pick);
     expect(picks[2].pick).toEqual(picks[0].pick);
@@ -648,8 +648,8 @@ describe("the question page", () => {
       if (!res.ok) throw new Error(`reply failed: ${res.error}`);
       ids[author] = res.id;
     }
-    await setStance(h.db, h.ids.fan, { questionId: q, position: "agree", expectedVersion: 0 });
-    await setStance(h.db, h.ids.foe, { questionId: q, position: "disagree", expectedVersion: 0 });
+    await setCurrentStance(h.db, h.ids.fan, { questionId: q, position: "agree", expectedVersion: 0 });
+    await setCurrentStance(h.db, h.ids.foe, { questionId: q, position: "disagree", expectedVersion: 0 });
   });
   afterAll(() => h.restore());
 

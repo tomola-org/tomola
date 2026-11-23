@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { profiles, entries, stances, stanceChanges, appeals } from "~/lib/db/schema";
 import { createTopic } from "~/lib/entries.server";
 import { hideEntry } from "~/lib/moderation.server";
-import { setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { requireMember, requireWriter } from "~/lib/auth/session.server";
 import { setupRouteHarness } from "./helpers/route-harness";
 
@@ -19,7 +19,7 @@ it("keeps personal deletion, export, appeals and their pages available before pa
     const topic = await createTopic(h.db, owner, { title: "Delete this", body: "My post.", lang: "en", asksStance: true });
     const reported = await createTopic(h.db, owner, { title: "Appeal this", body: "My other post.", lang: "en" });
     if (!topic.ok || !reported.ok) throw new Error("Fixture topic failed");
-    expect(await setStance(h.db, owner, { questionId: topic.id, position: "agree", expectedVersion: 0 })).toMatchObject({ ok: true });
+    expect(await setCurrentStance(h.db, owner, { questionId: topic.id, position: "agree", expectedVersion: 0 })).toMatchObject({ ok: true });
     const hidden = await hideEntry(h.db, { id: h.ids.rights_other, scope: { operator: true, langs: [] } }, { entryId: reported.id, reason: "spam", note: "Review requested" });
     if (!hidden.ok) throw new Error("Fixture moderation failed");
     await h.db.update(profiles).set({ residenceCountry: null, adultConfirmedAt: null, trialConsentVersion: null, trialConsentAt: null }).where(eq(profiles.userId, owner));

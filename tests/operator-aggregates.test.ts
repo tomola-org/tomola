@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildObservationExport } from "~/lib/exports.server";
 import { createReply, createTopic } from "~/lib/entries.server";
-import { setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { setVote } from "~/lib/votes.server";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
 
@@ -34,7 +34,7 @@ beforeAll(async () => {
   q1 = await topic("共生は制御の代替になりうる", t(0));
   q2 = await topic("訓練は止めるべきである", t(1));
   const choose = async (who: string, q: number, position: "agree" | "disagree" | "neither", minute: number) => {
-    const res = await setStance(h.db, h.ids[who], { questionId: q, position, expectedVersion: 0 }, { now: t(minute) });
+    const res = await setCurrentStance(h.db, h.ids[who], { questionId: q, position, expectedVersion: 0 }, { now: t(minute) });
     if (!res.ok) throw new Error(`stance failed: ${res.error}`);
   };
   // q1: ja agree x2, en disagree x2, th neither; q2: ja agree, en disagree: so each area has stances on more than one question

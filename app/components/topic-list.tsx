@@ -88,6 +88,7 @@ export function TopicList({
             <div className="mt-2">
               <StancePanel
                 questionId={t.id}
+                questionSourceHash={t.questionSourceHash ?? null}
                 stance={t.stance}
                 distribution={t.distribution ?? null}
                 peekHref={peekHrefFor(location.pathname, location.search, t.id, `q-${t.id}`)}

@@ -854,6 +854,7 @@
   "stance_note_short": "場の結論ではありません。",
   "stance_privacy_line": "立場は無記名です。答えた人が少ないときは、数の変化から立場が推測されることがあります。",
   "stance_conflict": "別の画面で変更されています。いまの立場を表示しています。",
+  "stance_question_changed": "問いの文が変わりました。読み直してから立場を選んでください。",
   "stance_rate_limited": "送信が多すぎます。しばらくしてから、やり直してください。",
   "stance_error": "立場を保存できませんでした。",
   "stance_closed": "この問いには、いま立場を選べません。",

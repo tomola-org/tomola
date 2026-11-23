@@ -88,27 +88,27 @@ export type SetStanceInput = {
   position: Position | null;
   // Version displayed by the screen, for stale-screen detection.
   expectedVersion: number;
+  questionSourceHash: string | null;
   // Trigger post from 「立場を見直す」: loadReviewTrigger validates thread ?review=, then StancePanel passes it to /stance.
   triggerEntryId?: number | null;
 };
 export type SetStanceResult =
   | { ok: true; changed: boolean; position: Position | null; version: number }
   | { ok: false; error: "conflict"; position: Position | null; version: number }
-  | { ok: false; error: "not_found" | "not_a_question" | "hidden" | "no_profile" | "consent_required" };
+  | { ok: false; error: "not_found" | "not_a_question" | "hidden" | "no_profile" | "consent_required" | "question_changed" };
 
 // Register/change/withdraw in one transaction, preserving profile → question lock order; never touch mistranslation-report rows.
 export async function setStance(db: Db, userId: string, input: SetStanceInput, opts: { now?: Date } = {}): Promise<SetStanceResult> {
   const now = opts.now ?? new Date();
-  const { questionId, position } = input;
+  const { questionId, position, questionSourceHash } = input;
   return db.transaction(async (tx) => {
     // 1. Lock member and read area. Every operation changing their stances starts here, serializing per member.
     const [profile] = await tx.select({ homeArea: profiles.homeArea, stanceConsentAt: profiles.stanceConsentAt, stanceConsentVersion: profiles.stanceConsentVersion }).from(profiles).where(eq(profiles.userId, userId)).for("update");
     if (!profile) return { ok: false as const, error: "no_profile" as const };
-    if (position !== null && !hasStanceConsent(profile)) return { ok: false as const, error: "consent_required" as const };
     const area = profile.homeArea as Area;
     // 2. Question row: missing/deleted gives not_found, non-question not_a_question. Hidden questions permit withdrawal but not registration/change.
     const [question] = await tx
-      .select({ kind: entries.kind, asksStance: entries.asksStance, authorId: entries.authorId, deletedAt: entries.deletedAt, hiddenAt: entries.hiddenAt, stanceLockedAt: entries.stanceLockedAt })
+      .select({ kind: entries.kind, asksStance: entries.asksStance, authorId: entries.authorId, deletedAt: entries.deletedAt, hiddenAt: entries.hiddenAt, stanceLockedAt: entries.stanceLockedAt, sourceHash: entries.sourceHash })
       .from(entries)
       .where(eq(entries.id, questionId))
       .for("no key update");
@@ -129,8 +129,13 @@ export async function setStance(db: Db, userId: string, input: SetStanceInput, o
       const [{ n }] = await tx.select({ n: count() }).from(stanceChanges).where(and(eq(stanceChanges.questionId, questionId), eq(stanceChanges.userId, userId)));
       version = Number(n);
     }
-    // 4. Same stance is a no-op, without a duplicate record. Check before version comparison to avoid conflicts after double presses.
-    if (position === currentPosition) return { ok: true as const, changed: false, position: currentPosition, version };
+    // 4. A new choice must match the locked question's source before checking the member's version.
+    const changed = position !== currentPosition;
+    if (changed && position !== null && (questionSourceHash !== question.sourceHash || !questionSourceHash || !/^[0-9a-f]{64}$/.test(questionSourceHash))) {
+      return { ok: false as const, error: "question_changed" as const };
+    }
+    if (position !== null && !hasStanceConsent(profile)) return { ok: false as const, error: "consent_required" as const };
+    if (!changed) return { ok: true as const, changed: false, position: currentPosition, version };
     // 5. Reject stale-screen submissions with current stance/version.
     if (input.expectedVersion !== version) return { ok: false as const, error: "conflict" as const, position: currentPosition, version };
     // 6. Use only usableTrigger-eligible posts: visible/undeleted in the question thread, Insightful (「なるほど」) pressed by this member, never previously used

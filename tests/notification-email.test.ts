@@ -13,7 +13,7 @@ import { digestMail, excerptOf, notificationMail } from "~/lib/mail/notification
 import { createMemoryMailbox } from "~/lib/mail/transports.server";
 import { deleteEntry, excludeReactions, fixEntry, hideEntry, includeReactions, suspendMember, unsuspendMember } from "~/lib/moderation.server";
 import { sourceHash } from "~/lib/source-hash.server";
-import { setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { enqueueImmediateEmails, listNotifications, SEND_DIGEST_JOB, SEND_NOTIFICATION_EMAIL_JOB } from "~/lib/notifications.server";
 import { m } from "~/paraglide/messages.js";
 import { escapeRegex } from "./helpers/message-markup";
@@ -336,7 +336,7 @@ describe("immediate emails", () => {
     // Correcting a typo in a locked question (alice's stance locked bob's question).
     const question = await createTopic(db, "bob", { lang: "ja", title: "問いです", body: "SECRET-BODY", asksStance: true });
     if (!question.ok) throw new Error("question failed");
-    await setStance(db, "alice", { questionId: question.id, position: "agree", expectedVersion: 0 }, { now: new Date("2026-10-10T03:30:00Z") });
+    await setCurrentStance(db, "alice", { questionId: question.id, position: "agree", expectedVersion: 0 }, { now: new Date("2026-10-10T03:30:00Z") });
     await fixEntry(db, { id: "op", scope: OP }, { entryId: question.id, title: "問いです。", body: "SECRET-FIXED", note: "SECRET-NOTE", sourceHash: sourceHash("問いです", "SECRET-BODY", "ja") }, { now: new Date("2026-10-10T04:00:00Z") });
     await run(after());
     const bobMails = box.sent.filter((s) => s.to === "bob@example.com");

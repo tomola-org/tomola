@@ -33,6 +33,7 @@ import { findSimilar } from "~/lib/search.server";
 import { sourceHash } from "~/lib/source-hash.server";
 import { entryEditVersion } from "~/lib/entry-edit-version.server";
 import { deleteStanceRecord, setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { createTranslationReport, resolveReportWithHumanTranslation } from "~/lib/translation-reports.server";
 import { SEND_NOTIFICATION_EMAIL_JOB } from "~/lib/notifications.server";
 import { RETRANSLATE_REPORT_JOB } from "~/lib/translations.server";
@@ -703,7 +704,7 @@ describe.skipIf(!REAL_PG_URL)("two connections on PostgreSQL (TEST_DATABASE_URL)
         await dbBlock.insert(translations).values({ entryId: asked.id, field: "body", lang: "th", kind: "primary", text: "[th] 本文です。", engine: "fake", model: "fake-1", sourceHash: row.hash });
         await addMember(dbBlock, `giver${w.n}`, `giv${w.n}`);
         await addMember(dbBlock, `second${w.n}`, `snd${w.n}`);
-        expect((await setStance(dbBlock, `giver${w.n}`, { questionId: asked.id, position: "agree", expectedVersion: 0 }, { now: LATER })).ok).toBe(true);
+        expect((await setCurrentStance(dbBlock, `giver${w.n}`, { questionId: asked.id, position: "agree", expectedVersion: 0 }, { now: LATER })).ok).toBe(true);
         const made = await createTranslationReport(dbBlock, w.b, { entryId: asked.id, lang: "th" }, { now: LATER, llm: llm() });
         if (!made.ok || made.id === null) throw new Error("report failed");
         const before = await deadlocks();
@@ -711,7 +712,7 @@ describe.skipIf(!REAL_PG_URL)("two connections on PostgreSQL (TEST_DATABASE_URL)
         await holder.ready;
         const fixing = fixEntry(dbFix, op(`op${w.n}`), { entryId: asked.id, title: `直した題${w.n}`, body: "直した本文です。", note: "誤字", sourceHash: row.hash }, { now: LATER });
         await waitForLockWait(admin, "fix");
-        const registering = setStance(dbStance, `second${w.n}`, { questionId: asked.id, position: "disagree", expectedVersion: 0 }, { now: LATER });
+        const registering = setStance(dbStance, `second${w.n}`, { questionId: asked.id, position: "disagree", expectedVersion: 0, questionSourceHash: row.hash }, { now: LATER });
         await waitForLockWait(admin, "stance");
         const running = runDueJobs(dbWorker, retryOnly(), { now: LATER, limit: 20, logger: quiet });
         await waitForLockWait(admin, "worker");
@@ -723,10 +724,10 @@ describe.skipIf(!REAL_PG_URL)("two connections on PostgreSQL (TEST_DATABASE_URL)
         await holder.commit();
         const settled = await expectSettlesWithin(Promise.all([fixing, registering, running, humanFix, deleting]), 20_000, "the five that waited for the question's row");
         expect(settled[0]).toMatchObject({ ok: true });
-        // Deletion can win the question-row lock before stance registration.
-        expect(settled[1]).toMatchObject(settled[1].ok ? { ok: true, changed: true } : { ok: false, error: "not_found" });
+        // A corrected question requires its current source, and a deleted question is unavailable.
+        expect(settled[1]).toEqual({ ok: false, error: expect.stringMatching(/^(question_changed|not_found)$/) });
         expect(settled[4].ok).toBe(true);
-        expect(await dbBlock.select().from(stances).where(and(eq(stances.questionId, asked.id), eq(stances.userId, `second${w.n}`)))).toHaveLength(settled[1].ok ? 1 : 0);
+        expect(await dbBlock.select().from(stances).where(and(eq(stances.questionId, asked.id), eq(stances.userId, `second${w.n}`)))).toHaveLength(0);
         expect((await dbBlock.select({ deletedAt: entries.deletedAt }).from(entries).where(eq(entries.id, asked.id)))[0].deletedAt).toEqual(LATER);
         expect(await deadlocks()).toBe(before);
         // The correction revision remains, and the question stays locked.
@@ -764,9 +765,9 @@ describe.skipIf(!REAL_PG_URL)("two connections on PostgreSQL (TEST_DATABASE_URL)
         const w = await stanceWorld(dbBlock);
         const holder = holdProfile(dbBlock, w.m1);
         await holder.ready;
-        const first = setStance(dbA, w.m1, { questionId: w.q, position: "agree", expectedVersion: 0 }, { now: at(1) });
+        const first = setCurrentStance(dbA, w.m1, { questionId: w.q, position: "agree", expectedVersion: 0 }, { now: at(1) });
         await waitForLockWait(admin, "send-a");
-        const second = setStance(dbB, w.m1, { questionId: w.q, position: "disagree", expectedVersion: 0 }, { now: at(2) });
+        const second = setCurrentStance(dbB, w.m1, { questionId: w.q, position: "disagree", expectedVersion: 0 }, { now: at(2) });
         await waitForLockWait(admin, "send-b");
         await expectPending(first);
         await holder.commit();
@@ -785,9 +786,9 @@ describe.skipIf(!REAL_PG_URL)("two connections on PostgreSQL (TEST_DATABASE_URL)
         const w = await stanceWorld(dbBlock);
         const holder = holdProfile(dbBlock, w.m1);
         await holder.ready;
-        const first = setStance(dbA, w.m1, { questionId: w.q, position: "neither", expectedVersion: 0 }, { now: at(1) });
+        const first = setCurrentStance(dbA, w.m1, { questionId: w.q, position: "neither", expectedVersion: 0 }, { now: at(1) });
         await waitForLockWait(admin, "send-a");
-        const second = setStance(dbB, w.m1, { questionId: w.q, position: "neither", expectedVersion: 0 }, { now: at(2) });
+        const second = setCurrentStance(dbB, w.m1, { questionId: w.q, position: "neither", expectedVersion: 0 }, { now: at(2) });
         await waitForLockWait(admin, "send-b");
         await holder.commit();
         expect(await expectSettlesWithin(first, 10_000, "the first send")).toMatchObject({ ok: true, changed: true, version: 1 });
@@ -805,7 +806,7 @@ describe.skipIf(!REAL_PG_URL)("two connections on PostgreSQL (TEST_DATABASE_URL)
         const holder = holdProfile(dbBlock, w.m1);
         await holder.ready;
         const area = () => changeHomeArea(dbArea, w.m1, "fr", { now: at(5) });
-        const register = () => setStance(dbStance, w.m1, { questionId: w.q, position: "agree", expectedVersion: 0 }, { now: at(6) });
+        const register = () => setCurrentStance(dbStance, w.m1, { questionId: w.q, position: "agree", expectedVersion: 0 }, { now: at(6) });
         const [firstName, firstRun, secondName, secondRun] = order === "the home area change first" ? (["area", area, "stance", register] as const) : (["stance", register, "area", area] as const);
         const p1 = firstRun();
         await waitForLockWait(admin, firstName);
@@ -827,36 +828,39 @@ describe.skipIf(!REAL_PG_URL)("two connections on PostgreSQL (TEST_DATABASE_URL)
       ["the edit first", "edit"],
       ["the stance first", "stance"],
     ] as const)("the author's edit and the first stance of another member are serialized on the question's row: %s", async (_name, first) => {
-      const [dbBlock, dbEdit, dbStance] = await Promise.all([scratch.open("blocker"), scratch.open("edit"), scratch.open("stance")]);
+      const [dbEdit, dbStance] = await Promise.all([scratch.open("edit"), scratch.open("stance")]);
       try {
-        const w = await stanceWorld(dbBlock);
-        const holder = holdQuestion(dbBlock, w.q);
-        await holder.ready;
-        const edit = () => editEntry(dbEdit, w.a, w.q, { title: `直した題${w.n}`, body: "直した本文です。" }, { kind: "topic", now: at(10) });
-        const stance = () => setStance(dbStance, w.m1, { questionId: w.q, position: "agree", expectedVersion: 0 }, { now: at(11) });
-        const start = { edit, stance };
+        const w = await stanceWorld(dbEdit);
+        const original = await questionRow(dbStance, w.q);
+        const edit = (db: Db) => editEntry(db, w.a, w.q, { title: `直した題${w.n}`, body: "直した本文です。" }, { kind: "topic", now: at(10) });
+        const stance = (db: Db) => setStance(db, w.m1, { questionId: w.q, position: "agree", expectedVersion: 0, questionSourceHash: original.sourceHash }, { now: at(11) });
+        const holder = first === "edit" ? holdTx(dbEdit, edit) : holdTx(dbStance, stance);
+        const winner = await holder.ready;
         const second = first === "edit" ? "stance" : "edit";
-        const p1 = start[first]();
-        await waitForLockWait(admin, first);
-        const p2 = start[second]();
-        await waitForLockWait(admin, second);
-        await holder.commit();
-        const [r1, r2] = await expectSettlesWithin(Promise.all([p1, p2]), 15_000, "the edit and the stance");
-        const row = await questionRow(dbBlock, w.q);
-        if (first === "edit") {
-          // Editing first succeeds; the subsequent stance starts the lock.
-          expect(r1).toMatchObject({ ok: true, changed: true });
-          expect(r2).toMatchObject({ ok: true, changed: true });
-          expect(row.title).toBe(`直した題${w.n}`);
-        } else {
-          // A stance first starts the lock; editing returns locked and leaves the title unchanged.
-          expect(r1).toMatchObject({ ok: true, changed: true });
-          expect(r2).toEqual({ ok: false, error: "locked" });
-          expect(row.title).toBe(`問い${w.n}`);
+        const waiting = second === "stance" ? stance(dbStance) : edit(dbEdit);
+        try {
+          await waitForLockWait(admin, second);
+        } finally {
+          await holder.commit();
         }
-        expect(row.stanceLockedAt).toEqual(at(11));
+        const result = await expectSettlesWithin<Awaited<typeof waiting>>(waiting, 15_000, "the edit or stance");
+        expect(winner).toMatchObject({ ok: true, changed: true });
+        const row = await questionRow(dbEdit, w.q);
+        const stored = await dbEdit.select().from(stances).where(eq(stances.questionId, w.q));
+        const history = await dbEdit.select().from(stanceChanges).where(eq(stanceChanges.questionId, w.q));
+        if (first === "edit") {
+          expect(result).toEqual({ ok: false, error: "question_changed" });
+          expect(row).toMatchObject({ title: `直した題${w.n}`, body: "直した本文です。", stanceLockedAt: null });
+          expect(stored).toHaveLength(0);
+          expect(history).toHaveLength(0);
+        } else {
+          expect(result).toEqual({ ok: false, error: "locked" });
+          expect(row).toMatchObject({ sourceHash: original.sourceHash, title: original.title, body: original.body, stanceLockedAt: at(11) });
+          expect(stored).toMatchObject([{ position: "agree", version: 1 }]);
+          expect(history).toMatchObject([{ fromPosition: null, toPosition: "agree" }]);
+        }
       } finally {
-        await closing(dbBlock, dbEdit, dbStance);
+        await closing(dbEdit, dbStance);
       }
     }, 60_000);
 
@@ -866,7 +870,7 @@ describe.skipIf(!REAL_PG_URL)("two connections on PostgreSQL (TEST_DATABASE_URL)
         const w = await stanceWorld(dbBlock);
         const holder = holdQuestion(dbBlock, w.q);
         await holder.ready;
-        const stance = setStance(dbStance, w.a, { questionId: w.q, position: "agree", expectedVersion: 0 }, { now: at(11) });
+        const stance = setCurrentStance(dbStance, w.a, { questionId: w.q, position: "agree", expectedVersion: 0 }, { now: at(11) });
         await waitForLockWait(admin, "stance");
         const edit = editEntry(dbEdit, w.a, w.q, { title: `直した題${w.n}`, body: "直した本文です。" }, { kind: "topic", now: at(12) });
         await waitForLockWait(admin, "edit");
@@ -887,9 +891,9 @@ describe.skipIf(!REAL_PG_URL)("two connections on PostgreSQL (TEST_DATABASE_URL)
         const before = await deadlocks();
         const holder = holdQuestion(dbBlock, w.q);
         await holder.ready;
-        const first = setStance(dbA, w.m1, { questionId: w.q, position: "agree", expectedVersion: 0 }, { now: at(21) });
+        const first = setCurrentStance(dbA, w.m1, { questionId: w.q, position: "agree", expectedVersion: 0 }, { now: at(21) });
         await waitForLockWait(admin, "send-a");
-        const second = setStance(dbB, w.m2, { questionId: w.q, position: "disagree", expectedVersion: 0 }, { now: at(22) });
+        const second = setCurrentStance(dbB, w.m2, { questionId: w.q, position: "disagree", expectedVersion: 0 }, { now: at(22) });
         await waitForLockWait(admin, "send-b");
         await holder.commit();
         const [r1, r2] = await expectSettlesWithin(Promise.all([first, second]), 15_000, "the two stances");
@@ -908,7 +912,7 @@ describe.skipIf(!REAL_PG_URL)("two connections on PostgreSQL (TEST_DATABASE_URL)
         const w = await stanceWorld(dbBlock);
         const holder = holdProfile(dbBlock, w.m1);
         await holder.ready;
-        const register = () => setStance(dbSet, w.m1, { questionId: w.q, position: "agree", expectedVersion: 0 }, { now: at(31) });
+        const register = () => setCurrentStance(dbSet, w.m1, { questionId: w.q, position: "agree", expectedVersion: 0 }, { now: at(31) });
         const remove = () => deleteStanceRecord(dbDelete, w.m1, w.q);
         const [firstName, firstRun, secondName, secondRun] = order === "the registration first" ? (["stance", register, "delete", remove] as const) : (["delete", remove, "stance", register] as const);
         const p1 = firstRun();
@@ -941,7 +945,7 @@ describe.skipIf(!REAL_PG_URL)("two connections on PostgreSQL (TEST_DATABASE_URL)
         await holder.ready;
         const excluding = excludeReactions(dbExclude, op(`op${w.n}`), { userId: w.m1, reason: "spam", note: "fake" }, { now: at(41) });
         await waitForLockWait(admin, "exclude");
-        const registering = setStance(dbStance, w.m1, { questionId: w.q, position: "agree", expectedVersion: 0 }, { now: at(42) });
+        const registering = setCurrentStance(dbStance, w.m1, { questionId: w.q, position: "agree", expectedVersion: 0 }, { now: at(42) });
         await waitForLockWait(admin, "stance");
         await holder.commit();
         const [excluded, registered] = await expectSettlesWithin(Promise.all([excluding, registering]), 15_000, "the exclusion and the registration");
@@ -966,7 +970,7 @@ describe.skipIf(!REAL_PG_URL)("two connections on PostgreSQL (TEST_DATABASE_URL)
         ] as const;
         for (const [sameContent, base, expectSecond] of cases) {
           const w = await stanceWorld(dbBlock);
-          expect((await setStance(dbBlock, w.m1, { questionId: w.q, position: "agree", expectedVersion: 0 }, { now: at(51) })).ok).toBe(true);
+          expect((await setCurrentStance(dbBlock, w.m1, { questionId: w.q, position: "agree", expectedVersion: 0 }, { now: at(51) })).ok).toBe(true);
           const holder = holdQuestion(dbBlock, w.q);
           await holder.ready;
           const fixA = fixEntry(dbA, op(`op${w.n}`), { entryId: w.q, title: `直した題${w.n}`, body: "直した本文です。", note: "一人目", sourceHash: sourceHash(`問い${w.n}`, "命題です。", "ja") }, { now: at(52) });

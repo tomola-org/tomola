@@ -132,7 +132,7 @@ test("consent returns to the intended stance without recording it until another 
   await expect(page.locator("#stance [role=status]")).toHaveCount(0);
   await page.reload();
   await expect(choice).toHaveAttribute("aria-pressed", "true");
-  expect(requested.some(url => /stance_(?:choice|q)|stance_msg=consented/.test(url))).toBe(false);
+  expect(requested.some(url => /stance_(?:choice|q)=|stance_msg=consented/.test(decodeURIComponent(new URL(url).search)))).toBe(false);
   const shared = page.url();
   const otherContext = await browser.newContext({ baseURL: state().baseURL, extraHTTPHeaders: clientHeaders("10.89.2.5") });
   try {

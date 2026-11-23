@@ -11,7 +11,7 @@ import { AREAS } from "~/lib/languages";
 import { getMetrics } from "~/lib/metrics.server";
 import { readReadingMark } from "~/lib/reading-mark.server";
 import { grantModerator } from "~/lib/roles.server";
-import { setStance } from "~/lib/stances.server";
+import { readQuestionSourceHash, setCurrentStance } from "./helpers/stances";
 import { setVote } from "~/lib/votes.server";
 import { getMd, parseBlocks } from "./helpers/md";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
@@ -56,7 +56,7 @@ beforeAll(async () => {
   if (!reply.ok) throw new Error("reply failed");
   replyId = reply.id;
   for (const [i, [handle, , position]] of PEOPLE.entries()) {
-    const res = await setStance(h.db, h.ids[handle], { questionId: q, position, expectedVersion: 0 }, { now: t(1 + i) });
+    const res = await setCurrentStance(h.db, h.ids[handle], { questionId: q, position, expectedVersion: 0 }, { now: t(1 + i) });
     if (!res.ok) throw new Error(`stance failed: ${res.error}`);
   }
 });
@@ -151,8 +151,9 @@ describe("a question's stances, by every route a member can read", () => {
 
   it("/stance answers with the totals and the number of languages only (success and conflict)", async () => {
     const mod = await import("~/routes/stance");
+    const questionSourceHash = await readQuestionSourceHash(h.db, q) ?? "";
     const send = (version: string, position: string) =>
-      h.outcome(() => mod.action(h.args(h.request("/stance", { as: "ja1", form: { questionId: String(q), position, version }, headers: { "sec-fetch-dest": "empty" } }))));
+      h.outcome(() => mod.action(h.args(h.request("/stance", { as: "ja1", form: { questionId: String(q), questionSourceHash, position, version }, headers: { "sec-fetch-dest": "empty" } }))));
     const ok = await send("1", "agree");
     expect((ok.value as { data: unknown }).data).toMatchObject({ ok: true, distribution: { total: 10, counts: { agree: 5, disagree: 3, neither: 2 }, langs: 4 } });
     const stale = await send("0", "disagree");
@@ -352,7 +353,7 @@ describe("Insightful: the same totals and the same number of languages from a di
       if (!reply.ok) throw new Error("reply failed");
       for (const who of world.question) expect((await setVote(w.db, w.ids[who], question.id, true, { now: t(31) })).ok).toBe(true);
       for (const who of world.reply) expect((await setVote(w.db, w.ids[who], reply.id, true, { now: t(32) })).ok).toBe(true);
-      for (const [who, position] of world.stances) expect((await setStance(w.db, w.ids[who], { questionId: question.id, position, expectedVersion: 0 }, { now: t(33) })).ok).toBe(true);
+      for (const [who, position] of world.stances) expect((await setCurrentStance(w.db, w.ids[who], { questionId: question.id, position, expectedVersion: 0 }, { now: t(33) })).ok).toBe(true);
 
       const out: Record<string, string> = {};
       const id = question.id;

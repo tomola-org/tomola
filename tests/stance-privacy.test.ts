@@ -5,7 +5,7 @@ import { buildMemberExport, buildObservationExport } from "~/lib/exports.server"
 import { createReply, createTopic } from "~/lib/entries.server";
 import { grantModerator } from "~/lib/roles.server";
 import { signOpenInAiToken } from "~/lib/open-in-ai.server";
-import { setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { createApiToken } from "~/lib/tokens.server";
 import { setVote } from "~/lib/votes.server";
 import { getMd } from "./helpers/md";
@@ -39,8 +39,8 @@ beforeAll(async () => {
   const r = await createReply(h.db, h.ids.hana, q, { lang: "ja", body: "補足です。", stanceTag: "agree" }, { now: t(1) });
   if (!r.ok) throw new Error("reply failed");
   reply = r.id;
-  expect((await setStance(h.db, alpha, { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(5) })).ok).toBe(true);
-  expect((await setStance(h.db, beta, { questionId: q, position: "disagree", expectedVersion: 0 }, { now: t(6) })).ok).toBe(true);
+  expect((await setCurrentStance(h.db, alpha, { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(5) })).ok).toBe(true);
+  expect((await setCurrentStance(h.db, beta, { questionId: q, position: "disagree", expectedVersion: 0 }, { now: t(6) })).ok).toBe(true);
 });
 afterAll(() => {
   h.restore();
@@ -106,10 +106,10 @@ describe("nobody but the member sees who chose which stance", () => {
     if (!early.ok) throw new Error("question failed");
     const objection = await createReply(h.db, h.ids.hana, early.id, { lang: "ja", body: "異議です。", stanceTag: "objection" }, { now: new Date("2026-09-29T00:30:00Z") });
     if (!objection.ok) throw new Error("reply failed");
-    expect((await setStance(h.db, alpha, { questionId: early.id, position: "agree", expectedVersion: 0 }, { now: new Date("2026-09-29T01:00:00Z") })).ok).toBe(true);
-    expect((await setStance(h.db, beta, { questionId: early.id, position: "disagree", expectedVersion: 0 }, { now: new Date("2026-09-29T02:00:00Z") })).ok).toBe(true);
+    expect((await setCurrentStance(h.db, alpha, { questionId: early.id, position: "agree", expectedVersion: 0 }, { now: new Date("2026-09-29T01:00:00Z") })).ok).toBe(true);
+    expect((await setCurrentStance(h.db, beta, { questionId: early.id, position: "disagree", expectedVersion: 0 }, { now: new Date("2026-09-29T02:00:00Z") })).ok).toBe(true);
     expect((await setVote(h.db, alpha, objection.id, true, { now: new Date("2026-09-29T03:00:00Z") })).ok).toBe(true);
-    expect((await setStance(h.db, alpha, { questionId: early.id, position: "disagree", expectedVersion: 1, triggerEntryId: objection.id }, { now: new Date("2026-09-29T04:00:00Z") })).ok).toBe(true);
+    expect((await setCurrentStance(h.db, alpha, { questionId: early.id, position: "disagree", expectedVersion: 1, triggerEntryId: objection.id }, { now: new Date("2026-09-29T04:00:00Z") })).ok).toBe(true);
     const secrets = [alpha, beta, "alpha_priv", "beta_priv"];
     const stanceRows = /stance_changes|"stances"|from_position|to_position|trigger_entry|stancesByQuestion/;
     const read = async (name: Parameters<typeof load>[0], as: string, path: string, params: Record<string, string> = {}) => {
@@ -257,10 +257,10 @@ describe("a stance leaves no trace in the times or the order", () => {
     const timesBefore = await times();
     // First non-author stance, which starts locking; change; withdrawal; reselection; and adding/removing "なるほど".
     const steps: Array<() => Promise<unknown>> = [
-      () => setStance(h.db, alpha, { questionId: other.id, position: "agree", expectedVersion: 0 }, { now: t(40) }),
-      () => setStance(h.db, alpha, { questionId: other.id, position: "disagree", expectedVersion: 1 }, { now: t(41) }),
-      () => setStance(h.db, alpha, { questionId: other.id, position: null, expectedVersion: 2 }, { now: t(42) }),
-      () => setStance(h.db, beta, { questionId: other.id, position: "neither", expectedVersion: 0 }, { now: t(43) }),
+      () => setCurrentStance(h.db, alpha, { questionId: other.id, position: "agree", expectedVersion: 0 }, { now: t(40) }),
+      () => setCurrentStance(h.db, alpha, { questionId: other.id, position: "disagree", expectedVersion: 1 }, { now: t(41) }),
+      () => setCurrentStance(h.db, alpha, { questionId: other.id, position: null, expectedVersion: 2 }, { now: t(42) }),
+      () => setCurrentStance(h.db, beta, { questionId: other.id, position: "neither", expectedVersion: 0 }, { now: t(43) }),
       () => setVote(h.db, alpha, other.id, true, { now: t(44) }),
       () => setVote(h.db, alpha, other.id, false, { now: t(45) }),
       () => setVote(h.db, beta, reply, true, { now: t(46) }),

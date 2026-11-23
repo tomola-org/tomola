@@ -91,6 +91,7 @@ async function render(panels: StancePanelProps[]): Promise<string> {
 }
 const base: StancePanelProps = {
   questionId: 12,
+  questionSourceHash: "a".repeat(64),
   stance: { position: null, version: 0 },
   distribution: null,
   peekHref: "/latest?peek=12#q-12",
@@ -111,10 +112,18 @@ describe("StancePanel", () => {
     expect(out).not.toContain(messageMarkup(m.stance_withdraw()));
     // Submit the question, version and return path; position comes from the pressed name=position button.
     expect(out).toContain('name="questionId" value="12"');
+    expect(out).toContain(`name="questionSourceHash" value="${base.questionSourceHash}"`);
     expect(out).toContain('name="version" value="0"');
     expect(out).toContain('name="returnTo" value="/latest#q-12"');
     expect(out).toContain('action="/stance"');
     expect((out.match(/name="position"/g) ?? []).length).toBe(3);
+  });
+
+  it("renders the native question notice with the current source version", async () => {
+    const out = await render([{ ...base, message: "question_changed" }]);
+    expect(out).toContain(messageMarkup(m.stance_question_changed()));
+    expect(out).toContain(`name="questionSourceHash" value="${base.questionSourceHash}"`);
+    expect(out).not.toContain(messageMarkup(m.offline_reload()));
   });
 
   it("after the member chose: the pressed button, the three numbers, the number of languages and the note; a withdraw button; the privacy line only outside a list", async () => {

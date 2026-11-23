@@ -7,12 +7,12 @@ import { formString } from "~/lib/entry-form.server";
 import { assertSameOrigin } from "~/lib/http/csrf.server";
 import { isNavigation } from "~/lib/http/navigation.server";
 import { hitMemberLimit, hitStanceQuestionLimit, rateLimitHeaders } from "~/lib/rate-limit.server";
-import { toDistributionView, type StanceResponse } from "~/lib/stance-ui";
+import { toDistributionView, type StanceMessage, type StanceResponse } from "~/lib/stance-ui";
 import { isPosition, type Position } from "~/lib/stances";
 import { setStance } from "~/lib/stances.server";
 
 // One-click stance registration, change, or withdrawal (POST only, resource route like /vote). Return data to fetchers with JavaScript without navigating.
-// Plain form submissions without JavaScript redirect to returnTo. Conflicts and rate-limit excess append ?stance_msg=conflict|rate_limited&stance_q=<question-id>
+// Plain form submissions without JavaScript redirect to returnTo. Stance notices append ?stance_msg=<message>&stance_q=<question-id>
 // for the destination loader to display; both paths produce the same outcome.
 // Use the requireWriter gate (suspended members go to /suspended), reading session cookies only, never Bearer or ?k=. Stances cannot be written through the API.
 // Include distributions only when a stance is selected: totals and language count, without per-area counts. Cache-Control: private, no-store.
@@ -27,6 +27,8 @@ export async function action({ request }: Route.ActionArgs) {
   const versionRaw = formString(form, "version");
   const positionRaw = formString(form, "position");
   const triggerRaw = formString(form, "trigger");
+  const [questionSource, ...extraSources] = form.getAll("questionSourceHash");
+  const questionSourceHash = typeof questionSource === "string" && extraSources.length === 0 ? questionSource : null;
   const questionId = /^[1-9]\d{0,15}$/.test(questionRaw) ? Number(questionRaw) : NaN;
   const expectedVersion = /^\d{1,9}$/.test(versionRaw) ? Number(versionRaw) : NaN;
   const position: Position | null | undefined = positionRaw === "none" ? null : isPosition(positionRaw) ? positionRaw : undefined;
@@ -37,7 +39,7 @@ export async function action({ request }: Route.ActionArgs) {
   const navigating = isNavigation(request);
   const back = safeLocalPath(formString(form, "returnTo"));
   // Plain-form return destination, including the result marker (?stance_msg=).
-  const backWith = (message: "conflict" | "rate_limited") => {
+  const backWith = (message: StanceMessage) => {
     const url = new URL(back, "http://tomola.invalid");
     url.searchParams.set("stance_msg", message);
     url.searchParams.set("stance_q", String(questionId));
@@ -53,7 +55,11 @@ export async function action({ request }: Route.ActionArgs) {
     return data({ ok: false, error: "rate_limited" } satisfies StanceResponse, { status: 429, headers: { ...HEADERS, ...rateLimitHeaders(refused) } });
   }
 
-  const res = await setStance(db, user.id, { questionId, position, expectedVersion, triggerEntryId });
+  const res = await setStance(db, user.id, { questionId, position, expectedVersion, questionSourceHash, triggerEntryId });
+  if (!res.ok && res.error === "question_changed") {
+    if (navigating) throw backWith("question_changed");
+    return data({ ok: false, error: "question_changed" } satisfies StanceResponse, { status: 409, headers: HEADERS });
+  }
   if (!res.ok && res.error !== "conflict") {
     if (res.error === "consent_required") {
       const next = new URL(back, "http://tomola.invalid");

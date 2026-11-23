@@ -12,7 +12,7 @@ import { hideEntry, unhideEntry, type Actor } from "~/lib/moderation.server";
 import { signOpenInAiToken } from "~/lib/open-in-ai.server";
 import { getProfile } from "~/lib/profiles.server";
 import { grantModerator } from "~/lib/roles.server";
-import { setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { createApiToken } from "~/lib/tokens.server";
 import { addMember, createTestDb } from "./helpers/db";
 import { getMd, parseBlocks } from "./helpers/md";
@@ -76,7 +76,7 @@ async function world() {
   return { db, q: q.id };
 }
 const choose = async (db: Db, userId: string, questionId: number, position: "agree" | "disagree" | "neither", minute = 1) => {
-  const res = await setStance(db, userId, { questionId, position, expectedVersion: 0 }, { now: t(minute) });
+  const res = await setCurrentStance(db, userId, { questionId, position, expectedVersion: 0 }, { now: t(minute) });
   if (!res.ok) throw new Error(`stance failed: ${res.error}`);
 };
 const member = async (db: Db, userId: string) => ({ userId, profile: (await getProfile(db, userId))! });
@@ -365,7 +365,7 @@ describe("through every path of the application (the route harness)", () => {
     return res.id;
   };
   const choose = async (as: string, q: number, position: "agree" | "disagree" | "neither") => {
-    const res = await setStance(h.db, h.ids[as], { questionId: q, position, expectedVersion: 0 }, { now: BASE_DATE(1) });
+    const res = await setCurrentStance(h.db, h.ids[as], { questionId: q, position, expectedVersion: 0 }, { now: BASE_DATE(1) });
     if (!res.ok) throw new Error(`stance failed: ${res.error}`);
   };
   type Item = { id: number; stance?: { position: string | null; version: number }; distribution?: { total: number; langs: number } | null };

@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { entries, handleHolds, profiles } from "~/lib/db/schema";
 import { createReply, createTopic } from "~/lib/entries.server";
 import { changeHandle } from "~/lib/profiles.server";
-import { setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import MemberPage, * as memberRoute from "~/routes/member-page";
 import TopicNew, { loader as newLoader, action as newAction } from "~/routes/topic-new";
 import { loader as topicLoader, action as topicAction } from "~/routes/topic";
@@ -113,7 +113,7 @@ describe("member-page read boundaries", () => {
 
   it("keeps the owner's complete member-page HTML identical before and after the owner chooses a stance", async () => {
     const before = await renderPage(await pageData("author_member"));
-    expect(await setStance(h.db, h.ids.author_member, { questionId: introOwnerQuestionId, position: "agree", expectedVersion: 0 })).toMatchObject({ ok: true });
+    expect(await setCurrentStance(h.db, h.ids.author_member, { questionId: introOwnerQuestionId, position: "agree", expectedVersion: 0 })).toMatchObject({ ok: true });
     expect(await renderPage(await pageData("author_member"))).toBe(before);
   });
 

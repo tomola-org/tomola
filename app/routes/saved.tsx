@@ -12,6 +12,7 @@ import { displayLangFor, langCarry, screenReadLangsFor } from "~/lib/display-lan
 import { parsePage } from "~/lib/params.server";
 import { getViewer } from "~/lib/roles.server";
 import { listSavedTopics } from "~/lib/saved-topics.server";
+import { readStanceMessage } from "~/lib/stance-ui";
 import { toTopicItems } from "~/lib/topic-list.server";
 import { m } from "~/paraglide/messages.js";
 
@@ -31,7 +32,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     params.set("page", String(page - 1));
     throw redirect(`/saved?${params}`, { headers: HEADERS });
   }
-  return data({ list: result.list!, page, hasNext: result.hasNext, langParam: langCarry(request), topics: await toTopicItems(db, result.topics, {
+  return data({ list: result.list!, page, hasNext: result.hasNext, langParam: langCarry(request), stanceMessage: readStanceMessage(new URL(request.url)), topics: await toTopicItems(db, result.topics, {
     readLangs: screenReadLangsFor(request, profile), displayLang: displayLangFor(request, profile),
     viewer: { userId: user.id, profile },
   }) }, { headers: HEADERS });
@@ -55,7 +56,7 @@ export default function Saved({ loaderData }: Route.ComponentProps) {
     if (row) removal.current = { row, next: row.nextElementSibling, previous: row.previousElementSibling };
   }}>
     <PageHeader title={m.saved_title()} />
-    <ReadingList topics={loaderData.topics} list={loaderData.list}>{items => <TopicList compactMeta topics={items} langParam={loaderData.langParam} empty={m.saved_empty()}
+    <ReadingList topics={loaderData.topics} list={loaderData.list}>{items => <TopicList compactMeta topics={items} langParam={loaderData.langParam} empty={m.saved_empty()} stanceMessage={loaderData.stanceMessage}
       actions={topic => <SaveButton topicId={topic.id} saved returnTo={`${location.pathname}${location.search}`} />} />}</ReadingList>
   </main>;
 }

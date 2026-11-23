@@ -9,7 +9,7 @@ import { EMBED_JOB } from "~/lib/embeddings.server";
 import { deleteEntry, fixEntry, hideEntry, listPublicLog, type Actor } from "~/lib/moderation.server";
 import { listNotifications } from "~/lib/notifications.server";
 import { getViewer, grantModerator } from "~/lib/roles.server";
-import { setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { TRANSLATE_JOB } from "~/lib/translations.server";
 import { renderInRouter } from "./helpers/render-in-router";
 import { createMarkdownExecutor, setMarkdownExecutorForTests, withMarkdownScope } from "~/lib/markdown-budget.server";
@@ -54,7 +54,7 @@ afterAll(() => h.restore());
 async function lockedQuestion(over: { title?: string; body?: string; altOf?: number | null } = {}) {
   const res = await createTopic(h.db, author, { lang: "ja", title: over.title ?? `共生は制御の代理になりうる${++seq}`, body: over.body ?? "ここでの共生とは、にらみ合いのない状態を指す。二文目です。", asksStance: true, altOf: over.altOf ?? null }, { now: t(0) });
   if (!res.ok) throw new Error(`question failed: ${res.error}`);
-  const stance = await setStance(h.db, bob, { questionId: res.id, position: "agree", expectedVersion: 0 }, { now: t(1) });
+  const stance = await setCurrentStance(h.db, bob, { questionId: res.id, position: "agree", expectedVersion: 0 }, { now: t(1) });
   if (!stance.ok) throw new Error(`stance failed: ${stance.error}`);
   return res.id;
 }
@@ -263,7 +263,7 @@ describe("the edit form of a fix", () => {
       await h.db.update(profiles).set({ displayName: "投稿先の持ち主", displayNameLatin: "Destination owner" }).where(eq(profiles.userId, owner));
       const topic = await createTopic(h.db, owner, { title: "A question to correct", body: "Owned writing.", lang: "ja", asksStance: true });
       if (!topic.ok) throw new Error(topic.error);
-      expect(await setStance(h.db, bob, { questionId: topic.id, position: "agree", expectedVersion: 0 })).toMatchObject({ ok: true });
+      expect(await setCurrentStance(h.db, bob, { questionId: topic.id, position: "agree", expectedVersion: 0 })).toMatchObject({ ok: true });
       const { loaderData, html } = await drawn(topic.id, "jamod");
       expect(loaderData).toMatchObject({ fix: true, destination: "Destination owner" });
       expect(html.indexOf('data-village-target')).toBeLessThan(html.indexOf('name="title"'));

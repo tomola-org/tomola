@@ -17,9 +17,10 @@ import { m } from "~/paraglide/messages.js";
 //
 // Hide the distribution until a stance is chosen or the "先に結果を見る" link opens a loader-provided distribution. Only then show the three counts and number of languages that answered.
 // Do not provide per-language breakdowns or language-composition views.
-// Without JavaScript, an ordinary form submission makes /stance redirect to returnTo, with a message for conflicts or rate-limit violations.
+// Without JavaScript, an ordinary form submission makes /stance redirect to returnTo, with a message for a refused submission.
 export type StancePanelProps = {
   questionId: number;
+  questionSourceHash: string | null;
   stance: { position: Position | null; version: number };
   distribution: DistributionView | null;
   peekHref: string;
@@ -41,7 +42,7 @@ const LABELS: Record<Position, () => string> = {
   neither: () => m.stance_neither(),
 };
 
-export function StancePanel({ questionId, stance, distribution, peekHref, triggerEntryId, compact = false, message = null, resumeChoice = null, returnTo, canChoose }: StancePanelProps) {
+export function StancePanel({ questionId, questionSourceHash, stance, distribution, peekHref, triggerEntryId, compact = false, message = null, resumeChoice = null, returnTo, canChoose }: StancePanelProps) {
   const fetcher = useFetcher<StanceResponse>({ key: `stance-${questionId}` });
   const submit = useSubmit();
   const { state: navigationState } = useNavigation();
@@ -91,7 +92,7 @@ export function StancePanel({ questionId, stance, distribution, peekHref, trigge
   }, [oneLine, version, fetcher.state]);
   const failure = data && !data.ok ? data.error : null;
   // Once this member has submitted, show that response only; a previous ?stance_msg= result is obsolete.
-  const notice = data ? (failure === "conflict" || failure === "rate_limited" ? failure : failure !== null && failure !== "consent_required" ? "error" : null) : message;
+  const notice = data ? (failure === "question_changed" || failure === "conflict" || failure === "rate_limited" ? failure : failure !== null && failure !== "consent_required" ? "error" : null) : message;
 
   const form = (
     <fetcher.Form method="post" action="/stance" className="space-y-2" onSubmit={event => {
@@ -101,6 +102,7 @@ export function StancePanel({ questionId, stance, distribution, peekHref, trigge
       withdrawing.current = (event.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "none";
     }}>
       <input type="hidden" name="questionId" value={questionId} />
+      <input type="hidden" name="questionSourceHash" value={questionSourceHash ?? ""} />
       <input type="hidden" name="version" value={version} />
       {triggerEntryId != null && <input type="hidden" name="trigger" value={triggerEntryId} />}
       <input type="hidden" name="returnTo" value={returnTo} />
@@ -118,10 +120,20 @@ export function StancePanel({ questionId, stance, distribution, peekHref, trigge
       )}
     </fetcher.Form>
   );
-  const noticeLine = notice && (
-    <p role="status" className="ui-help text-notice-emphasis">
-      {notice === "conflict" ? m.stance_conflict() : notice === "rate_limited" ? m.stance_rate_limited() : m.stance_error()}
-    </p>
+  const noticeText = notice === "question_changed" ? m.stance_question_changed()
+    : notice === "conflict" ? m.stance_conflict()
+    : notice === "rate_limited" ? m.stance_rate_limited()
+    : notice === "error" ? m.stance_error()
+    : null;
+  const noticeLine = noticeText && (
+    <div className="flex flex-wrap items-baseline gap-x-2 ui-help text-notice-emphasis">
+      <p role="status">{noticeText}</p>
+      {failure === "question_changed" && (
+        <Button variant="link" type="button" className="h-auto px-0 ui-help" onClick={() => window.location.reload()}>
+          {m.offline_reload()}
+        </Button>
+      )}
+    </div>
   );
   const counts = shown && (
     <ul aria-label={m.stance_counts_label()} className="flex flex-wrap gap-x-3">

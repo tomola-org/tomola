@@ -1,10 +1,10 @@
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { entries, profiles, rateLimits, stanceChanges, stances } from "~/lib/db/schema";
-import { createReply, createTopic, softDeleteEntry } from "~/lib/entries.server";
+import { createReply, createTopic, editEntry, softDeleteEntry } from "~/lib/entries.server";
 import { MEMBER_RATE_LIMITS } from "~/lib/rate-limit.server";
 import { pickDistribution, readPeekParam, readStanceMessage, skipRevalidationFor, stanceReturnTo, peekHrefFor, type DistributionView } from "~/lib/stance-ui";
-import { setStance } from "~/lib/stances.server";
+import { readQuestionSourceHash, setCurrentStance } from "./helpers/stances";
 import { setVote } from "~/lib/votes.server";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
 
@@ -28,10 +28,12 @@ const question = async (title = "経路の問い") => {
   if (!res.ok) throw new Error("question failed");
   return res.id;
 };
-const send = async (as: string | undefined, form: Record<string, string>, opts: { headers?: Record<string, string> } = {}) => {
+const submitStance = async (as: string | undefined, form: Record<string, string>, opts: { headers?: Record<string, string> } = {}) => {
   const mod = await import("~/routes/stance");
   return h.outcome(() => mod.action(h.args(h.request("/stance", { as, form, headers: { ...FETCH, ...opts.headers } }))));
 };
+const send = async (as: string | undefined, form: Record<string, string>, opts?: { headers?: Record<string, string> }) =>
+  submitStance(as, { questionSourceHash: await readQuestionSourceHash(h.db, Number(form.questionId) || 0) ?? "", ...form }, opts);
 const body = (r: { value?: unknown }) => (r.value as { data: Record<string, unknown> }).data;
 const rowsOf = (userId: string, q: number) => h.db.select().from(stances).where(and(eq(stances.userId, userId), eq(stances.questionId, q)));
 
@@ -160,6 +162,37 @@ describe("POST /stance (a plain form, without JavaScript)", () => {
   });
 });
 
+describe("POST /stance question version notices", () => {
+  it("returns a 409 for fetchers and a notice with the current question on document navigation", async () => {
+    await h.signIn("version_reader");
+    const q = await question();
+    const questionSourceHash = await readQuestionSourceHash(h.db, q) ?? "";
+    const back = `/t/${q}?lang=ja#stance`;
+    const fields = { questionId: String(q), position: "agree", version: "0", returnTo: back };
+    expect(await editEntry(h.db, h.ids.hana, q, { title: "改訂した問い", body: "改訂した命題です。" }, { kind: "topic" })).toMatchObject({ ok: true, changed: true });
+
+    for (const form of [fields, { ...fields, questionSourceHash }, { ...fields, questionSourceHash: "invalid" }]) {
+      const result = await submitStance("version_reader", form);
+      expect(result.status).toBe(409);
+      expect(body(result)).toEqual({ ok: false, error: "question_changed" });
+    }
+    const stale = await submitStance("version_reader", { ...fields, questionSourceHash }, { headers: NAVIGATE });
+    expect(stale).toMatchObject({ status: 302, location: `/t/${q}?lang=ja&stance_msg=question_changed&stance_q=${q}#stance` });
+    expect(await rowsOf(h.ids.version_reader, q)).toEqual([]);
+    const topic = await import("~/routes/topic");
+    const currentHash = await readQuestionSourceHash(h.db, q);
+    expect(currentHash).not.toEqual(questionSourceHash);
+    const result = await topic.loader(h.args(h.request(stale.location!, { as: "version_reader" }), { id: String(q) }));
+    expect(result).toMatchObject({
+      topic: { title: "改訂した問い" },
+      question: { stance: { message: "question_changed", questionSourceHash: currentHash, stance: { position: null } } },
+    });
+    expect(await submitStance("version_reader", { ...fields, questionSourceHash: currentHash! })).toMatchObject({ status: 200 });
+    expect(await submitStance("version_reader", { ...fields, position: "none", version: "1" })).toMatchObject({ status: 200 });
+    expect(await rowsOf(h.ids.version_reader, q)).toEqual([]);
+  });
+});
+
 describe("the helpers of the screens", () => {
   it("read ?peek=, ?stance_msg= and decide which submissions do not reload the page", () => {
     expect(readPeekParam(new URL("http://x/latest?peek=12"))).toBe(12);
@@ -223,10 +256,10 @@ describe("/settings/stances", () => {
     const q = await question("履歴の問い");
     const reply = await createReply(h.db, h.ids.bob, q, { lang: "en", body: "A point." }, { now: t(1) });
     if (!reply.ok) throw new Error("reply failed");
-    await setStance(h.db, h.ids.ann, { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(2) });
+    await setCurrentStance(h.db, h.ids.ann, { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(2) });
     await setVote(h.db, h.ids.ann, reply.id, true, { now: t(3) });
-    await setStance(h.db, h.ids.ann, { questionId: q, position: "disagree", expectedVersion: 1, triggerEntryId: reply.id }, { now: t(4) });
-    await setStance(h.db, h.ids.bob, { questionId: q, position: "neither", expectedVersion: 0 }, { now: t(5) });
+    await setCurrentStance(h.db, h.ids.ann, { questionId: q, position: "disagree", expectedVersion: 1, triggerEntryId: reply.id }, { now: t(4) });
+    await setCurrentStance(h.db, h.ids.bob, { questionId: q, position: "neither", expectedVersion: 0 }, { now: t(5) });
     const mine = (await load("ann")).records.find((r) => r.questionId === q);
     expect(mine).toMatchObject({ position: "disagree" });
     expect(mine?.changes.map((c) => [c.from, c.to])).toEqual([[null, "agree"], ["agree", "disagree"]]);
@@ -243,8 +276,8 @@ describe("/settings/stances", () => {
   it("deletes the record of one question with a confirmation, takes the member out of the distribution at once, and a suspended member can delete too", async () => {
     const q = await question("消す記録の問い");
     const other = await question("残す記録の問い");
-    await setStance(h.db, h.ids.ann, { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(2) });
-    await setStance(h.db, h.ids.ann, { questionId: other, position: "agree", expectedVersion: 0 }, { now: t(2) });
+    await setCurrentStance(h.db, h.ids.ann, { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(2) });
+    await setCurrentStance(h.db, h.ids.ann, { questionId: other, position: "agree", expectedVersion: 0 }, { now: t(2) });
     // Do not delete without confirmation.
     const noConfirm = await post("ann", { intent: "delete", questionId: String(q) });
     expect(noConfirm.status).toBe(400);

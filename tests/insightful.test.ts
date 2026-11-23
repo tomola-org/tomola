@@ -3,7 +3,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { entries, stanceChanges } from "~/lib/db/schema";
 import { llmsTxt, helpAiMd } from "~/lib/api/guides.server";
 import { createReply, createTopic } from "~/lib/entries.server";
-import { loadReviewTrigger, setStance } from "~/lib/stances.server";
+import { loadReviewTrigger } from "~/lib/stances.server";
+import { readQuestionSourceHash, setCurrentStance } from "./helpers/stances";
 import { setVote } from "~/lib/votes.server";
 import { getMd, parseThreadBlocks } from "./helpers/md";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
@@ -51,9 +52,9 @@ describe("Insightful on the question page, in the Markdown twins and in the guid
     if (!alien.ok) throw new Error("reply failed");
     alienPost = alien.id;
     // john holds a stance on the question; lena holds none; ken chose one and withdrew it.
-    expect((await setStance(h.db, h.ids.john, { questionId: q, position: "agree", expectedVersion: 0 })).ok).toBe(true);
-    expect((await setStance(h.db, h.ids.ken, { questionId: q, position: "neither", expectedVersion: 0 })).ok).toBe(true);
-    expect((await setStance(h.db, h.ids.ken, { questionId: q, position: null, expectedVersion: 1 })).ok).toBe(true);
+    expect((await setCurrentStance(h.db, h.ids.john, { questionId: q, position: "agree", expectedVersion: 0 })).ok).toBe(true);
+    expect((await setCurrentStance(h.db, h.ids.ken, { questionId: q, position: "neither", expectedVersion: 0 })).ok).toBe(true);
+    expect((await setCurrentStance(h.db, h.ids.ken, { questionId: q, position: null, expectedVersion: 1 })).ok).toBe(true);
     // everyone presses Insightful on the first reply and the question; john also on a reply of another question and on a plain topic's post
     for (const who of ["john", "lena", "ken"]) {
       await setVote(h.db, h.ids[who], q, true);
@@ -131,7 +132,7 @@ describe("Insightful on the question page, in the Markdown twins and in the guid
 
   it("records the post as the trigger when the stance is changed from the link (and the author's area of that post), and records no trigger for a post the member did not press", async () => {
     const send = async (as: string, form: Record<string, string>) =>
-      (await import("~/routes/stance")).action(h.args(h.request("/stance", { as, form: { questionId: String(q), ...form }, headers: { "sec-fetch-dest": "empty" } }))) as Awaited<Promise<unknown>>;
+      (await import("~/routes/stance")).action(h.args(h.request("/stance", { as, form: { questionId: String(q), questionSourceHash: await readQuestionSourceHash(h.db, q) ?? "", ...form }, headers: { "sec-fetch-dest": "empty" } }))) as Awaited<Promise<unknown>>;
     // john changes agree -> disagree from the reply of somchai (Thai): the trigger and the trigger area are recorded
     await send("john", { position: "disagree", version: "1", trigger: String(reply) });
     const rows = await h.db.select().from(stanceChanges).where(eq(stanceChanges.userId, h.ids.john)).orderBy(stanceChanges.id);
@@ -181,7 +182,7 @@ describe("Insightful on the question page, in the Markdown twins and in the guid
 
   describe("a trigger is used once (the URL keeps ?review= after the change)", () => {
     const send = async (as: string, form: Record<string, string>, headers: Record<string, string> = { "sec-fetch-dest": "empty" }) =>
-      (await import("~/routes/stance")).action(h.args(h.request("/stance", { as, form: { questionId: String(q), ...form }, headers }))) as Awaited<Promise<unknown>>;
+      (await import("~/routes/stance")).action(h.args(h.request("/stance", { as, form: { questionId: String(q), questionSourceHash: await readQuestionSourceHash(h.db, q) ?? "", ...form }, headers }))) as Awaited<Promise<unknown>>;
     const changesOf = async (userId: string) =>
       (await h.db.select().from(stanceChanges).where(eq(stanceChanges.userId, userId)).orderBy(stanceChanges.id)).map((r) => [r.fromPosition, r.toPosition, r.triggerEntryId, r.triggerArea]);
 
@@ -189,7 +190,7 @@ describe("Insightful on the question page, in the Markdown twins and in the guid
       await h.signIn("mika", { homeArea: "en", readLangs: ["en", "ja"] });
       await setVote(h.db, h.ids.mika, reply, true);
       await setVote(h.db, h.ids.mika, q, true);
-      expect((await setStance(h.db, h.ids.mika, { questionId: q, position: "agree", expectedVersion: 0 })).ok).toBe(true);
+      expect((await setCurrentStance(h.db, h.ids.mika, { questionId: q, position: "agree", expectedVersion: 0 })).ok).toBe(true);
       // offered while it has not been used
       expect((await page("mika", q, `?review=${reply}`)).question.stance?.triggerEntryId).toBe(reply);
       await send("mika", { position: "disagree", version: "1", trigger: String(reply) });
@@ -220,9 +221,9 @@ describe("Insightful on the question page, in the Markdown twins and in the guid
 
     it("applies the same rule when setStance is called directly (a hand-made form cannot reuse a post either), and one member's use does not use it up for another", async () => {
       // mika used both posts above; lena pressed both and holds no stance yet (a use by one member does not use the post up for another)
-      expect((await setStance(h.db, h.ids.lena, { questionId: q, position: "agree", expectedVersion: 0, triggerEntryId: reply })).ok).toBe(true);
-      expect((await setStance(h.db, h.ids.lena, { questionId: q, position: "disagree", expectedVersion: 1, triggerEntryId: reply })).ok).toBe(true);
-      expect((await setStance(h.db, h.ids.lena, { questionId: q, position: "neither", expectedVersion: 2, triggerEntryId: q })).ok).toBe(true);
+      expect((await setCurrentStance(h.db, h.ids.lena, { questionId: q, position: "agree", expectedVersion: 0, triggerEntryId: reply })).ok).toBe(true);
+      expect((await setCurrentStance(h.db, h.ids.lena, { questionId: q, position: "disagree", expectedVersion: 1, triggerEntryId: reply })).ok).toBe(true);
+      expect((await setCurrentStance(h.db, h.ids.lena, { questionId: q, position: "neither", expectedVersion: 2, triggerEntryId: q })).ok).toBe(true);
       expect(await changesOf(h.ids.lena)).toEqual([
         [null, "agree", reply, "th"],
         ["agree", "disagree", null, null],
@@ -238,7 +239,7 @@ describe("Insightful on the question page, in the Markdown twins and in the guid
       // the browser is sent to that address after the change
       await h.signIn("noor", { homeArea: "en", readLangs: ["en", "ja"] });
       await setVote(h.db, h.ids.noor, reply, true);
-      expect((await setStance(h.db, h.ids.noor, { questionId: q, position: "agree", expectedVersion: 0 })).ok).toBe(true);
+      expect((await setCurrentStance(h.db, h.ids.noor, { questionId: q, position: "agree", expectedVersion: 0 })).ok).toBe(true);
       const result = (await send("noor", { position: "disagree", version: "1", trigger: String(reply), returnTo: back }, { "sec-fetch-dest": "document" }).catch((thrown: unknown) => thrown)) as Response;
       expect(result.status).toBe(302);
       expect(result.headers.get("location")).toBe(`/t/${q}?lang=en#stance`);

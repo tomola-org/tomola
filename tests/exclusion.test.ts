@@ -20,7 +20,7 @@ import { listNotifications } from "~/lib/notifications.server";
 import { listObjections, loadObjectionPanel } from "~/lib/objections.server";
 import { searchMembers } from "~/lib/roles.server";
 import { loadReasonCandidates, loadReasonsPanel } from "~/lib/reasons.server";
-import { setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { loadReactions, setVote } from "~/lib/votes.server";
 import { addMember, createTestDb } from "./helpers/db";
 
@@ -43,7 +43,7 @@ async function world() {
   return { db, q: q.id };
 }
 const choose = async (db: Awaited<ReturnType<typeof world>>["db"], userId: string, q: number, position: "agree" | "disagree" | "neither", minute = 1) => {
-  const res = await setStance(db, userId, { questionId: q, position, expectedVersion: 0 }, { now: t(minute) });
+  const res = await setCurrentStance(db, userId, { questionId: q, position, expectedVersion: 0 }, { now: t(minute) });
   if (!res.ok) throw new Error(`stance failed: ${res.error}`);
 };
 const profileOf = async (db: Awaited<ReturnType<typeof world>>["db"], id: string) => (await db.select().from(profiles).where(eq(profiles.userId, id)))[0];
@@ -275,9 +275,9 @@ describe("the operator metrics and the observation export", () => {
     // ann (ja) and bob (en) press Insightful on the reply of the author (ja); ann chooses agree, bob chooses disagree and then changes to neither, prompted by the reply
     expect((await setVote(db, "ann", reply.id, true, { now: t(5) })).ok).toBe(true);
     expect((await setVote(db, "bob", reply.id, true, { now: t(6) })).ok).toBe(true);
-    expect((await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(10) })).ok).toBe(true);
-    expect((await setStance(db, "bob", { questionId: q, position: "disagree", expectedVersion: 0 }, { now: t(11) })).ok).toBe(true);
-    expect((await setStance(db, "bob", { questionId: q, position: "neither", expectedVersion: 1, triggerEntryId: reply.id }, { now: t(12) })).ok).toBe(true);
+    expect((await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(10) })).ok).toBe(true);
+    expect((await setCurrentStance(db, "bob", { questionId: q, position: "disagree", expectedVersion: 0 }, { now: t(11) })).ok).toBe(true);
+    expect((await setCurrentStance(db, "bob", { questionId: q, position: "neither", expectedVersion: 1, triggerEntryId: reply.id }, { now: t(12) })).ok).toBe(true);
     await db.update(profiles).set({ createdAt: new Date("2026-08-17T06:00:00Z") }).where(eq(profiles.userId, "bob"));
 
     const snapshot = async () => {

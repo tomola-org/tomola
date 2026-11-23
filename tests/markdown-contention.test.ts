@@ -13,7 +13,7 @@ import { createDraft, getDraft } from "~/lib/drafts.server";
 import { resolveSourceMentions } from "~/lib/mentions.server";
 import { plainExcerpt } from "~/lib/plain-text.server";
 import { fixEntry } from "~/lib/moderation.server";
-import { setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { createAppeal, decideAppeal } from "~/lib/appeals.server";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -178,7 +178,7 @@ it("an appeal rolls back rather than saving lost references after a transient fa
   const original = `Original @reader [discussion](/t/${other.id}).`;
   const question = await createTopic(h.db, h.ids.writer, { lang: "en", title: "Question", body: original, asksStance: true });
   if (!question.ok) throw new Error("question failed");
-  expect((await setStance(h.db, h.ids.reader, { questionId: question.id, position: "agree", expectedVersion: 0 })).ok).toBe(true);
+  expect((await setCurrentStance(h.db, h.ids.reader, { questionId: question.id, position: "agree", expectedVersion: 0 })).ok).toBe(true);
   const beforeFix = (await getThread(h.db, question.id))!.topic;
   const fixed = await fixEntry(h.db, { id: h.ids.opal, scope: { operator: true, langs: [] } }, { entryId: question.id, sourceHash: beforeFix.sourceHash!, title: "Corrected", body: `Corrected @reader [discussion](/t/${other.id}).`, note: "Correction" });
   if (!fixed.ok) throw new Error("fix failed");

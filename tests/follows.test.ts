@@ -9,7 +9,7 @@ import { autoFollow, followerIds, getFollowState, markFollowedThreadRead, setFol
 import { hideEntry } from "~/lib/moderation.server";
 import { enqueueImmediateEmails, listNotifications, notifyForNewEntry, planNewEntryNotifications } from "~/lib/notifications.server";
 import { MEMBER_RATE_LIMITS } from "~/lib/rate-limit.server";
-import { setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { createApiToken } from "~/lib/tokens.server";
 import { setVote } from "~/lib/votes.server";
 import { addMember, createTestDb } from "./helpers/db";
@@ -102,7 +102,7 @@ describe("the automatic follow", () => {
     const { db } = await setup();
     const q = await createTopic(db, "alice", { lang: "ja", title: "問い", body: "本文", asksStance: true });
     if (!q.ok) throw new Error("question failed");
-    expect(await setStance(db, "bob", { questionId: q.id, position: "agree", expectedVersion: 0, triggerEntryId: null })).toMatchObject({ ok: true });
+    expect(await setCurrentStance(db, "bob", { questionId: q.id, position: "agree", expectedVersion: 0, triggerEntryId: null })).toMatchObject({ ok: true });
     expect(await setVote(db, "bob", q.id, true)).toMatchObject({ ok: true });
     expect(await stateOf(db, "bob", q.id)).toBeNull();
     // A topic that exists with no follows row (made before the feature) stays that way

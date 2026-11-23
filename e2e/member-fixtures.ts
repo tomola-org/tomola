@@ -194,6 +194,8 @@ export const MEMBER_FIXTURES: readonly SeedMember[] = [
   {"email": "opal@example.com", "handle": "opal", "homeArea": "en", "uiLocale": "en"},
   {"email": "rina@example.com", "handle": "rina", "homeArea": "ja", "uiLocale": "en"},
   {"email": "stance-ben@example.com", "handle": "stance_ben", "homeArea": "en", "uiLocale": "en", "readLangs": ["en", "ja"]},
+  { email: "stance_version_author@example.com", handle: "stance_version_author", homeArea: "en", uiLocale: "en" },
+  { email: "stance_version_reader@example.com", handle: "stance_version_reader", homeArea: "en", uiLocale: "en" },
   {"email": "earlywriter@example.com", "handle": "earlywriter", "homeArea": "en", "uiLocale": "en"},
   {"email": "mcp@example.com", "handle": "mcp_member", "homeArea": "en", "uiLocale": "en"},
   {"email": "mobile@example.com", "handle": "mobile_ui", "homeArea": "ja", "uiLocale": "en"},

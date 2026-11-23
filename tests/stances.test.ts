@@ -3,13 +3,14 @@ import { describe, expect, it } from "vitest";
 import type { Db } from "~/lib/db/client.server";
 import { entries, profiles, rateLimits, stanceChanges, stances } from "~/lib/db/schema";
 import { readDistributions } from "~/lib/distribution.server";
-import { createReply, createTopic, getEditableEntry, softDeleteEntry } from "~/lib/entries.server";
+import { createReply, createTopic, editEntry, getEditableEntry, softDeleteEntry } from "~/lib/entries.server";
 import { hideEntry, unhideEntry, type Actor } from "~/lib/moderation.server";
 import { changeHomeArea } from "~/lib/profiles.server";
 import { addressHasher } from "~/lib/auth/magic-link.server";
 import { authSecret } from "~/lib/auth/secret.server";
 import { hitMemberLimit, hitStanceQuestionLimit, MEMBER_RATE_LIMITS, STANCE_PER_QUESTION_LIMIT, stanceQuestionLimitKey } from "~/lib/rate-limit.server";
 import { deleteAllStanceRecords, deleteStanceRecord, listOwnStanceRecords, loadOwnStances, rewriteStanceAreas, setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { setVote } from "~/lib/votes.server";
 import { addMember, createTestDb } from "./helpers/db";
 
@@ -47,9 +48,9 @@ const questionRow = async (db: Db, id: number) => (await db.select().from(entrie
 describe("setStance: one tap, with a history that is never overwritten", () => {
   it("registers, changes and withdraws a stance, and appends one change per move", async () => {
     const { db, q } = await world();
-    expect(await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) })).toEqual({ ok: true, changed: true, position: "agree", version: 1 });
-    expect(await setStance(db, "ann", { questionId: q, position: "disagree", expectedVersion: 1 }, { now: t(2) })).toEqual({ ok: true, changed: true, position: "disagree", version: 2 });
-    expect(await setStance(db, "ann", { questionId: q, position: null, expectedVersion: 2 }, { now: t(3) })).toEqual({ ok: true, changed: true, position: null, version: 3 });
+    expect(await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) })).toEqual({ ok: true, changed: true, position: "agree", version: 1 });
+    expect(await setCurrentStance(db, "ann", { questionId: q, position: "disagree", expectedVersion: 1 }, { now: t(2) })).toEqual({ ok: true, changed: true, position: "disagree", version: 2 });
+    expect(await setCurrentStance(db, "ann", { questionId: q, position: null, expectedVersion: 2 }, { now: t(3) })).toEqual({ ok: true, changed: true, position: null, version: 3 });
     // Withdrawal deletes the current stance row and records a history change with to=null.
     expect(await stanceRows(db, "ann")).toEqual([]);
     expect((await changeRows(db, "ann")).map((c) => [c.fromPosition, c.toPosition, c.area, c.createdAt.toISOString()])).toEqual([
@@ -58,7 +59,7 @@ describe("setStance: one tap, with a history that is never overwritten", () => {
       ["disagree", null, "ja", t(3).toISOString()],
     ]);
     // Reselecting after withdrawal continues version numbering rather than resetting it.
-    expect(await setStance(db, "ann", { questionId: q, position: "neither", expectedVersion: 3 }, { now: t(4) })).toEqual({ ok: true, changed: true, position: "neither", version: 4 });
+    expect(await setCurrentStance(db, "ann", { questionId: q, position: "neither", expectedVersion: 3 }, { now: t(4) })).toEqual({ ok: true, changed: true, position: "neither", version: 4 });
     expect(await stanceRows(db, "ann")).toMatchObject([{ questionId: q, userId: "ann", position: "neither", area: "ja", version: 4 }]);
     expect(await changeRows(db, "ann")).toHaveLength(4);
     expect(await loadOwnStances(db, "ann", [q])).toEqual(new Map([[q, { position: "neither", version: 4 }]]));
@@ -66,31 +67,31 @@ describe("setStance: one tap, with a history that is never overwritten", () => {
 
   it("does not record a resend of the same value, and a double tap shows no conflict", async () => {
     const { db, q } = await world();
-    await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) });
     // Resubmitting the same value records nothing and is not a conflict even with an old version, covering double clicks.
-    expect(await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(2) })).toEqual({ ok: true, changed: false, position: "agree", version: 1 });
+    expect(await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(2) })).toEqual({ ok: true, changed: false, position: "agree", version: 1 });
     expect(await changeRows(db, "ann")).toHaveLength(1);
     expect((await stanceRows(db, "ann"))[0].updatedAt.toISOString()).toBe(t(1).toISOString());
     // Withdrawal with no current selection is also a no-op.
-    expect(await setStance(db, "bob", { questionId: q, position: null, expectedVersion: 0 })).toEqual({ ok: true, changed: false, position: null, version: 0 });
+    expect(await setCurrentStance(db, "bob", { questionId: q, position: null, expectedVersion: 0 })).toEqual({ ok: true, changed: false, position: null, version: 0 });
     expect(await changeRows(db, "bob")).toEqual([]);
   });
 
   it("detects a stale screen: the current stance and version come back, and nothing is written", async () => {
     const { db, q } = await world();
-    await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) });
-    await setStance(db, "ann", { questionId: q, position: "disagree", expectedVersion: 1 }, { now: t(2) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "disagree", expectedVersion: 1 }, { now: t(2) });
     // Submit from an old version-1 page after another tab advances to version 2.
-    expect(await setStance(db, "ann", { questionId: q, position: "neither", expectedVersion: 1 }, { now: t(3) })).toEqual({ ok: false, error: "conflict", position: "disagree", version: 2 });
+    expect(await setCurrentStance(db, "ann", { questionId: q, position: "neither", expectedVersion: 1 }, { now: t(3) })).toEqual({ ok: false, error: "conflict", position: "disagree", version: 2 });
     expect(await changeRows(db, "ann")).toHaveLength(2);
     // After withdrawal and reselection, a pre-withdrawal page still has a mismatched version and is detected. Versions count history rows, so they never go backward.
-    await setStance(db, "ann", { questionId: q, position: null, expectedVersion: 2 }, { now: t(4) });
-    await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 3 }, { now: t(5) });
-    expect(await setStance(db, "ann", { questionId: q, position: "neither", expectedVersion: 1 }, { now: t(6) })).toEqual({ ok: false, error: "conflict", position: "agree", version: 4 });
+    await setCurrentStance(db, "ann", { questionId: q, position: null, expectedVersion: 2 }, { now: t(4) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 3 }, { now: t(5) });
+    expect(await setCurrentStance(db, "ann", { questionId: q, position: "neither", expectedVersion: 1 }, { now: t(6) })).toEqual({ ok: false, error: "conflict", position: "agree", version: 4 });
     // While withdrawn, a non-withdrawal submission from a stale page returns the current version, the count at withdrawal.
-    await setStance(db, "bob", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(7) });
-    await setStance(db, "bob", { questionId: q, position: null, expectedVersion: 1 }, { now: t(8) });
-    expect(await setStance(db, "bob", { questionId: q, position: "disagree", expectedVersion: 1 }, { now: t(9) })).toEqual({ ok: false, error: "conflict", position: null, version: 2 });
+    await setCurrentStance(db, "bob", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(7) });
+    await setCurrentStance(db, "bob", { questionId: q, position: null, expectedVersion: 1 }, { now: t(8) });
+    expect(await setCurrentStance(db, "bob", { questionId: q, position: "disagree", expectedVersion: 1 }, { now: t(9) })).toEqual({ ok: false, error: "conflict", position: null, version: 2 });
   });
 
   it("answers not_found, not_a_question, hidden and no_profile; a hidden question can be withdrawn from but not chosen", async () => {
@@ -99,50 +100,50 @@ describe("setStance: one tap, with a history that is never overwritten", () => {
     if (!plain.ok) throw new Error("topic failed");
     const reply = await createReply(db, "bob", q, { lang: "en", body: "reply" });
     if (!reply.ok) throw new Error("reply failed");
-    expect(await setStance(db, "ann", { questionId: 999_999, position: "agree", expectedVersion: 0 })).toEqual({ ok: false, error: "not_found" });
-    expect(await setStance(db, "ann", { questionId: plain.id, position: "agree", expectedVersion: 0 })).toEqual({ ok: false, error: "not_a_question" });
-    expect(await setStance(db, "ann", { questionId: reply.id, position: "agree", expectedVersion: 0 })).toEqual({ ok: false, error: "not_a_question" });
-    expect(await setStance(db, "nobody", { questionId: q, position: "agree", expectedVersion: 0 })).toEqual({ ok: false, error: "no_profile" });
+    expect(await setCurrentStance(db, "ann", { questionId: 999_999, position: "agree", expectedVersion: 0 })).toEqual({ ok: false, error: "not_found" });
+    expect(await setCurrentStance(db, "ann", { questionId: plain.id, position: "agree", expectedVersion: 0 })).toEqual({ ok: false, error: "not_a_question" });
+    expect(await setCurrentStance(db, "ann", { questionId: reply.id, position: "agree", expectedVersion: 0 })).toEqual({ ok: false, error: "not_a_question" });
+    expect(await setCurrentStance(db, "nobody", { questionId: q, position: "agree", expectedVersion: 0 })).toEqual({ ok: false, error: "no_profile" });
     expect(await stanceRows(db)).toEqual([]);
     // A hidden question permits withdrawal but not registration or changes.
-    await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) });
     expect((await hideEntry(db, OP, { entryId: q, reason: "spam", note: "hidden" }, { now: t(2) })).ok).toBe(true);
-    expect(await setStance(db, "bob", { questionId: q, position: "agree", expectedVersion: 0 })).toEqual({ ok: false, error: "hidden" });
-    expect(await setStance(db, "ann", { questionId: q, position: "disagree", expectedVersion: 1 })).toEqual({ ok: false, error: "hidden" });
-    expect(await setStance(db, "ann", { questionId: q, position: null, expectedVersion: 1 }, { now: t(3) })).toEqual({ ok: true, changed: true, position: null, version: 2 });
+    expect(await setCurrentStance(db, "bob", { questionId: q, position: "agree", expectedVersion: 0 })).toEqual({ ok: false, error: "hidden" });
+    expect(await setCurrentStance(db, "ann", { questionId: q, position: "disagree", expectedVersion: 1 })).toEqual({ ok: false, error: "hidden" });
+    expect(await setCurrentStance(db, "ann", { questionId: q, position: null, expectedVersion: 1 }, { now: t(3) })).toEqual({ ok: true, changed: true, position: null, version: 2 });
     // Unhiding permits selection again.
     expect((await unhideEntry(db, OP, { entryId: q, reason: "other" }, { now: t(4) })).ok).toBe(true);
-    expect((await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 2 })).ok).toBe(true);
+    expect((await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 2 })).ok).toBe(true);
     // A deleted question returns not_found.
     expect((await softDeleteEntry(db, q)).ok).toBe(true);
-    expect(await setStance(db, "bob", { questionId: q, position: "agree", expectedVersion: 0 })).toEqual({ ok: false, error: "not_found" });
+    expect(await setCurrentStance(db, "bob", { questionId: q, position: "agree", expectedVersion: 0 })).toEqual({ ok: false, error: "not_found" });
   });
 });
 
 describe("the lock: the first stance of a member other than the author", () => {
   it("is set by the first stance of someone else, and not by the author's own stance, change or withdrawal", async () => {
     const { db, q } = await world();
-    await setStance(db, "author", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) });
-    await setStance(db, "author", { questionId: q, position: "disagree", expectedVersion: 1 }, { now: t(2) });
-    await setStance(db, "author", { questionId: q, position: null, expectedVersion: 2 }, { now: t(3) });
+    await setCurrentStance(db, "author", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) });
+    await setCurrentStance(db, "author", { questionId: q, position: "disagree", expectedVersion: 1 }, { now: t(2) });
+    await setCurrentStance(db, "author", { questionId: q, position: null, expectedVersion: 2 }, { now: t(3) });
     expect((await questionRow(db, q)).stanceLockedAt).toBeNull();
     // The author can edit.
     expect((await getEditableEntry(db, "author", q, { kind: "topic" }))).toMatchObject({ ok: true, entry: { locked: false, mode: "author" } });
     // Even if the author selected first, the first non-author stance starts locking.
-    await setStance(db, "author", { questionId: q, position: "agree", expectedVersion: 3 }, { now: t(4) });
+    await setCurrentStance(db, "author", { questionId: q, position: "agree", expectedVersion: 3 }, { now: t(4) });
     expect((await questionRow(db, q)).stanceLockedAt).toBeNull();
-    await setStance(db, "ann", { questionId: q, position: "neither", expectedVersion: 0 }, { now: t(5) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "neither", expectedVersion: 0 }, { now: t(5) });
     expect((await questionRow(db, q)).stanceLockedAt?.toISOString()).toBe(t(5).toISOString());
     expect(await getEditableEntry(db, "author", q, { kind: "topic" })).toMatchObject({ ok: true, entry: { locked: true, mode: "author-locked" } });
     // The second and subsequent voters do not rewrite the timestamp.
-    await setStance(db, "bob", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(6) });
+    await setCurrentStance(db, "bob", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(6) });
     expect((await questionRow(db, q)).stanceLockedAt?.toISOString()).toBe(t(5).toISOString());
   });
 
   it("stays after the last stance of others is withdrawn or deleted, after a hide, a deletion and a restoration, and a member under exclusion also locks", async () => {
     const { db, q } = await world();
-    await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) });
-    await setStance(db, "ann", { questionId: q, position: null, expectedVersion: 1 }, { now: t(2) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) });
+    await setCurrentStance(db, "ann", { questionId: q, position: null, expectedVersion: 1 }, { now: t(2) });
     expect((await questionRow(db, q)).stanceLockedAt?.toISOString()).toBe(t(1).toISOString());
     await deleteStanceRecord(db, "ann", q);
     expect((await questionRow(db, q)).stanceLockedAt?.toISOString()).toBe(t(1).toISOString());
@@ -155,7 +156,7 @@ describe("the lock: the first stance of a member other than the author", () => {
     const fresh = await createTopic(db, "author", { lang: "ja", title: "もう一つの問い", body: "命題です。", asksStance: true });
     if (!fresh.ok) throw new Error("question failed");
     await db.update(profiles).set({ reactionsExcludedAt: t(5) }).where(eq(profiles.userId, "bob"));
-    await setStance(db, "bob", { questionId: fresh.id, position: "agree", expectedVersion: 0 }, { now: t(6) });
+    await setCurrentStance(db, "bob", { questionId: fresh.id, position: "agree", expectedVersion: 0 }, { now: t(6) });
     expect((await questionRow(db, fresh.id)).stanceLockedAt?.toISOString()).toBe(t(6).toISOString());
   });
 
@@ -169,15 +170,60 @@ describe("the lock: the first stance of a member other than the author", () => {
     };
     const before = await watched();
     // Initial stance, stance change, withdrawal, and adding/removing "なるほど".
-    await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(30) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(30) });
     expect(await watched()).toEqual(before);
-    await setStance(db, "ann", { questionId: q, position: "disagree", expectedVersion: 1 }, { now: t(31) });
-    await setStance(db, "ann", { questionId: q, position: null, expectedVersion: 2 }, { now: t(32) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "disagree", expectedVersion: 1 }, { now: t(31) });
+    await setCurrentStance(db, "ann", { questionId: q, position: null, expectedVersion: 2 }, { now: t(32) });
     await setVote(db, "ann", vote.id, true, { now: t(33) });
     await setVote(db, "ann", vote.id, false, { now: t(34) });
     await setVote(db, "ann", q, true, { now: t(35) });
     expect(await watched()).toEqual(before);
     expect((await questionRow(db, q)).stanceLockedAt).not.toBeNull();
+  });
+});
+
+describe("question source versions", () => {
+  it("records and locks the question only for a choice on the current version", async () => {
+    const { db, q } = await world();
+    const original = await questionRow(db, q);
+    expect(await editEntry(db, "author", q, { title: "問いの改訂", body: "命題を改訂しました。" }, { kind: "topic" })).toMatchObject({ ok: true, changed: true });
+    const current = await questionRow(db, q);
+    expect(current.sourceHash).not.toEqual(original.sourceHash);
+    const choice = { questionId: q, position: "agree", expectedVersion: 0 } as const;
+    for (const questionSourceHash of [original.sourceHash, null, "malformed"]) {
+      expect(await setStance(db, "ann", { ...choice, questionSourceHash })).toEqual({ ok: false, error: "question_changed" });
+    }
+    expect(await stanceRows(db, "ann")).toEqual([]);
+    expect(await changeRows(db, "ann")).toEqual([]);
+    expect((await questionRow(db, q)).stanceLockedAt).toBeNull();
+
+    expect(await setStance(db, "ann", { ...choice, questionSourceHash: current.sourceHash }, { now: t(5) })).toEqual({ ok: true, changed: true, position: "agree", version: 1 });
+    expect((await questionRow(db, q)).stanceLockedAt).toEqual(t(5));
+    expect(await stanceRows(db, "ann")).toMatchObject([{ position: "agree" }]);
+    expect(await changeRows(db, "ann")).toHaveLength(1);
+  });
+
+  it("prioritizes the source version for changes and keeps same-choice resubmissions idempotent", async () => {
+    const { db, q } = await world();
+    const { sourceHash: questionSourceHash } = await questionRow(db, q);
+    const choice = { questionId: q, position: "agree", expectedVersion: 0, questionSourceHash } as const;
+    expect(await setStance(db, "author", choice)).toMatchObject({ ok: true, changed: true });
+    expect(await editEntry(db, "author", q, { title: "問いの改訂", body: "命題を改訂しました。" }, { kind: "topic" })).toMatchObject({ ok: true, changed: true });
+    expect(await setStance(db, "author", { ...choice, position: "disagree" })).toEqual({ ok: false, error: "question_changed" });
+    expect(await setStance(db, "author", choice)).toEqual({ ok: true, changed: false, position: "agree", version: 1 });
+    expect(await stanceRows(db, "author")).toMatchObject([{ position: "agree", version: 1 }]);
+    expect(await changeRows(db, "author")).toHaveLength(1);
+  });
+
+  it.each(["earlier version", "missing version"])("allows withdrawal with the %s", async (submitted) => {
+    const { db, q } = await world();
+    const original = await questionRow(db, q);
+    expect(await editEntry(db, "author", q, { title: "問いの改訂", body: "命題を改訂しました。" }, { kind: "topic" })).toMatchObject({ ok: true, changed: true });
+    expect(await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 })).toMatchObject({ ok: true, changed: true });
+    const questionSourceHash = submitted === "earlier version" ? original.sourceHash : null;
+    expect(await setStance(db, "ann", { questionId: q, position: null, expectedVersion: 1, questionSourceHash })).toEqual({ ok: true, changed: true, position: null, version: 2 });
+    expect(await stanceRows(db, "ann")).toEqual([]);
+    expect(await changeRows(db, "ann")).toMatchObject([{ toPosition: "agree" }, { toPosition: null }]);
   });
 });
 
@@ -188,15 +234,15 @@ describe("the trigger of a change (the entry that made the member rethink)", () 
     const other = await createReply(db, "cid", q, { lang: "fr", body: "Un autre point." }, { now: t(2) });
     const elsewhere = await createTopic(db, "bob", { lang: "en", title: "elsewhere", body: "x" });
     if (!mine.ok || !other.ok || !elsewhere.ok) throw new Error("setup failed");
-    await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(3) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(3) });
     await setVote(db, "ann", mine.id, true, { now: t(4) });
     await setVote(db, "ann", elsewhere.id, true, { now: t(4) });
     // A voted post is recorded with a snapshot of its author's area at posting time, en for bob.
-    await setStance(db, "ann", { questionId: q, position: "disagree", expectedVersion: 1, triggerEntryId: mine.id }, { now: t(5) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "disagree", expectedVersion: 1, triggerEntryId: mine.id }, { now: t(5) });
     // An unvoted post, a post in another thread, or a nonexistent post records no trigger rather than raising an error.
-    await setStance(db, "ann", { questionId: q, position: "neither", expectedVersion: 2, triggerEntryId: other.id }, { now: t(6) });
-    await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 3, triggerEntryId: elsewhere.id }, { now: t(7) });
-    await setStance(db, "ann", { questionId: q, position: "disagree", expectedVersion: 4, triggerEntryId: 987_654 }, { now: t(8) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "neither", expectedVersion: 2, triggerEntryId: other.id }, { now: t(6) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 3, triggerEntryId: elsewhere.id }, { now: t(7) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "disagree", expectedVersion: 4, triggerEntryId: 987_654 }, { now: t(8) });
     const rows = await changeRows(db, "ann");
     expect(rows.map((c) => [c.toPosition, c.triggerEntryId, c.triggerArea])).toEqual([
       ["agree", null, null],
@@ -208,7 +254,7 @@ describe("the trigger of a change (the entry that made the member rethink)", () 
     // A hidden post cannot be a trigger.
     await setVote(db, "ann", other.id, true, { now: t(9) });
     await hideEntry(db, OP, { entryId: other.id, reason: "spam", note: "x" }, { now: t(10) });
-    await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 5, triggerEntryId: other.id }, { now: t(11) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 5, triggerEntryId: other.id }, { now: t(11) });
     expect((await changeRows(db, "ann")).at(-1)).toMatchObject({ toPosition: "agree", triggerEntryId: null, triggerArea: null });
   });
 });
@@ -218,9 +264,9 @@ describe("the area of a stance", () => {
     const { db, q } = await world();
     const second = await createTopic(db, "author", { lang: "ja", title: "二つ目", body: "命題です。", asksStance: true });
     if (!second.ok) throw new Error("question failed");
-    await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) });
-    await setStance(db, "ann", { questionId: second.id, position: "disagree", expectedVersion: 0 }, { now: t(2) });
-    await setStance(db, "bob", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(3) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) });
+    await setCurrentStance(db, "ann", { questionId: second.id, position: "disagree", expectedVersion: 0 }, { now: t(2) });
+    await setCurrentStance(db, "bob", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(3) });
     expect(await changeHomeArea(db, "ann", "th", { now: t(10) })).toEqual({ ok: true, changed: true });
     // Rewrite this member's stances on all questions to the new area; other members remain unchanged.
     expect((await stanceRows(db, "ann")).map((s) => [s.area, s.version, s.updatedAt.toISOString()])).toEqual([
@@ -231,7 +277,7 @@ describe("the area of a stance", () => {
     // History area remains the snapshot from the change time; no new history is created.
     expect((await changeRows(db, "ann")).map((c) => c.area)).toEqual(["ja", "ja"]);
     // Subsequent registrations and changes use the new area.
-    await setStance(db, "ann", { questionId: q, position: "neither", expectedVersion: 1 }, { now: t(11) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "neither", expectedVersion: 1 }, { now: t(11) });
     expect((await stanceRows(db, "ann")).find((s) => s.questionId === q)?.area).toBe("th");
     expect((await changeRows(db, "ann", q)).map((c) => c.area)).toEqual(["ja", "th"]);
     // Selecting the same area is a no-op; rewriteStanceAreas also avoids writing unchanged rows.
@@ -247,8 +293,8 @@ describe("deleting one's own records (the right to delete comes before append-on
     const second = await createTopic(db, "author", { lang: "ja", title: "二つ目", body: "命題です。", asksStance: true });
     const third = await createTopic(db, "author", { lang: "ja", title: "三つ目", body: "命題です。", asksStance: true });
     if (!second.ok || !third.ok) throw new Error("question failed");
-    for (const [id, position] of [[q, "agree"], [second.id, "disagree"], [third.id, "neither"]] as const) await setStance(db, "ann", { questionId: id, position, expectedVersion: 0 }, { now: t(1) });
-    await setStance(db, "bob", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(2) });
+    for (const [id, position] of [[q, "agree"], [second.id, "disagree"], [third.id, "neither"]] as const) await setCurrentStance(db, "ann", { questionId: id, position, expectedVersion: 0 }, { now: t(1) });
+    await setCurrentStance(db, "bob", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(2) });
     expect((await readDistributions(db, [q], { kind: "observation" })).get(q)).toMatchObject({ total: 2, counts: { agree: 2, disagree: 0, neither: 0 }, langs: 2 });
     expect(await deleteStanceRecord(db, "ann", q)).toEqual({ stances: 1, changes: 1 });
     expect((await readDistributions(db, [q], { kind: "observation" })).get(q)).toMatchObject({ total: 1, langs: 1 });
@@ -268,7 +314,7 @@ describe("deleting one's own records (the right to delete comes before append-on
     // bob's history remains.
     expect(await stanceRows(db, "bob")).toHaveLength(1);
     // Deletion resets the version to 0. A pre-deletion page can coincidentally match a later version; allow this because the owner explicitly deleted the history.
-    expect(await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(5) })).toMatchObject({ ok: true, version: 1 });
+    expect(await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(5) })).toMatchObject({ ok: true, version: 1 });
   });
 
   it("deleteAllStanceRecords removes every stance and change of the member and nobody else's", async () => {
@@ -276,8 +322,8 @@ describe("deleting one's own records (the right to delete comes before append-on
     const second = await createTopic(db, "author", { lang: "ja", title: "二つ目", body: "命題です。", asksStance: true });
     if (!second.ok) throw new Error("question failed");
     for (const id of [q, second.id]) {
-      await setStance(db, "ann", { questionId: id, position: "agree", expectedVersion: 0 });
-      await setStance(db, "bob", { questionId: id, position: "disagree", expectedVersion: 0 });
+      await setCurrentStance(db, "ann", { questionId: id, position: "agree", expectedVersion: 0 });
+      await setCurrentStance(db, "bob", { questionId: id, position: "disagree", expectedVersion: 0 });
     }
     expect(await deleteAllStanceRecords(db, "ann")).toEqual({ stances: 2, changes: 2 });
     expect(await stanceRows(db)).toHaveLength(2);
@@ -287,7 +333,7 @@ describe("deleting one's own records (the right to delete comes before append-on
 
   it("a suspended member's stance counts, and the member can still delete the record", async () => {
     const { db, q } = await world();
-    await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(1) });
     await db.update(profiles).set({ suspendedUntil: new Date(Date.UTC(2031, 0, 1)), suspendedReason: "spam" }).where(eq(profiles.userId, "ann"));
     expect((await readDistributions(db, [q], { kind: "observation" })).get(q)).toMatchObject({ total: 1 });
     expect(await deleteStanceRecord(db, "ann", q)).toEqual({ stances: 1, changes: 1 });
@@ -302,13 +348,13 @@ describe("the member's own list (/settings/stances)", () => {
     if (!second.ok || !gone.ok) throw new Error("question failed");
     const reply = await createReply(db, "bob", q, { lang: "en", body: "A point." }, { now: t(1) });
     if (!reply.ok) throw new Error("reply failed");
-    await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(2) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(2) });
     await setVote(db, "ann", reply.id, true, { now: t(3) });
-    await setStance(db, "ann", { questionId: q, position: "disagree", expectedVersion: 1, triggerEntryId: reply.id }, { now: t(4) });
-    await setStance(db, "ann", { questionId: second.id, position: "neither", expectedVersion: 0 }, { now: t(5) });
-    await setStance(db, "ann", { questionId: gone.id, position: "agree", expectedVersion: 0 }, { now: t(6) });
+    await setCurrentStance(db, "ann", { questionId: q, position: "disagree", expectedVersion: 1, triggerEntryId: reply.id }, { now: t(4) });
+    await setCurrentStance(db, "ann", { questionId: second.id, position: "neither", expectedVersion: 0 }, { now: t(5) });
+    await setCurrentStance(db, "ann", { questionId: gone.id, position: "agree", expectedVersion: 0 }, { now: t(6) });
     await softDeleteEntry(db, gone.id, { now: t(7) });
-    await setStance(db, "bob", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(8) });
+    await setCurrentStance(db, "bob", { questionId: q, position: "agree", expectedVersion: 0 }, { now: t(8) });
     const viewer = { userId: "ann", scope: { operator: false, langs: [] } };
     const list = await listOwnStanceRecords(db, "ann", { readLangs: ["ja"], displayLang: "ja", viewer });
     // Order by newest last change; exclude bob's stances.
@@ -369,7 +415,7 @@ describe("the limits on sending a stance", () => {
     expect(stanceQuestionLimitKey("ann", q, "another-secret-000000000000000000000000")).not.toBe(key);
     expect(key).not.toContain(addressHasher(authSecret())(`ann:${q}`));
     // a send, then the member deletes the whole record: nothing in rate_limits names the member or the question
-    expect((await setStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 })).ok).toBe(true);
+    expect((await setCurrentStance(db, "ann", { questionId: q, position: "agree", expectedVersion: 0 })).ok).toBe(true);
     expect((await hitStanceQuestionLimit(db, "ann", q)).allowed).toBe(true);
     expect(await deleteStanceRecord(db, "ann", q)).toMatchObject({ stances: 1 });
     const rows = (await db.select({ key: rateLimits.key }).from(rateLimits)).map((r) => r.key).filter((k) => k.startsWith("member:stance-question:"));

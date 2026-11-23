@@ -12,7 +12,7 @@ import { hideEntry } from "~/lib/moderation.server";
 import { TOPICS_PER_PAGE } from "~/lib/pagination";
 import type { TopicItem } from "~/lib/topic-list.server";
 import { assertStartupConfig } from "~/lib/startup-checks.server";
-import { setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { skipRevalidationFor } from "~/lib/stance-ui";
 import { setVote } from "~/lib/votes.server";
 import { getMd, parseBlocks } from "./helpers/md";
@@ -88,7 +88,7 @@ describe("the order and the filters of the stream", () => {
   it("gives the same ids in the same order to readers who differ in main language, stance and what they read", async () => {
     const q = await make("hana", "ja", "賛否を聞く命題", "条件です。", 30, { asksStance: true });
     ids.q = q;
-    expect((await setStance(h.db, h.ids.kim, { questionId: q, position: "agree", expectedVersion: 0 }, { now: at(31) })).ok).toBe(true);
+    expect((await setCurrentStance(h.db, h.ids.kim, { questionId: q, position: "agree", expectedVersion: 0 }, { now: at(31) })).ok).toBe(true);
     const lists = await Promise.all(["hana", "john", "somchai", "kim"].map(async (who) => idsOf((await loadHome(who)).topics)));
     for (const list of lists) expect(list).toEqual(lists[0]);
     const activity = await Promise.all(["hana", "john", "somchai", "kim"].map(async (who) => idsOf((await loadHome(who, "/?order=activity")).topics)));
@@ -222,7 +222,7 @@ describe("the data and rendering of a row", () => {
   it("keeps question stances compact and distributions gated by the viewer's choice", async () => {
     const q = await make("hana", "ja", "Question", "QUESTION_BODY", 90, { asksStance: true });
     expect((await loadHome("kim")).topics.find(t => t.id === q)).toMatchObject({ asksStance: true, stance: { position: null }, distribution: null });
-    expect((await setStance(h.db, h.ids.kim, { questionId: q, position: "agree", expectedVersion: 0 })).ok).toBe(true);
+    expect((await setCurrentStance(h.db, h.ids.kim, { questionId: q, position: "agree", expectedVersion: 0 })).ok).toBe(true);
     expect((await loadHome("kim")).topics.find(t => t.id === q)?.distribution).toMatchObject({ total: 1, counts: { agree: 1 } });
     expect((await loadHome("hana")).topics.find(t => t.id === q)?.distribution).toBeNull();
     const html = await draw("hana");
@@ -271,7 +271,7 @@ describe("the queries, the saved renders and the revalidation", () => {
     // three cards that use every branch: a translated topic with a title, a topic without a title, a question the reader chose a stance on
     const small = [await make("hana", "ja", "翻訳される題", "本文。", 1), await make("hana", "ja", null, "題のない本文。", 2), await make("hana", "ja", "命題", "条件。", 3, { asksStance: true })];
     await translateAll();
-    expect((await setStance(h.db, h.ids.john, { questionId: small[2], position: "agree", expectedVersion: 0 }, { now: at(4) })).ok).toBe(true);
+    expect((await setCurrentStance(h.db, h.ids.john, { questionId: small[2], position: "agree", expectedVersion: 0 }, { now: at(4) })).ok).toBe(true);
     // Warm one-time session and rate-limit cleanup before comparing page size.
     await loadHome("john");
     const three = await countQueries(() => loadHome("john"));

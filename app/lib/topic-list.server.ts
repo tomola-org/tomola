@@ -39,6 +39,7 @@ export type TopicItem = {
   // For questions: the viewer's own stance and version, plus distribution totals and language count only, without per-area counts. Include distributions only after the viewer chooses a stance or with ?peek=<id>
   // (readDistributions excludes deleted and hidden questions, even from lists visible to the author, moderators, and operators). No other member's stance is included.
   stance?: StanceState;
+  questionSourceHash?: string | null;
   distribution?: DistributionView | null;
   // The Insightful count of the topic itself: the total and the number of languages (nothing per language). The viewer's own state is not part of a list item.
   insightful: InsightfulCount;
@@ -90,7 +91,7 @@ export async function toTopicItems(
     // loadTitleDisplays answers for every topic it is given: the title, or the beginning of the body for a topic without a title.
     title: titles.get(t.id)!,
     ...(t.asksStance && opts.viewer
-      ? { stance: ownStances.get(t.id) ?? { position: null, version: 0 }, distribution: distributions.has(t.id) ? toDistributionView(distributions.get(t.id)!) : null }
+      ? { stance: ownStances.get(t.id) ?? { position: null, version: 0 }, questionSourceHash: t.sourceHash, distribution: distributions.has(t.id) ? toDistributionView(distributions.get(t.id)!) : null }
       : {}),
     insightful: reactions.get(t.id)?.insightful ?? { total: 0, langs: 0 },
     ...(villageNames.has(t.id) ? { village: villageNameOf(villageNames.get(t.id)!, localized) } : {}),

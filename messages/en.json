@@ -1314,6 +1314,7 @@
   "stance_note_short": "Not the forum's conclusion.",
   "stance_privacy_line": "Stances are counted without names. When few people have answered, changes in the numbers can give away a stance.",
   "stance_conflict": "Your stance was changed elsewhere (in another tab or on another device). Your current stance is shown.",
+  "stance_question_changed": "The question has changed. Read it again before choosing a stance.",
   "stance_rate_limited": "Too many changes in a short time. Try again in a moment.",
   "stance_error": "Your stance could not be saved.",
   "stance_closed": "You cannot choose a stance on this question now.",

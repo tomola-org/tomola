@@ -11,7 +11,7 @@ import type { Lang } from "~/lib/languages";
 import { createFakeEngine } from "~/lib/llm/engines/fake.server";
 import { RENDER_VERSION } from "~/lib/markdown.server";
 import { fixEntry } from "~/lib/moderation.server";
-import { setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { addMember, createTestDb } from "./helpers/db";
 
 const t0 = new Date("2026-10-05T00:00:00Z");
@@ -255,7 +255,7 @@ describe("loadEntryDisplays", () => {
     if (!created.ok) throw new Error(`topic failed: ${created.error}`);
     const id = created.id;
     if (editor === "moderator") {
-      expect((await setStance(db, "bob-id", { questionId: id, position: "agree", expectedVersion: 0 })).ok).toBe(true);
+      expect((await setCurrentStance(db, "bob-id", { questionId: id, position: "agree", expectedVersion: 0 })).ok).toBe(true);
     }
     // Both mentions fit in the first block; the rest forces a separate, non-null card cache.
     const humanText = "Human translation @bob and @carol.\n\n" + "More translated context. ".repeat(40);

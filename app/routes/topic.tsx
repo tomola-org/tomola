@@ -287,6 +287,7 @@ async function loaderImplementation({ request, params }: Route.LoaderArgs) {
     const shownDistribution = distributions?.get(topic.id);
     return {
       stance: own,
+      questionSourceHash: topic.sourceHash,
       distribution: shownDistribution ? toDistributionView(shownDistribution) : null,
       peeked,
       message: sent && sent.questionId === topic.id ? sent.message : null,
@@ -954,6 +955,7 @@ export default function Topic({ loaderData, actionData }: Route.ComponentProps) 
           <h2 className="text-lg font-semibold">{m.stance_title()}</h2>
           <StancePanel
             questionId={topic.id}
+            questionSourceHash={question.stance.questionSourceHash}
             stance={question.stance.stance}
             distribution={question.stance.distribution}
             peekHref={peekHrefFor(location.pathname, location.search, 1, "stance")}

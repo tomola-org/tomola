@@ -6,6 +6,7 @@ import { requireMember, requireWriter } from "~/lib/auth/session.server";
 import { getProfile } from "~/lib/profiles.server";
 import { EXCLUDED_RESIDENCE_COUNTRIES, STANCE_CONSENT_VERSION, TRIAL_CONSENT_VERSION } from "./helpers/operator";
 import { setupRouteHarness } from "./helpers/route-harness";
+import { readQuestionSourceHash } from "./helpers/stances";
 import { trialForm } from "./helpers/trial";
 
 
@@ -58,8 +59,9 @@ it("requires separate stance agreement, preserves records on revocation and stil
     if (!question.ok) throw new Error(question.error);
     await h.db.update(profiles).set({ stanceConsentVersion: null, stanceConsentAt: null }).where(eq(profiles.userId, h.ids.trial_stance));
     const { action } = await import("~/routes/stance");
+    const questionSourceHash = await readQuestionSourceHash(h.db, question.id) ?? "";
     const settings = await import("~/routes/settings-stances");
-    const choose = (position: string, version: string, headers?: Record<string, string>) => action(h.args(h.request("/stance", { as: "trial_stance", form: { questionId: String(question.id), position, version, returnTo: `/t/${question.id}` }, headers })));
+    const choose = (position: string, version: string, headers?: Record<string, string>) => action(h.args(h.request("/stance", { as: "trial_stance", form: { questionId: String(question.id), questionSourceHash, position, version, returnTo: `/t/${question.id}` }, headers })));
     const documentConsent = await h.outcome(() => choose("agree", "0", DOCUMENT));
     expect(documentConsent).toMatchObject({ status: 307, location: expect.stringContaining("/settings/stances?") });
     // A script submission gets the same consent step as data and opens it itself.
@@ -91,8 +93,9 @@ it.each(["agree", "disagree", "neither"])("carries the intended %s choice throug
     if (!question.ok || !otherQuestion.ok) throw new Error("Question creation failed");
     await h.db.update(profiles).set({ stanceConsentVersion: null, stanceConsentAt: null }).where(eq(profiles.userId, h.ids.consent_return));
     const { action } = await import("~/routes/stance");
+    const questionSourceHash = await readQuestionSourceHash(h.db, question.id) ?? "";
     const settings = await import("~/routes/settings-stances");
-    const fields = { questionId: String(question.id), position, version: "0", returnTo: `/t/${question.id}?lang=en#stance` };
+    const fields = { questionId: String(question.id), questionSourceHash, position, version: "0", returnTo: `/t/${question.id}?lang=en#stance` };
     const redirected = await h.outcome(() => action(h.args(h.request("/stance", { as: "consent_return", form: fields, headers: DOCUMENT }))));
     expect(redirected.status).toBe(307);
     expect(redirected.location).not.toMatch(/stance_(?:choice|q|msg)/);
@@ -156,8 +159,9 @@ it.each([
     if (!question.ok) throw new Error(question.error);
     await h.db.update(profiles).set({ stanceConsentVersion: null, stanceConsentAt: null }).where(eq(profiles.userId, h.ids.paging_consent));
     const { action } = await import("~/routes/stance");
+    const questionSourceHash = await readQuestionSourceHash(h.db, question.id) ?? "";
     const result = await h.outcome(() => action(h.args(h.request("/stance", { as: "paging_consent", form: {
-      questionId: String(question.id), position: "agree", version: "0", returnTo: source.replace("QUESTION", String(question.id)),
+      questionId: String(question.id), questionSourceHash, position: "agree", version: "0", returnTo: source.replace("QUESTION", String(question.id)),
     }, headers: DOCUMENT }))));
     expect(result.status).toBe(307);
     expect(new URL(result.location!, "http://localhost").searchParams.get("next")).toBe(`/t/${question.id}${search}#stance`);

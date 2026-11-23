@@ -26,7 +26,8 @@ import {
 } from "~/lib/metrics.server";
 import { changeHomeArea } from "~/lib/profiles.server";
 import type { Position } from "~/lib/stances";
-import { deleteStanceRecord, loadOwnStances, setStance } from "~/lib/stances.server";
+import { deleteStanceRecord, loadOwnStances } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { setVote } from "~/lib/votes.server";
 import { addMember, createTestDb } from "./helpers/db";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
@@ -401,7 +402,7 @@ async function engage() {
   // Sets a stance at a time (the version is read from the record, so a sequence of calls is a history).
   const stance = async (userId: string, questionId: number, position: Position | null, when: string, trigger?: number) => {
     const state = (await loadOwnStances(db, userId, [questionId])).get(questionId)!;
-    const res = await setStance(db, userId, { questionId, position, expectedVersion: state.version, triggerEntryId: trigger ?? null }, { now: at(when) });
+    const res = await setCurrentStance(db, userId, { questionId, position, expectedVersion: state.version, triggerEntryId: trigger ?? null }, { now: at(when) });
     if (!res.ok || !res.changed) throw new Error(`stance failed: ${JSON.stringify(res)}`);
   };
   const exclude = (userId: string) => db.update(profiles).set({ reactionsExcludedAt: at("2026-09-01T00:00:00Z") }).where(eq(profiles.userId, userId));

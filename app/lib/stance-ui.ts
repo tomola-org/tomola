@@ -16,7 +16,7 @@ export type StanceResponse =
   | { ok: true; questionId: number; position: Position | null; version: number; distribution: DistributionView | null; at: string }
   | { ok: false; error: "conflict"; questionId: number; position: Position | null; version: number; distribution: DistributionView | null; at: string }
   | { ok: false; error: "consent_required"; questionId: number; position: Position; consentHref: string }
-  | { ok: false; error: "rate_limited" | "not_found" | "not_a_question" | "hidden" | "bad_request" };
+  | { ok: false; error: "question_changed" | "rate_limited" | "not_found" | "not_a_question" | "hidden" | "bad_request" };
 
 // Which distribution a stance panel shows: the one from the member's latest /stance response (`latest`), or the one the page loader handed over (`loaderDistribution`).
 // The newer one wins. The response is newer unless the loader read the distribution after the response was made (`asOf` later than `latest.at`): after "choose, withdraw,
@@ -28,14 +28,14 @@ export function pickDistribution(latest: { at: string; distribution: Distributio
   return latest.distribution;
 }
 
-// No-JS form conflicts/rate limits redirect with ?stance_msg=conflict|rate_limited&stance_q=<question-id> for loader display.
-export type StanceMessage = "conflict" | "rate_limited";
+// Native forms redirect with a message and question ID for the destination loader.
+export type StanceMessage = "question_changed" | "conflict" | "rate_limited";
 export type StanceMessageParam = { message: StanceMessage; questionId: number };
 
 export function readStanceMessage(url: URL): StanceMessageParam | null {
   const message = url.searchParams.get("stance_msg");
   const questionId = parseId(url.searchParams.get("stance_q"));
-  return (message === "conflict" || message === "rate_limited") && questionId !== null ? { message, questionId } : null;
+  return (message === "question_changed" || message === "conflict" || message === "rate_limited") && questionId !== null ? { message, questionId } : null;
 }
 
 // ?peek=<question-id>, 「先に結果を見る」: lists use ?peek=<id>#q-<id>, thread uses ?peek=1#stance. One positive integer; null if absent/invalid.

@@ -82,7 +82,7 @@ Design principles, current designs, site operating policies, and future directio
 
 ## 13 Freeze a question once another member takes a position
 
-**Current design.** A question's title and body freeze when the first member other than its author takes a position. Additions go in replies. Moderator typo corrections are recorded actions, notified to the author and subject to appeal.
+**Current design.** A question's title and body freeze when the first member other than its author takes a position. A new or changed position is saved only if the question's source version matches the one loaded for the reader. Additions go in replies. Moderator typo corrections are recorded actions, notified to the author and subject to appeal.
 
 **Rationale and rejected option.** The proposition to which positions attach must not change afterwards. An initial title-only freeze allowed body edits with history and notification; this was replaced by freezing both. Section 6 addresses the corresponding translation loophole.
 

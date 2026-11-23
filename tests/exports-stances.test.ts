@@ -6,7 +6,7 @@ import { createReply, createTopic } from "~/lib/entries.server";
 import { buildMemberExport, buildObservationExport, MEMBER_EXPORT_VERSION, OBSERVATION_EXPORT_VERSION, type MemberExport } from "~/lib/exports.server";
 import { setFollow } from "~/lib/follows.server";
 import { excludeReactions, type Actor } from "~/lib/moderation.server";
-import { setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { setVote } from "~/lib/votes.server";
 import { addMember, createTestDb } from "./helpers/db";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
@@ -49,7 +49,7 @@ beforeAll(async () => {
   if (!reply.ok) throw new Error("reply failed");
   r1 = reply.id;
   const stance = async (as: string, question: number, position: "agree" | "disagree" | "neither" | null, at: Date, version: number, trigger?: number) => {
-    const res = await setStance(h.db, h.ids[as], { questionId: question, position, expectedVersion: version, triggerEntryId: trigger ?? null }, { now: at });
+    const res = await setCurrentStance(h.db, h.ids[as], { questionId: question, position, expectedVersion: version, triggerEntryId: trigger ?? null }, { now: at });
     if (!res.ok) throw new Error(`stance failed: ${res.error}`);
   };
   const vote = async (as: string, entryId: number, at: Date) => expect((await setVote(h.db, h.ids[as], entryId, true, { now: at })).ok).toBe(true);

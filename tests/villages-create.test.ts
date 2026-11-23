@@ -12,7 +12,7 @@ import { changeVillageMembership, ensureLanguageVillages, listJoinedVillages, li
 import { cancelVillageInvite, createVillage, editVillage, endVillage, incomingVillageInvites, inviteToVillage, removeVillageMember, respondToVillageInvite, villageManagement } from "~/lib/village-management.server";
 import { VILLAGE_CREATE_LIMIT, VILLAGE_DESCRIPTION_MAX, VILLAGE_NAME_MAX, VILLAGE_REMOVAL_REASON_MAX } from "~/lib/villages";
 import { setVote } from "~/lib/votes.server";
-import { setStance } from "~/lib/stances.server";
+import { setCurrentStance } from "./helpers/stances";
 import { hitMemberLimit } from "~/lib/rate-limit.server";
 import { buildThreadMarkdown } from "~/lib/md/thread.server";
 
@@ -265,7 +265,7 @@ describe("member-created villages", () => {
     expect((await postingVillages(db, "owner")).selected).toBe("@vc_owner");
     expect((await createReply(db, "guest", topic.id, { body: "After ending.", lang: "en" })).ok).toBe(true);
     expect((await setVote(db, "guest", topic.id, true)).ok).toBe(true);
-    expect((await setStance(db, "guest", { questionId: topic.id, position: "agree", expectedVersion: 0 })).ok).toBe(true);
+    expect((await setCurrentStance(db, "guest", { questionId: topic.id, position: "agree", expectedVersion: 0 })).ok).toBe(true);
     expect(await buildThreadMarkdown(db, topic.id, { lang: "en", k: null, page: 1, sentences: false })).toMatch(/village: ["']?club/);
   });
   it("retains a village when its creator withdraws and preserves management attribution", async () => {
