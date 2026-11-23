@@ -436,13 +436,26 @@ describe("through every path of the application (the route harness)", () => {
     const withdrawn = await stanceAction("ann", { questionId: String(hidden), position: "none", version: "1" });
     expect(withdrawn.status).toBe(200);
     expect((withdrawn.value as { data: { position: unknown; distribution: unknown } }).data).toMatchObject({ ok: true, position: null, distribution: null });
-    // (5) stances.md returns only hidden: true for hidden questions, without totals or language counts. Deleted questions and non-question topics return 404.
-    const hiddenMd = await stancesMd("ann", hidden);
-    expect(hiddenMd.status).toBe(200);
-    const hiddenText = await hiddenMd.text();
-    expect(parseBlocks(hiddenText)[0].fm).toMatchObject({ type: "stances", question: `p-${hidden}`, hidden: true });
-    expect(hiddenText).not.toMatch(/total|counts|agree|disagree/);
+    // (5) Authorized readers receive the hidden placeholder. This carries no distribution.
+    for (const as of ["hana", "jamod", "opal"]) {
+      const hiddenMd = await stancesMd(as, hidden);
+      expect(hiddenMd.status, as).toBe(200);
+      const hiddenText = await hiddenMd.text();
+      expect(parseBlocks(hiddenText)[0].fm, as).toMatchObject({ type: "stances", question: `p-${hidden}`, hidden: true });
+      expect(hiddenText, as).not.toMatch(/total|counts|agree|disagree/);
+    }
     for (const id of [deleted, plain.id, 999_999]) expect((await stancesMd("ann", id)).status, String(id)).toBe(404);
+    expect((await hideEntry(h.db, op, { entryId: plain.id, reason: "spam", note: "x" }, { now: BASE_DATE(10) })).ok).toBe(true);
+    for (const [as, status] of [["", 401], ["bob", 404]] as const) {
+      const missing = await stancesMd(as, 999_999);
+      expect(missing.status).toBe(status);
+      const missingText = await missing.text();
+      for (const id of [hidden, plain.id]) {
+        const response = await stancesMd(as, id);
+        expect(response.status).toBe(status);
+        expect(await response.text()).toBe(missingText);
+      }
+    }
     // (7) Unhiding or restoration makes the distribution available again through the same routes.
     expect((await unhideEntry(h.db, op, { entryId: hidden, reason: "other" }, { now: BASE_DATE(12) })).ok).toBe(true);
     await h.db.update(entries).set({ deletedAt: null }).where(eq(entries.id, deleted));
