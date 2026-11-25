@@ -23,7 +23,7 @@ it("keeps personal deletion, export, appeals and their pages available before pa
     const hidden = await hideEntry(h.db, { id: h.ids.rights_other, scope: { operator: true, langs: [] } }, { entryId: reported.id, reason: "spam", note: "Review requested" });
     if (!hidden.ok) throw new Error("Fixture moderation failed");
     await h.db.update(profiles).set({ residenceCountry: null, adultConfirmedAt: null, trialConsentVersion: null, trialConsentAt: null }).where(eq(profiles.userId, owner));
-    for (const path of ["/settings", "/settings/export", "/settings/stances", "/settings/chat", "/settings/media", "/settings/tokens", "/settings/connections", "/notifications", "/notifications/1/open", "/following", "/navigation-header", "/invites/new", "/mcp/consent", "/suspended", `/appeal/${hidden.actionId}`, `/t/${topic.id}`, `/t/${topic.id}/history`, `/t/${topic.id}/history/current`, `/c/${topic.id}/history/1?delete=1`, "/u/rights_owner", "/v/en/chat"]) {
+    for (const path of ["/settings", "/settings/export", "/settings/stances", "/settings/chat", "/settings/media", "/settings/tokens", "/settings/connections", "/notifications", "/notifications/1/open", "/following", "/navigation-header", "/invites/new", "/invites/shared", "/mcp/consent", "/suspended", `/appeal/${hidden.actionId}`, `/t/${topic.id}`, `/t/${topic.id}/history`, `/t/${topic.id}/history/current`, `/c/${topic.id}/history/1?delete=1`, "/u/rights_owner", "/v/en/chat"]) {
       expect(await requireMember(h.request(path, { as: "rights_owner" }))).toMatchObject({ user: { id: owner } });
     }
     expect(await h.outcome(() => requireMember(h.request("/", { as: "rights_owner" })))).toMatchObject({ status: 302 });

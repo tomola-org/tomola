@@ -134,6 +134,7 @@ test("an operator shares capped links, enrollment stays bound across tabs, and c
     await expect(second).toHaveURL(/\/v\/shared-entry-a$/);
 
     await page.goto("/invites/shared");
+    await waitForClientRoute(page);
     await expect(rowA).toContainText("2 / 2");
     await expect(rowB).toContainText("0 / 2");
     await otherTab.goto(linkA);

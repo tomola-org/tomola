@@ -210,6 +210,8 @@ describe("the operator's invitation list", () => {
     const expected = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex" };
     expect((await import("~/routes/invite")).headers()).toEqual({ ...expected, "Referrer-Policy": "strict-origin" });
     expect((await import("~/routes/admin-invitations")).headers()).toEqual(expected);
+    expect((await import("~/routes/invites-new")).headers()).toEqual(expected);
+    expect((await import("~/routes/invites-shared")).headers()).toEqual(expected);
   });
 
   it("the link a member creates is built from BETTER_AUTH_URL, never from the request's own address", async () => {
