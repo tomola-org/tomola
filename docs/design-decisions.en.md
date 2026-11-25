@@ -144,7 +144,7 @@ Machine-facing details should not clutter manual reading, while AI representatio
 
 ## 23 Require browser confirmation for external AI proposals
 
-**Current design.** APIs and MCP provide scoped reading and draft creation. MCP also prepares post edits, deletion reviews and shared village changes. Drafts and proposals bind to the member and originating client. The member reviews the current content and consequences in the browser before confirming publication or a change. Per-member limits span Web, API and MCP. Browser GETs for account controls, draft and proposal review, suspension explanations, and appeals use a separate limit of 120 requests per member per hour.
+**Current design.** APIs and MCP provide scoped reading and draft creation. MCP also prepares post edits, deletion reviews and shared village changes. A member's AI connections share the drafts and proposals those connections create; drafts written in the browser are excluded. Draft-creation retries match request IDs within the creating connection. The member reviews the current content and consequences in the browser before confirming publication or a change. Per-member limits span Web, API and MCP. Browser GETs for account controls, draft and proposal review, suspension explanations, and appeals use a separate limit of 120 requests per member per hour.
 
 **Rationale and limits.** External credential permissions enforce the boundary that people take responsibility for content published in their names. Personal unnamed positions and their history are not provided. This boundary proves neither comprehension nor that AI cannot operate a browser.
 
