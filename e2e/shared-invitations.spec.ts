@@ -31,10 +31,31 @@ async function finishProfile(page: Page, handle: string) {
 
 test("an operator shares capped links, enrollment stays bound across tabs, and closed links permit only existing sign-ins", async ({ page, browser }) => {
   test.setTimeout(150_000);
+  await page.setViewportSize({ width: 390, height: 900 });
   await useMember(page, "shared_link_operator@example.com", "/invites/new");
   const m = await uiMessages(page);
-  const headers = (await page.request.get("/invites/new")).headers();
-  expect(headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "no-referrer", "x-robots-tag": "noindex" });
+  const tabs = page.getByRole("navigation", { name: m.invites_title, exact: true });
+  const emailTab = tabs.getByRole("link", { name: m.invites_by_email, exact: true });
+  const sharedTab = tabs.getByRole("link", { name: m.shared_invites_title, exact: true });
+  await expect(page).toHaveTitle(m.invites_title);
+  await expect(emailTab).toHaveAttribute("aria-current", "page");
+  await expect(sharedTab).not.toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("heading", { name: m.shared_invites_create, exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+  await sharedTab.click();
+  await expect(page).toHaveURL(/\/invites\/shared$/);
+  await expect(page).toHaveTitle(m.shared_invites_title);
+  await expect(sharedTab).toHaveAttribute("aria-current", "page");
+  await expect(emailTab).not.toHaveAttribute("aria-current", "page");
+  await expect(page.getByLabel(m.invites_bulk_emails, { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await emailTab.click();
+  await expect(emailTab).toHaveAttribute("aria-current", "page");
+  await sharedTab.click();
+
+  const privateHeaders = { "cache-control": "no-store", "referrer-policy": "no-referrer", "x-robots-tag": "noindex" };
+  expect((await page.request.get("/invites/shared")).headers()).toMatchObject(privateHeaders);
 
   async function createLink(label: string, village: string) {
     await waitForClientRoute(page);
@@ -42,15 +63,19 @@ test("an operator shares capped links, enrollment stays bound across tabs, and c
     await form.getByLabel(m.shared_invites_label, { exact: true }).fill(label);
     await form.getByLabel(m.shared_invites_max_uses, { exact: true }).fill("2");
     const select = form.getByRole("combobox", { name: m.invites_village, exact: true });
-    await expect(select).toBeVisible();
-    await select.selectOption({ label: village });
+    const selectedVillage = select.locator('[data-slot="select-value"]');
+    await expect(selectedVillage).toHaveText(m.invites_village_none);
+    await select.click();
+    await page.getByRole("option", { name: village, exact: true }).click();
     const response = page.waitForResponse(response => response.request().method() === "POST");
     await form.getByRole("button", { name: m.shared_invites_create, exact: true }).click();
-    expect((await response).headers()["cache-control"]).toContain("no-store");
+    const actionHeaders = (await response).headers();
+    expect(actionHeaders).toMatchObject({ ...privateHeaders, "cache-control": expect.stringContaining("no-store") });
     const link = page.locator("code").filter({ hasText: "/invite/" });
     await expect(link).toBeVisible();
     await expect(form.getByLabel(m.shared_invites_label, { exact: true })).toHaveValue("");
     await expect(form.getByLabel(m.shared_invites_max_uses, { exact: true })).toHaveValue("20");
+    await expect(selectedVillage).toHaveText(m.invites_village_none);
     const url = (await link.textContent())!;
     await page.reload();
     await expect(link).toHaveCount(0);
@@ -60,6 +85,9 @@ test("an operator shares capped links, enrollment stays bound across tabs, and c
   const linkA = await createLink("Workshop A", "Shared entry A");
   const linkB = await createLink("Workshop B", "Shared entry B");
   await page.goto("/admin/invitations");
+  await expect(page.getByRole("heading", { level: 2 })).toHaveText([m.invites_by_email, m.shared_invites_title]);
+  await expect(page.locator("main section").filter({ has: page.getByRole("heading", { name: m.invites_by_email, exact: true }) }))
+    .toContainText(m.admin_invitations_intro);
   const rowA = page.getByRole("row", { name: /Workshop A/ });
   const rowB = page.getByRole("row", { name: /Workshop B/ });
   await expect(rowA).toContainText("0 / 2");
@@ -105,7 +133,7 @@ test("an operator shares capped links, enrollment stays bound across tabs, and c
     await finishProfile(second, "shared_link_second");
     await expect(second).toHaveURL(/\/v\/shared-entry-a$/);
 
-    await page.reload();
+    await page.goto("/invites/shared");
     await expect(rowA).toContainText("2 / 2");
     await expect(rowB).toContainText("0 / 2");
     await otherTab.goto(linkA);
@@ -135,4 +163,12 @@ test("an operator shares capped links, enrollment stays bound across tabs, and c
     await enterCode(existing, existingCode);
     await expect(existing).toHaveURL(/\/$/);
   } finally { await Promise.all(contexts.map(context => context.close())); }
+});
+
+test("a member sees only the individual invitation page", async ({ page }) => {
+  await useMember(page, "shared_link_member@example.com", "/invites/new");
+  const m = await uiMessages(page);
+  await expect(page.getByLabel(m.invites_email, { exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: m.invites_title, exact: true })).toHaveCount(0);
+  expect((await page.goto("/invites/shared"))?.status()).toBe(404);
 });

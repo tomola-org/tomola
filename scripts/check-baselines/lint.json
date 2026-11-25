@@ -98,9 +98,6 @@
     "react-hooks/refs": 21,
     "react-hooks/set-state-in-effect": 1
   },
-  "app/routes/invites-new.tsx": {
-    "react-hooks/set-state-in-effect": 1
-  },
   "app/routes/login.tsx": {
     "react-hooks/refs": 33
   },

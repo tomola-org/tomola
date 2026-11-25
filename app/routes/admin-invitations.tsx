@@ -52,55 +52,58 @@ export default function AdminInvitations({ loaderData }: Route.ComponentProps) {
     <main className="space-y-4">
       <h1 className="text-2xl font-bold">{m.admin_invitations_title()}</h1>
       <section className="space-y-2">
+        <h2 className="text-xl font-semibold">{m.invites_by_email()}</h2>
+        <p className="ui-help text-muted-foreground">{m.admin_invitations_intro()}</p>
+        {rows.length === 0 ? (
+          <p>{m.admin_invitations_empty()}</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table className="w-full text-start text-sm">
+              <TableHeader>
+                <TableRow className="border-b">
+                  <TableHead className="py-1 pe-3">{m.admin_invitations_col_email()}</TableHead>
+                  <TableHead className="py-1 pe-3">{m.admin_invitations_col_inviter()}</TableHead>
+                  <TableHead className="py-1 pe-3">{m.admin_invitations_col_created()}</TableHead>
+                  <TableHead className="py-1 pe-3">{m.admin_invitations_col_expires()}</TableHead>
+                  <TableHead className="py-1 pe-3">{m.admin_invitations_col_status()}</TableHead>
+                  <TableHead className="py-1 pe-3">{m.admin_invitations_col_used_by()}</TableHead>
+                  <TableHead className="py-1 pe-3">{m.admin_invitations_col_used_at()}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((r) => (
+                  <TableRow key={r.id} className="border-b align-top">
+                    <TableCell className="py-1 pe-3 break-all">{r.email ?? m.invites_recipient_removed()}</TableCell>
+                    <TableCell className="py-1 pe-3">{r.inviterHandle ? `@${r.inviterHandle}` : m.admin_invitations_inviter_none()}</TableCell>
+                    <TableCell className="py-1 pe-3">
+                      <time dateTime={r.createdAt.toISOString()}>{when(r.createdAt)}</time>
+                    </TableCell>
+                    <TableCell className="py-1 pe-3">
+                      <time dateTime={r.expiresAt.toISOString()}>{when(r.expiresAt)}</time>
+                    </TableCell>
+                    <TableCell className="py-1 pe-3">{statusLabel(r.status)}{r.status === "valid" && <Form method="post"><input type="hidden" name="intent" value="revoke" /><input type="hidden" name="id" value={r.id} /><Button type="submit" variant="outline">{m.invites_revoke()}</Button></Form>}</TableCell>
+                    <TableCell className="py-1 pe-3">
+                      {r.status !== "used"
+                        ? "—"
+                        : r.usedByHandle
+                          ? `@${r.usedByHandle}`
+                          : r.usedByExists
+                            ? m.admin_invitations_used_by_no_profile()
+                            : m.admin_invitations_used_by_no_account()}
+                    </TableCell>
+                    <TableCell className="py-1 pe-3">{r.usedAt ? <time dateTime={r.usedAt.toISOString()}>{when(r.usedAt)}</time> : "—"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+        {rows.length >= limit && <p className="ui-help text-muted-foreground">{m.admin_invitations_limit({ count: limit })}</p>}
+      </section>
+      <section className="space-y-2">
         <h2 className="text-xl font-semibold">{m.shared_invites_title()}</h2>
         <SharedInvitationsTable rows={sharedInvitations} admin />
       </section>
-      <p className="ui-help text-muted-foreground">{m.admin_invitations_intro()}</p>
-      {rows.length === 0 ? (
-        <p>{m.admin_invitations_empty()}</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <Table className="w-full text-start text-sm">
-            <TableHeader>
-              <TableRow className="border-b">
-                <TableHead className="py-1 pe-3">{m.admin_invitations_col_email()}</TableHead>
-                <TableHead className="py-1 pe-3">{m.admin_invitations_col_inviter()}</TableHead>
-                <TableHead className="py-1 pe-3">{m.admin_invitations_col_created()}</TableHead>
-                <TableHead className="py-1 pe-3">{m.admin_invitations_col_expires()}</TableHead>
-                <TableHead className="py-1 pe-3">{m.admin_invitations_col_status()}</TableHead>
-                <TableHead className="py-1 pe-3">{m.admin_invitations_col_used_by()}</TableHead>
-                <TableHead className="py-1 pe-3">{m.admin_invitations_col_used_at()}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((r) => (
-                <TableRow key={r.id} className="border-b align-top">
-                  <TableCell className="py-1 pe-3 break-all">{r.email ?? m.invites_recipient_removed()}</TableCell>
-                  <TableCell className="py-1 pe-3">{r.inviterHandle ? `@${r.inviterHandle}` : m.admin_invitations_inviter_none()}</TableCell>
-                  <TableCell className="py-1 pe-3">
-                    <time dateTime={r.createdAt.toISOString()}>{when(r.createdAt)}</time>
-                  </TableCell>
-                  <TableCell className="py-1 pe-3">
-                    <time dateTime={r.expiresAt.toISOString()}>{when(r.expiresAt)}</time>
-                  </TableCell>
-                  <TableCell className="py-1 pe-3">{statusLabel(r.status)}{r.status === "valid" && <Form method="post"><input type="hidden" name="intent" value="revoke" /><input type="hidden" name="id" value={r.id} /><Button type="submit" variant="outline">{m.invites_revoke()}</Button></Form>}</TableCell>
-                  <TableCell className="py-1 pe-3">
-                    {r.status !== "used"
-                      ? "—"
-                      : r.usedByHandle
-                        ? `@${r.usedByHandle}`
-                        : r.usedByExists
-                          ? m.admin_invitations_used_by_no_profile()
-                          : m.admin_invitations_used_by_no_account()}
-                  </TableCell>
-                  <TableCell className="py-1 pe-3">{r.usedAt ? <time dateTime={r.usedAt.toISOString()}>{when(r.usedAt)}</time> : "—"}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
-      {rows.length >= limit && <p className="ui-help text-muted-foreground">{m.admin_invitations_limit({ count: limit })}</p>}
     </main>
   );
 }

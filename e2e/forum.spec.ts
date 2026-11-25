@@ -52,7 +52,7 @@ test("an invited member logs in with a magic link, sets up a profile and posts a
 test("the member invites another member in a different home area, who signs up", async () => {
   await hana.goto("/invites/new");
   await waitForClientRoute(hana);
-  await hana.getByRole("checkbox", { name: enMessages.invites_bulk_send_email, exact: true }).uncheck();
+  await hana.getByRole("radio", { name: enMessages.invites_bulk_link_only, exact: true }).check();
   await hana.getByLabel(enMessages.invites_bulk_emails, { exact: true }).fill("somchai@example.com");
   await hana.getByRole("button", { name: enMessages.invites_bulk_submit, exact: true }).click();
   const invite = await hana.locator("code").innerText();

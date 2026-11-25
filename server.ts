@@ -22,6 +22,7 @@ import { trustedProxyHops } from "./app/lib/http/client-ip.server.ts";
 import { formatAccessLog } from "./server/access-log.ts";
 import { describeBackground } from "./server/background.ts";
 import { bodyLimit, maxRequestBodyBytes } from "./server/body-limit.ts";
+import { normalizeInvitationFormOrigin } from "./server/invitation-form-origin.ts";
 import { createShutdown } from "./server/shutdown.ts";
 import { setStaticHeaders } from "./server/static-headers.ts";
 
@@ -95,6 +96,7 @@ async function main() {
   app.use(path.posix.join(publicPath, "assets"), express.static(path.join(clientDir, "assets"), { immutable: true, maxAge: "1y", setHeaders: staticHeaders }));
   app.use(publicPath, express.static(clientDir, { maxAge: "1h", setHeaders: staticHeaders }));
 
+  app.use(normalizeInvitationFormOrigin);
   // Request-body limit: MAX_REQUEST_BODY_BYTES, default 2 MiB, directly before the React Router handler (server/body-limit.ts).
   app.use(bodyLimit(maxBodyBytes));
   app.all("/{*splat}", createRequestHandler({ build, mode: process.env.NODE_ENV }));

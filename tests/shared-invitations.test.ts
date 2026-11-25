@@ -4,15 +4,17 @@ import { afterEach, expect, it, vi } from "vitest";
 import { invitationCookie, readInvitationCookie } from "~/lib/auth/invitation-cookie.server";
 import { addressHasher, createMagicLinkSender, magicLinkOutcome, sharedInvitationContext, type MagicLinkOutcome } from "~/lib/auth/magic-link.server";
 import { authSecret } from "~/lib/auth/secret.server";
-import { rateLimits, sharedInvitations, suspendedEmailHashes, user } from "~/lib/db/schema";
+import { profiles, rateLimits, sharedInvitations, suspendedEmailHashes, user } from "~/lib/db/schema";
 import { addMember, createTestDb } from "./helpers/db";
 import { suspendedEmailHash } from "~/lib/suspended-email.server";
 import { createSharedInvitation } from "~/lib/shared-invitations.server";
 import { MAGIC_LINK_EMAIL_IP_LIMIT, MAGIC_LINK_IP_LIMIT } from "~/lib/rate-limit.server";
-import { action as invitesAction, headers as invitesHeaders } from "~/routes/invites-new";
+import { action as invitesAction } from "~/routes/invites-new";
+import { action as sharedAction, headers as sharedHeaders, loader as sharedLoader } from "~/routes/invites-shared";
 import { action as adminAction } from "~/routes/admin-invitations";
 import { seedRateLimit } from "./helpers/fixtures";
 import { setupRouteHarness } from "./helpers/route-harness";
+import { expectModerationReauthentication, withStaleSession } from "./helpers/reauth";
 
 afterEach(() => { vi.unstubAllEnvs(); });
 
@@ -41,18 +43,76 @@ it("keeps legacy individual cookie bytes compatible and authenticates the shared
   expect(read(`${individual}; ${shared}`)).toBeNull();
 });
 
-it("rejects non-operator create and revoke attempts even when member invitations are enabled", async () => {
-  vi.stubEnv("OPERATOR_ONLY_INVITATIONS", "");
+it("returns 404 for member reads and shared writes under both invitation policies", async () => {
   vi.stubEnv("OPERATOR_EMAILS", issuer.email);
   const h = await setupRouteHarness();
   try {
-    await h.signIn("regular_inviter");
-    for (const intent of ["create-shared", "revoke-shared"]) {
-      const post = (path: string) => h.args(h.request(path, { as: "regular_inviter", form: { intent, label: "Example", maxUses: "10", ttlDays: "1" } }));
-      expect((await h.outcome(() => invitesAction(post("/invites/new")))).status).toBe(404);
-      expect((await h.outcome(() => adminAction(post("/admin/invitations")))).status).toBe(404);
+    const as = "regular_inviter";
+    await h.signIn(as);
+    for (const setting of ["", "1"]) {
+      vi.stubEnv("OPERATOR_ONLY_INVITATIONS", setting);
+      expect((await h.outcome(() => sharedLoader(h.args(h.request("/invites/shared", { as }))))).status).toBe(404);
+      for (const intent of ["create-shared", "revoke-shared"]) {
+        const post = (path: string) => h.args(h.request(path, { as, form: { intent, label: "Example", maxUses: "10", ttlDays: "1" } }));
+        expect((await h.outcome(() => sharedAction(post("/invites/shared")))).status).toBe(404);
+        expect((await h.outcome(() => invitesAction(post("/invites/new")))).status).toBe(404);
+        expect((await h.outcome(() => adminAction(post("/admin/invitations")))).status).toBe(404);
+      }
     }
-    expect(invitesHeaders()).toEqual({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex" });
+    expect(sharedHeaders()).toEqual({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex" });
+  } finally { h.restore(); }
+});
+
+it("redirects both legacy operator submissions without creating or revoking a link", async () => {
+  vi.stubEnv("OPERATOR_EMAILS", issuer.email);
+  const h = await setupRouteHarness();
+  try {
+    const as = issuer.id;
+    const id = await h.signIn(as);
+    const created = await createSharedInvitation(h.db, { id, email: issuer.email }, linkForm("Existing link"));
+    if (created.error) throw new Error(created.error);
+    await withStaleSession(h, as, async () => {
+      const forms: Record<string, string>[] = [
+        { intent: "create-shared", label: "Legacy link", maxUses: "1", ttlDays: "14" },
+        { intent: "revoke-shared", id: created.id },
+      ];
+      for (const form of forms) {
+        const response = await invitesAction(h.args(h.request("/invites/new", { as, form })));
+        expect(response).toBeInstanceOf(Response);
+        expect(response).toMatchObject({ status: 303 });
+        if (response instanceof Response) expect(response.headers.get("Location")).toBe("/invites/shared");
+      }
+    });
+    expect(await h.db.select({ id: sharedInvitations.id, revokedAt: sharedInvitations.revokedAt }).from(sharedInvitations))
+      .toEqual([{ id: created.id, revokedAt: null }]);
+    expect(await h.db.select({ count: rateLimits.count }).from(rateLimits).where(eq(rateLimits.key, `member:shared-invitation:${id}`)))
+      .toEqual([{ count: 1 }]);
+  } finally { h.restore(); }
+});
+
+it("requires a fresh operator session for shared writes and a writer for creation", async () => {
+  vi.stubEnv("OPERATOR_EMAILS", issuer.email);
+  const h = await setupRouteHarness();
+  try {
+    const as = issuer.id;
+    const id = await h.signIn(as);
+    const post = (form: Record<string, string>) => h.outcome(() => sharedAction(h.args(h.request("/invites/shared", { as, form }))));
+    const create = { intent: "create-shared", label: "New link", maxUses: "1", ttlDays: "14" };
+    const created = await createSharedInvitation(h.db, { id, email: issuer.email }, linkForm("Existing link"));
+    if (created.error) throw new Error(created.error);
+    const revoke = { intent: "revoke-shared", id: created.id };
+
+    await withStaleSession(h, as, async () => {
+      expectModerationReauthentication(await post(create), "/invites/shared");
+      expectModerationReauthentication(await post(revoke), "/invites/shared");
+    });
+    await h.db.update(profiles).set({ suspendedUntil: new Date(Date.now() + 86_400_000) }).where(eq(profiles.userId, id));
+    expect(await post(create)).toMatchObject({ status: 302, location: "/suspended" });
+    expect(await h.db.select({ id: sharedInvitations.id, revokedAt: sharedInvitations.revokedAt }).from(sharedInvitations))
+      .toEqual([{ id: created.id, revokedAt: null }]);
+    expect(await post(revoke)).toMatchObject({ status: 200 });
+    expect(await h.db.select({ revokedAt: sharedInvitations.revokedAt }).from(sharedInvitations))
+      .toEqual([{ revokedAt: expect.any(Date) }]);
   } finally { h.restore(); }
 });
 

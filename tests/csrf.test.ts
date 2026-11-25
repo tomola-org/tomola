@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assertSameOrigin, isSameOriginRequest, siteOrigin } from "~/lib/http/csrf.server";
+import { normalizeInvitationFormOrigin } from "../server/invitation-form-origin";
 
 const BASE = "http://localhost:5173";
 const post = (headers: Record<string, string> = {}, method = "POST") => new Request(`${BASE}/settings`, { method, headers });
@@ -45,5 +46,36 @@ describe("same-origin check for resource route actions", () => {
     expect(siteOrigin()).toBe(BASE); // Test default.
     expect(isSameOriginRequest(post({ origin: "https://forum.example.org" }), siteOrigin("https://forum.example.org/"))).toBe(true);
     expect(isSameOriginRequest(post({ origin: BASE }), siteOrigin("https://forum.example.org/"))).toBe(false);
+  });
+});
+
+describe("native invitation forms under a no-referrer policy", () => {
+  const browserHeaders = { origin: "null", "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" };
+
+  it.each(["/invites/new", "/invites/shared"])("uses the same-origin navigation check for %s", url => {
+    const headers = { ...browserHeaders };
+    normalizeInvitationFormOrigin({ method: "POST", url, headers }, undefined, () => {});
+    expect(headers).not.toHaveProperty("origin");
+    expect(isSameOriginRequest(new Request(`${BASE}${url}`, { method: "POST", headers }))).toBe(true);
+  });
+
+  it("preserves the origin for other requests", () => {
+    for (const request of [
+      { method: "GET", url: "/invites/new", headers: {} },
+      { url: "/settings", headers: {} },
+      { url: "/invites/shared.data", headers: {} },
+      { url: "/invites/shared", headers: { origin: "https://other.example" } },
+      { url: "/invites/shared", headers: { "sec-fetch-site": "cross-site" } },
+      { url: "/invites/shared", headers: { "sec-fetch-site": "same-site" } },
+      { url: "/invites/shared", headers: { "sec-fetch-site": undefined } },
+      { url: "/invites/shared", headers: { "sec-fetch-mode": "cors" } },
+      { url: "/invites/shared", headers: { "sec-fetch-dest": "iframe" } },
+      { url: "/invites/shared", headers: { referer: BASE } },
+    ]) {
+      const headers = { ...browserHeaders, ...request.headers };
+      const origin = headers.origin;
+      normalizeInvitationFormOrigin({ method: "POST", ...request, headers }, undefined, () => {});
+      expect(headers.origin).toBe(origin);
+    }
   });
 });

@@ -7,6 +7,7 @@ import { defineConfig } from "vite";
 import { cn } from "cn/vite";
 import { cnBuildOptions } from "./scripts/cn-build.ts";
 import { fileURLToPath } from "node:url";
+import { normalizeInvitationFormOrigin } from "./server/invitation-form-origin.ts";
 
 // Local development always uses a fictional operator unless explicitly set.
 if (process.env.NODE_ENV !== "production" && !process.env.TOMOLA_OPERATOR_DIR) {
@@ -28,6 +29,10 @@ export default defineConfig({
       strategy: ["custom-htmlLang", "baseLocale"],
     }),
     tailwindcss(),
+    {
+      name: "invitation-form-origin",
+      configureServer(server) { server.middlewares.use(normalizeInvitationFormOrigin); },
+    },
     reactRouter(),
     {
       name: "group-small-client-messages",

@@ -16,6 +16,7 @@ export const LONG_SIGNUP_VILLAGE_NAME = `Signup ${"l".repeat(110)}`;
 export const VILLAGE_MEMBER_FIXTURES: readonly SeedMember[] = [
   { email: "shared_link_operator@example.com", handle: "shared_link_operator", homeArea: "ja", uiLocale: "ja" },
   { email: "shared_link_existing@example.com", handle: "shared_link_existing", homeArea: "en", uiLocale: "en" },
+  { email: "shared_link_member@example.com", handle: "shared_link_member", homeArea: "en", uiLocale: "en" },
   ...["zcn_flow_owner", "zcn_flow_caller", "zcn_flow_reader", "zcn_flow_mod"].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "en" as const, readLangs: ["en" as const], uiLocale: "en" as const })),
   ...["basic", "paging", "native"].flatMap(scenario => ["author", "reader"].map(role => ({ email: `cs_${scenario}_${role}@example.com`, handle: `cs_${scenario}_${role}`, homeArea: "en" as const, readLangs: ["en" as const], uiLocale: "en" as const }))),
   ...["author", "noagree", "outsider"].map(role => ({ email: `cs_gate_${role}@example.com`, handle: `cs_gate_${role}`, homeArea: "en" as const, readLangs: ["en" as const], uiLocale: "en" as const })),
@@ -81,6 +82,7 @@ export const MEMBER_FIXTURES: readonly SeedMember[] = [
   ...["en", "ja"].map(locale => ({ email: `scribe_other_${locale}@example.com`, handle: `scribe_other_${locale}`, homeArea: "en" as const, uiLocale: locale as "en" | "ja" })),
   ...["zpalette_member", "zpalette_failure"].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "en" as const, uiLocale: "en" as const })),
   { email: "invite_bulk_operator@example.com", handle: "invite_bulk_operator", homeArea: "en", uiLocale: "en" },
+  { email: "invite_native_operator@example.com", handle: "invite_native_operator", homeArea: "en", uiLocale: "en" },
   { email: "reauth_operator@example.com", handle: "reauth_operator", homeArea: "en", uiLocale: "en" },
   { email: "reauth_target@example.com", handle: "reauth_target", homeArea: "en", uiLocale: "en" },
   ...["saved", "invalidated", "reply", "large", "failed", "flush", "submit", "delete", "visible"].map(name => ({ email: `departure_${name}@example.com`, handle: `departure_${name}`, homeArea: "en" as const, uiLocale: "en" as const })),

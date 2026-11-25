@@ -87,7 +87,7 @@ async function requireMemberImplementation(request: Request): Promise<Member> {
   if (request.method === "GET" && trialParticipationRequired() && needsTrialConsent(profile)) {
     const url = documentUrl(request);
     // Keep account controls, personal deletion and appeals reachable before agreement.
-    const selfService = /^\/(?:settings(?:\/|$)|appeal\/|notifications(?:\/|$)|following$|suspended$|invites\/new$|mcp\/consent$|u\/|t\/[1-9]\d*$|v\/[^/]+\/chat$)/.test(url.pathname)
+    const selfService = /^\/(?:settings(?:\/|$)|appeal\/|notifications(?:\/|$)|following$|suspended$|invites\/(?:new|shared)$|mcp\/consent$|u\/|t\/[1-9]\d*$|v\/[^/]+\/chat$)/.test(url.pathname)
       || /^\/[tc]\/[1-9]\d*\/history(?:\/(?:current|[1-9]\d*))?$/.test(url.pathname);
     const resource = ["/mentions/suggest", "/navigation-header"].includes(url.pathname);
     if (!selfService && !resource) throw redirect(`/onboarding?${new URLSearchParams({ next: url.pathname + url.search })}`);

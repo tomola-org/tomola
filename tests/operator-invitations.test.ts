@@ -236,7 +236,8 @@ it("offers only enabled mail languages, rejects a disabled choice, and separates
 
 it.each([1, 2])("shows message sharing only for a single result with a link, given %i results", async count => {
   const loaderData = await loader(h.args(h.request("/invites/new", { as: "bulk_operator" })));
-  const actionData = await post({ email: Array.from({ length: count }, (_, i) => `bulk_manual_${i}@example.com`).join("\n") });
+  const actionData = await post({ email: Array.from({ length: count }, (_, i) => `bulk_manual_${i}@example.com`).join("\n"), sendEmail: "0" });
+  if (actionData instanceof Response) throw new Error(`Unexpected redirect: ${actionData.status}`);
   const html = await renderInRouter(() => routeElement(InvitesNew, { loaderData, actionData: "data" in actionData ? actionData.data : actionData }), "/invites/new");
   expect(html.includes('id="invitation-message"')).toBe(count === 1);
   expect(html.includes(m.invites_copy_message())).toBe(count === 1);

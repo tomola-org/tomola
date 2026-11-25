@@ -1,12 +1,13 @@
-import { SharedInvitationsTable } from "~/components/shared-invitations-table";
-import { createSharedInvitation, listSharedInvitations, revokeSharedInvitation } from "~/lib/shared-invitations.server";
+import { InvitationLink } from "~/components/invitation-link";
+import { InvitationTabs } from "~/components/invitation-tabs";
+import { InvitationVillageSelect } from "~/components/invitation-village-select";
 import { withMarkdownRead } from "~/lib/markdown-budget.server";
-import { Field, FieldLabel } from "~/components/ui/field";
+import { Field, FieldLabel, FieldLegend, FieldSet } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
 import { LocalTime } from "~/components/local-time";
 import { Button } from "~/components/ui/button";
-import { data, Form, useNavigation } from "react-router";
+import { data, Form, redirect, useNavigation } from "react-router";
 import type { Route } from "./+types/invites-new";
 import { requireMember, requirePrivilegedWriteSession, requireWriter } from "~/lib/auth/session.server";
 import { parseEmail } from "~/lib/email";
@@ -15,7 +16,7 @@ import { assertSameOrigin } from "~/lib/http/csrf.server";
 import { hitMemberLimit, rateLimitHeaders } from "~/lib/rate-limit.server";
 import { inviteUrl } from "~/lib/site-url";
 import { m } from "~/paraglide/messages.js";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { createSignupInvitation, signupVillageChoices } from "~/lib/signup-village.server";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import { invitationNoteText, INVITATION_NOTE_MAX } from "~/lib/invitation-note";
@@ -37,7 +38,7 @@ async function loaderImplementation({ request }: Route.LoaderArgs) {
   if (!canCreateInvitations(operator)) throw data("Not found", { status: 404 });
   const rows = await listInvitations(db, { createdBy: user.id });
   // Account identities linked to recipient addresses are operator-only data.
-  return { operator, sharedInvitations: operator ? await listSharedInvitations(db, { createdBy: user.id }) : [], mailLanguages: operator ? enabledLangs() : [], locale: getLocale(), batchMax: OPERATOR_INVITATION_BATCH_MAX,
+  return { operator, mailLanguages: operator ? enabledLangs() : [], locale: getLocale(), batchMax: OPERATOR_INVITATION_BATCH_MAX,
     villages: await signupVillageChoices(db, user.id), ttlDays: INVITATION_TTL_DAYS, invitations: rows.map(({ id, email, status, createdAt, expiresAt }) => ({ id, email, status, createdAt: createdAt.toISOString(), expiresAt: expiresAt.toISOString() })) };
 }
 
@@ -49,16 +50,7 @@ export async function action({ request }: Route.ActionArgs) {
   const intent = form.get("intent");
   if (intent === "create-shared" || intent === "revoke-shared") {
     if (!operator) throw data("Not found", { status: 404 });
-    if (intent === "create-shared") await requireWriter(request);
-    await requirePrivilegedWriteSession(request);
-    if (intent === "revoke-shared") {
-      if (!await revokeSharedInvitation(db, String(form.get("id") ?? ""), user.id)) throw data("Not found", { status: 404 });
-      return { url: null, error: null };
-    }
-    const result = await createSharedInvitation(db, user, form);
-    if (result.error === "forbidden") throw data("Not found", { status: 404 });
-    if (result.error) return data({ url: null, error: null, sharedError: result.error }, { status: result.error === "rate_limited" ? 429 : 400, headers: headers() });
-    return data({ url: null, error: null, sharedUrl: inviteUrl(result.token) }, { headers: headers() });
+    return redirect("/invites/shared", { status: 303, headers: headers() });
   }
   const emailValues = form.getAll("email").map(String);
   const multipleEmails = emailValues.length > 1 || emailValues.some(value => value.split(/[\s,;]+/u).filter(Boolean).length > 1);
@@ -109,12 +101,6 @@ export default function InvitesNew({ actionData, loaderData }: Route.ComponentPr
   const navigation = useNavigation();
   const results = actionData && "results" in actionData ? actionData.results : undefined;
   const formRef = useRef<HTMLFormElement>(null);
-  const sharedFormRef = useRef<HTMLFormElement>(null);
-  const sharedUrl = actionData && "sharedUrl" in actionData ? actionData.sharedUrl : null;
-  const sharedError = actionData && "sharedError" in actionData ? actionData.sharedError : null;
-  useEffect(() => {
-    if (sharedUrl) sharedFormRef.current?.reset();
-  }, [sharedUrl]);
   // A created invitation empties the recipient and note, so a filled form is not mistaken for an unsent one.
   // The village, mail and language choices stay for the next invitation.
   useEffect(() => {
@@ -127,6 +113,7 @@ export default function InvitesNew({ actionData, loaderData }: Route.ComponentPr
   return (
     <main className="space-y-4">
       <h1 className="text-2xl font-bold">{m.invites_title()}</h1>
+      {loaderData.operator && <InvitationTabs current="email" />}
       <Form ref={formRef} method="post" className="space-y-2">
         <Field className="min-w-0 w-auto"><FieldLabel className="block">
           {loaderData.operator ? m.invites_bulk_emails() : m.invites_email()}
@@ -134,20 +121,31 @@ export default function InvitesNew({ actionData, loaderData }: Route.ComponentPr
         </FieldLabel></Field>
         {loaderData.operator && <>
           <p id="bulk-email-help" className="ui-help text-muted-foreground">{m.invites_bulk_help({ max: loaderData.batchMax })}</p>
-          <label className="flex items-center gap-2"><input type="checkbox" name="sendEmail" value="1" defaultChecked />{m.invites_bulk_send_email()}</label>
-          <Field className="min-w-0 w-auto"><FieldLabel className="block">{m.invites_bulk_mail_language()}
+          <FieldSet className="peer gap-2">
+            <FieldLegend>{m.invites_bulk_delivery()}</FieldLegend>
+            <div className="flex items-start gap-2">
+              <input id="invite-delivery-email" type="radio" name="sendEmail" value="1" defaultChecked className="mt-1" aria-describedby="invite-delivery-email-help" />
+              <div>
+                <FieldLabel htmlFor="invite-delivery-email">{m.invites_bulk_send_email()}</FieldLabel>
+                <p id="invite-delivery-email-help" className="ui-help text-muted-foreground">{m.invites_bulk_send_email_help()}</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-2">
+              <input id="invite-delivery-link" type="radio" name="sendEmail" value="0" className="mt-1" aria-describedby="invite-delivery-link-help" />
+              <div>
+                <FieldLabel htmlFor="invite-delivery-link">{m.invites_bulk_link_only()}</FieldLabel>
+                <p id="invite-delivery-link-help" className="ui-help text-muted-foreground">{m.invites_bulk_link_only_help()}</p>
+              </div>
+            </div>
+          </FieldSet>
+          <Field className="min-w-0 w-auto peer-has-[#invite-delivery-link:checked]:hidden"><FieldLabel className="block">{m.invites_bulk_mail_language()}
             <Select name="mailLocale" defaultValue={loaderData.locale} items={loaderData.mailLanguages.map(lang => ({ value: lang, label: LANG_LABELS[lang] }))}>
               <SelectTrigger className="w-full" aria-label={m.invites_bulk_mail_language()}><SelectValue /></SelectTrigger>
               <SelectContent>{loaderData.mailLanguages.map(lang => <SelectItem key={lang} value={lang}>{LANG_LABELS[lang]}</SelectItem>)}</SelectContent>
             </Select>
           </FieldLabel></Field>
         </>}
-        {loaderData.villages.length > 0 && <Field className="min-w-0 w-auto"><FieldLabel className="block">{m.invites_village()}
-          <Select name="villageId" defaultValue="" items={[{ value: "", label: m.invites_village_none() }, ...loaderData.villages.map(village => ({ value: village.id, label: village.name }))]}>
-            <SelectTrigger className="w-full" aria-label={m.invites_village()}><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="">{m.invites_village_none()}</SelectItem>{loaderData.villages.map(village => <SelectItem key={village.id} value={village.id}>{village.name}</SelectItem>)}</SelectContent>
-          </Select>
-        </FieldLabel></Field>}
+        <InvitationVillageSelect villages={loaderData.villages} />
         <Field className="min-w-0 w-auto"><FieldLabel className="block">
           {m.invites_note()}
           <Input name="note" type="text" className="block w-full" aria-invalid={actionData?.error === "invalid_note" || undefined} aria-describedby={actionData?.error === "invalid_note" ? "note-error" : undefined} />
@@ -175,37 +173,6 @@ export default function InvitesNew({ actionData, loaderData }: Route.ComponentPr
       </section>}
       {actionData?.url && <InvitationLink key={actionData.url} url={actionData.url} />}
       {actionData?.url && <p className="ui-help text-muted-foreground">{m.invites_once()}</p>}
-      {loaderData.operator && <section className="space-y-3">
-        <h2 className="text-xl font-semibold">{m.shared_invites_create()}</h2>
-        <Form ref={sharedFormRef} method="post" className="space-y-2">
-          <input type="hidden" name="intent" value="create-shared" />
-          <Field><FieldLabel>{m.shared_invites_label()}
-            <Input name="label" required maxLength={80} aria-describedby="shared-invitation-label-help" />
-          </FieldLabel></Field>
-          <p id="shared-invitation-label-help" className="ui-help text-muted-foreground">{m.shared_invites_label_help()}</p>
-          <Field><FieldLabel>{m.shared_invites_max_uses()}
-            <Input name="maxUses" type="number" required min={1} max={100} defaultValue={20} />
-          </FieldLabel></Field>
-          <Field><FieldLabel>{m.shared_invites_ttl()}
-            <Input name="ttlDays" type="number" required min={1} max={30} defaultValue={14} />
-          </FieldLabel></Field>
-          {loaderData.villages.length > 0 && <Field><FieldLabel htmlFor="shared-invitation-village">{m.invites_village()}</FieldLabel>
-            <select id="shared-invitation-village" name="villageId" className="block rounded-md border border-input bg-background p-2">
-              <option value="">{m.invites_village_none()}</option>
-              {loaderData.villages.map(village => <option key={village.id} value={village.id}>{village.name}</option>)}
-            </select>
-          </Field>}
-          <Button type="submit" disabled={navigation.state !== "idle"}>{m.shared_invites_create()}</Button>
-        </Form>
-        {sharedError && <p role="alert" className="text-destructive">{sharedError === "rate_limited" ? m.shared_invites_rate_limited()
-          : sharedError === "invalid_village" ? m.error_generic() : m.shared_invites_invalid()}</p>}
-        {sharedUrl && <>
-          <InvitationLink key={sharedUrl} url={sharedUrl} compact />
-          <p className="ui-help text-muted-foreground">{m.invites_once()}</p>
-        </>}
-        <h3 className="text-lg font-semibold">{m.shared_invites_title()}</h3>
-        <SharedInvitationsTable rows={loaderData.sharedInvitations} />
-      </section>}
       {/* The list has a heading only when there is something in it; an empty list says nothing. */}
       {loaderData.invitations.length > 0 && <section className="space-y-2">
         <h2 className="text-xl font-semibold">{m.invites_history()}</h2>
@@ -226,42 +193,6 @@ function invitationStatusText(status: OperatorInvitationStatus): string {
     existing: m.invites_result_existing, ineligible: m.invites_result_ineligible, invalid: m.invites_invalid_email,
     self: m.invites_self, send_failed: m.invites_result_send_failed };
   return messages[status]();
-}
-
-function InvitationLink({ url, compact = false }: { url: string; compact?: boolean }) {
-  const [notice, setNotice] = useState<"copied" | "message_copied" | "failed" | null>(null);
-  // The share sheet is offered only where the browser has one (mostly phones), after hydration.
-  const [canShare, setCanShare] = useState(false);
-  useEffect(() => setCanShare(typeof navigator.share === "function"), []);
-  const message = m.invites_message({ url });
-  async function copy(text: string, done: "copied" | "message_copied") {
-    try {
-      await navigator.clipboard.writeText(text);
-      setNotice(done);
-    } catch {
-      setNotice("failed");
-    }
-  }
-  async function share() {
-    try { await navigator.share({ text: message }); } catch { /* Closing the share sheet is not an error. */ }
-  }
-  return (
-    <div className="space-y-3">
-      <p>{m.invites_created()} <code className="break-all">{url}</code></p>
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" onClick={() => void copy(url, "copied")} variant="outline">{m.invites_copy()}</Button>
-      </div>
-      {!compact && <div className="space-y-2">
-        <label htmlFor="invitation-message" className="block ui-meta text-muted-foreground">{m.invites_message_label()}</label>
-        <Textarea id="invitation-message" readOnly rows={4} value={message} className="block w-full text-sm" />
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" onClick={() => void copy(message, "message_copied")} variant="outline">{m.invites_copy_message()}</Button>
-          {canShare && <Button type="button" onClick={() => void share()} variant="outline">{m.invites_share()}</Button>}
-        </div>
-      </div>}
-      {notice && <p role="status">{notice === "copied" ? m.invites_copied() : notice === "message_copied" ? m.invites_message_copied() : m.invites_copy_failed()}</p>}
-    </div>
-  );
 }
 
 // Native POSTs revalidate loaders inside the original write middleware.
