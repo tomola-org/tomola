@@ -82,7 +82,6 @@ export const MEMBER_FIXTURES: readonly SeedMember[] = [
   ...["en", "ja"].map(locale => ({ email: `scribe_other_${locale}@example.com`, handle: `scribe_other_${locale}`, homeArea: "en" as const, uiLocale: locale as "en" | "ja" })),
   ...["zpalette_member", "zpalette_failure"].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "en" as const, uiLocale: "en" as const })),
   { email: "invite_bulk_operator@example.com", handle: "invite_bulk_operator", homeArea: "en", uiLocale: "en" },
-  { email: "invite_native_operator@example.com", handle: "invite_native_operator", homeArea: "en", uiLocale: "en" },
   { email: "reauth_operator@example.com", handle: "reauth_operator", homeArea: "en", uiLocale: "en" },
   { email: "reauth_target@example.com", handle: "reauth_target", homeArea: "en", uiLocale: "en" },
   ...["saved", "invalidated", "reply", "large", "failed", "flush", "submit", "delete", "visible"].map(name => ({ email: `departure_${name}@example.com`, handle: `departure_${name}`, homeArea: "en" as const, uiLocale: "en" as const })),

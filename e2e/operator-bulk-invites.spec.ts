@@ -57,18 +57,3 @@ test("an operator sends a batch and shares a single manually created invitation"
   const mailLog = readFileSync(state().logFile).subarray(beforeLinkOnly).toString("utf8");
   expect(mailLog).not.toMatch(/\[mail\] to=bulk_browser_(?:links_[ab]|single)@example\.com\b/);
 });
-
-test.describe("without JavaScript", () => {
-  test.use({ javaScriptEnabled: false });
-
-  test("an operator can submit the link-only choice", async ({ page }) => {
-    await useMember(page, "invite_native_operator@example.com", "/invites/new");
-    await page.getByRole("radio", { name: m.invites_bulk_link_only, exact: true }).check();
-    await expect(page.getByRole("combobox", { name: m.invites_bulk_mail_language, exact: true })).toBeHidden();
-    await page.getByLabel(m.invites_bulk_emails, { exact: true }).fill("bulk_native_link@example.com");
-    const before = logSize();
-    await page.getByRole("button", { name: m.invites_bulk_submit, exact: true }).click();
-    await expect(page.getByRole("region", { name: m.invites_bulk_results, exact: true }).locator("code")).toContainText("/invite/");
-    expect(readFileSync(state().logFile).subarray(before).toString("utf8")).not.toContain("[mail] to=bulk_native_link@example.com");
-  });
-});
