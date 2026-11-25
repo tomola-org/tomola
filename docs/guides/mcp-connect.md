@@ -12,7 +12,7 @@ The AI tools stop waiting for the browser step after about five minutes; the sig
 
 Reusing a rotated refresh token after the 30-second retry window ends that sign-in and immediately invalidates its access tokens. Sign in again to reconnect. Your other sign-ins of the same tool and your consent stay active. Clients that share a sign-in across processes should coordinate rotation and save the new refresh token where every process can read it.
 
-See when each connection was last used, and revoke it, at `/settings/connections`. A revoked connection stops from the next request. Information that has already reached an AI provider cannot be taken back. To use a PAT, create a separate token for each AI at `/settings/tokens`. If you give the same PAT to several AIs, tomola cannot tell them apart and treats their drafts as drafts of the same client.
+See when each connection was last used, and revoke it, at `/settings/connections`. A revoked connection stops from the next request. Information that has already reached an AI provider cannot be taken back. To use a PAT, create a separate token for each AI at `/settings/tokens`. If you give the same PAT to several AIs, tomola attributes their edits to the same token and treats their creation request IDs as belonging to one client.
 
 To log in by email, enter the 6-digit code in the browser that asked for it, or open the emailed link in the same browser and confirm. After logging in with the code, you return to the original OAuth consent screen.
 
@@ -38,7 +38,7 @@ Do not write the token in a configuration file; send it from an environment vari
 codex mcp add tomola-read --url https://tomola.example.org/mcp --bearer-token-env-var TOMOLA_READ_TOKEN
 ```
 
-Set `TOMOLA_READ_TOKEN` to a read PAT dedicated to that client. If you set a draft PAT under another name, it cannot read posts and handles only its own client's drafts. With OAuth, you can check the permissions one by one.
+Set `TOMOLA_READ_TOKEN` to a read PAT dedicated to that client. If you set a draft PAT under another name, it can work on drafts made by any of your AI connections. Browser-written drafts and forum posts are outside its scope. With OAuth, you can check the permissions one by one.
 
 ## Member tools
 
@@ -59,11 +59,11 @@ Use OAuth with both scopes for tools that require `read` and `draft` together. A
 
 ### Drafts and review links
 
-Drafts are limited to the authenticated client that created them. Give a new draft a unique `requestId` and use the same arguments when retrying a creation. To revise or discard a draft, read its current version with `tomola_draft_get` and supply it as `expectedVersion`. Read the current draft again after a conflict and preserve the member's changes. `tomola_draft_status` reports `pending`, `published`, `discarded` or `unknown`. A published result includes `entryUrl` while the post is readable.
+Your AI connections with draft permission can work on drafts made by any of those connections. Browser-written drafts are excluded. Give a new draft a unique `requestId` within its connection and use the same arguments when retrying a creation. To revise or discard a draft, read its current version with `tomola_draft_get` and supply it as `expectedVersion`. On conflict, read the current text and merge your changes with edits by the member or another AI. Sending the same text with a newer version alone can overwrite those edits. `tomola_draft_status` reports `pending`, `published`, `discarded` or `unknown`. A published result includes `entryUrl` while the post is readable.
 
 Open `approvalUrl` in a browser to check the draft and publish. For an existing post or reply, the client can call `tomola_entry_edit_prepare` with `entryId` and the proposed fields. Open its `approvalUrl` to check the changes and apply them. If the published post changes first, prepare a fresh proposal and review it. Edit proposals expire after seven days. Call `tomola_entry_delete_prepare` with `entryId` to open a deletion review for your own post. Deleting a topic makes all its replies unreadable. Deleting a reply leaves its replies readable. The confirmation page shows the impact before you decide.
 
-Publication, applying an edit or a village proposal, and deletion of an existing post use your browser session. Automatic publication through MCP is unsupported. For private stance records, select and copy the records you need from your own screen.
+Your AI connections can read and discard each other’s proposals with the required permissions. Publication, applying an edit or a village proposal, and deletion of an existing post use your browser session. Automatic publication through MCP is unsupported. For private stance records, select and copy the records you need from your own screen.
 
 ### Village destinations
 

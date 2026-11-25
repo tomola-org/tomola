@@ -57,7 +57,7 @@ export function registerVillageProposalTools(server: McpServer, db: Db, principa
     ? mcpText(JSON.stringify({ ...result.proposal, approvalUrl: siteUrl(villageProposalPath(result.proposal.id)) }), "village_proposal")
     : failure(result.error);
   server.registerTool("tomola_village_change_prepare", {
-    description: "Prepare an own-client change to a shared village you manage. Supply the proposed name, description or icon operation. Icon changes also require media permission. Upload a still image with POST /api/media for a replacement. Give the member approvalUrl to review and apply in the browser." + MCP_CONTENT_WARNING,
+    description: "Prepare a change to a shared village you manage. Supply the proposed name, description or icon operation. Icon changes also require media permission. Upload a still image with POST /api/media for a replacement. Give the member approvalUrl to review and apply in the browser." + MCP_CONTENT_WARNING,
     inputSchema: prepareInput,
     scopeChallenge: context => {
       const parsed = prepareInput.safeParse(context.request.params?.arguments);
@@ -72,18 +72,18 @@ export function registerVillageProposalTools(server: McpServer, db: Db, principa
     return render(await createVillageProposal(db, userId, client, { ...args, slug: args.slug.toLowerCase() }));
   }));
   server.registerTool("tomola_village_change_get", {
-    description: "Read a pending own-client village proposal and its review URL." + MCP_CONTENT_WARNING,
+    description: "Read a pending village proposal created by any of the member's AI connections and its review URL." + MCP_CONTENT_WARNING,
     inputSchema: proposalInput,
     scopeChallenge: proposalScopes,
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-  }, async ({ id }) => read("tomola_village_change_get", async () => scopes.has("read") ? render(await getClientVillageProposal(db, userId, client, id)) : failure("The read scope is required.")));
+  }, async ({ id }) => read("tomola_village_change_get", async () => scopes.has("read") ? render(await getClientVillageProposal(db, userId, id)) : failure("The read scope is required.")));
   server.registerTool("tomola_village_change_discard", {
-    description: "Discard an own-client village proposal before browser approval." + MCP_CONTENT_WARNING,
+    description: "Discard a village proposal created by any of the member's AI connections before browser approval." + MCP_CONTENT_WARNING,
     inputSchema: proposalInput,
     scopeChallenge: proposalScopes,
     annotations: { destructiveHint: true, openWorldHint: false },
   }, async ({ id }) => write("tomola_village_change_discard", async () => {
     if (!scopes.has("read")) return failure("The read scope is required.");
-    return (await discardClientVillageProposal(db, userId, client, id)) ? mcpText("Proposal discarded.") : failure("not_found");
+    return (await discardClientVillageProposal(db, userId, id)) ? mcpText("Proposal discarded.") : failure("not_found");
   }));
 }

@@ -148,19 +148,19 @@ export async function createVillageProposal(db: Db, userId: string, client: McpC
   });
 }
 
-export async function getClientVillageProposal(db: Db, userId: string, client: McpClientIdentity, id: string) {
+export async function getClientVillageProposal(db: Db, userId: string, id: string) {
   if (!villagesEnabled() || !proposalId.test(id)) return failure("not_found");
   const [row] = await db.select({
     id: villageProposals.id, sourceVersion: villageProposals.sourceVersion, name: villageProposals.name, description: villageProposals.description,
     iconAction: villageProposals.iconAction, expiresAt: villageProposals.expiresAt, village: villages, lastChangeId: lastChange(villages.id),
   }).from(villageProposals).innerJoin(villages, eq(villages.id, villageProposals.villageId))
-    .innerJoin(villageMembers, ownerJoin(userId)).where(and(pending(userId, id, new Date()), eq(villageProposals.clientKey, client.key), eligibleVillage()));
+    .innerJoin(villageMembers, ownerJoin(userId)).where(and(pending(userId, id, new Date()), eligibleVillage()));
   return row ? { ok: true as const, proposal: clientView(row, row.village, row.lastChangeId) } : failure("not_found");
 }
 
-export async function discardClientVillageProposal(db: Db, userId: string, client: McpClientIdentity, id: string) {
+export async function discardClientVillageProposal(db: Db, userId: string, id: string) {
   if (!villagesEnabled() || !proposalId.test(id)) return false;
-  return discardProposal(db, and(pending(userId, id, new Date()), eq(villageProposals.clientKey, client.key))!);
+  return discardProposal(db, pending(userId, id, new Date()));
 }
 
 async function discardProposal(db: Db, filter: SQL) {

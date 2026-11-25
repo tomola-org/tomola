@@ -836,8 +836,9 @@ export const drafts = pgTable(
     tokenId: bigint("token_id", { mode: "number" }).references(() => apiTokens.id, { onDelete: "set null" }),
     rawFrontmatter: text("raw_frontmatter"),
     // Stable authenticated creator identity, never supplied by tool arguments or MCP clientInfo.
-    // OAuth uses oauth:<client_id>; personal tokens use token:<database id>. Null legacy API rows remain bound to tokenId.
+    // OAuth uses oauth:<client_id>; personal tokens use token:<database id>. Legacy API rows may have no client key.
     clientKey: text("client_key"),
+    // The most recent AI writer, shown in browser review and preview.
     clientId: text("client_id"),
     clientName: text("client_name"),
     clientUri: text("client_uri"),

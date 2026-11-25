@@ -379,6 +379,6 @@ Each thread and list page has an "Open in AI" button. The first time, you choose
 
 ## 6. MCP
 
-See ${o}/help/mcp.md for how to connect an AI through MCP. OAuth allows separate read/draft permissions; a PAT grants only its existing kind. A draft token can read its own client's drafts, but cannot read forum content. All draft changes require your browser review before publication.
+See ${o}/help/mcp.md for how to connect an AI through MCP. OAuth allows separate read/draft permissions; a PAT grants only its existing kind. A draft token can work on drafts made by any of the member's AI connections. Browser-written drafts and forum content are outside its scope. All draft changes require your browser review before publication.
 ` + villageGuide(o);
 }

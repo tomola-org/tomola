@@ -242,7 +242,7 @@ it("preserves AI review metadata and an unreadable immutable original when copyi
   await h.db.update(entries).set({ deletedAt: new Date() }).where(eq(entries.id, origin.id));
   const copy = await saved({ newTopic: "0", draftId: String(created.id), version: "1", fork: "1", title: "A retained alternative", body: "The human's retained copy", asksStance: "1", altOf: "999999" });
   expect(await getDraft(h.db, h.ids.writer, copy.id)).toMatchObject({ via: "web", clientId: "fixture", clientName: "Fixture AI", clientUpdatedAt: initial.clientUpdatedAt, altOf: origin.id, altTitle: null, aiAssistance: "coauthor", body: "The human's retained copy" });
-  expect(await getClientDraft(h.db, h.ids.writer, { key: "oauth:fixture", id: "fixture", name: "Fixture AI", uri: "https://example.org", tokenId: null }, copy.id)).toBeNull();
+  expect(await getClientDraft(h.db, h.ids.writer, copy.id)).toBeNull();
   expect(await publishDraft(h.db, h.ids.writer, copy.id)).toMatchObject({ ok: false, error: "invalid_alt_of" });
   const legacy = await createDraft(h.db, h.ids.writer, { kind: "topic", body: "A token-created draft", lang: "en" }, { via: "api" });
   if (!legacy.ok) throw new Error(legacy.error);

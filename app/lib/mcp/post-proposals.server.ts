@@ -72,15 +72,15 @@ export async function prepareEntryEdit(db: Db, userId: string, client: McpClient
   });
 }
 
-export async function getClientEntryEditStatus(db: Db, userId: string, client: McpClientIdentity, id: number, now = new Date()) {
+export async function getClientEntryEditStatus(db: Db, userId: string, id: number, now = new Date()) {
   const [row] = await db.select(proposalFields).from(entryEditProposals)
-    .where(and(authorProposal(userId, id), eq(entryEditProposals.clientKey, client.key), gt(entryEditProposals.expiresAt, now)));
+    .where(and(authorProposal(userId, id), gt(entryEditProposals.expiresAt, now)));
   return proposalStatus(db, id, row);
 }
 
-export async function getClientEntryEdit(db: Db, userId: string, client: McpClientIdentity, id: number, now = new Date()) {
+export async function getClientEntryEdit(db: Db, userId: string, id: number, now = new Date()) {
   const [proposal] = await db.select().from(entryEditProposals)
-    .where(and(authorProposal(userId, id), eq(entryEditProposals.clientKey, client.key), activeProposal(now)));
+    .where(and(authorProposal(userId, id), activeProposal(now)));
   if (!proposal) return null;
   const entry = await ownVisibleEntry(db, userId, proposal.entryId);
   if (!entry) return null;
@@ -89,10 +89,10 @@ export async function getClientEntryEdit(db: Db, userId: string, client: McpClie
     approvalUrl: siteUrl(editPath(id)), expiresAt: proposal.expiresAt.toISOString() };
 }
 
-export async function discardEntryEdit(db: Db, userId: string, id: number, expectedVersion: number, client?: McpClientIdentity, now = new Date()) {
+export async function discardEntryEdit(db: Db, userId: string, id: number, expectedVersion: number, now = new Date()) {
   const [row] = await db.update(entryEditProposals).set({
     state: "discarded", title: null, body: null, lang: null, version: sql`${entryEditProposals.version} + 1`, finishedAt: now,
-  }).where(and(authorProposal(userId, id), client ? eq(entryEditProposals.clientKey, client.key) : undefined,
+  }).where(and(authorProposal(userId, id),
     activeProposal(now), eq(entryEditProposals.version, expectedVersion))).returning({ id: entryEditProposals.id });
   return row !== undefined;
 }

@@ -30,25 +30,25 @@ export function registerPostWorkflowTools(server: McpServer, db: Db, principal: 
     return prepared.ok ? result(prepared.proposal) : failure(prepared.error);
   }));
   server.registerTool("tomola_entry_edit_get", {
-    description: "Read a pending edit proposal created by this client, its base entry version and the approval URL." + contentWarning,
+    description: "Read a pending edit proposal created by any of the member's AI connections, its base entry version and the approval URL." + contentWarning,
     inputSchema: z.object({ id }), scopeChallenge: both, annotations: { readOnlyHint: true, openWorldHint: false },
   }, async (args) => runDraftRead("tomola_entry_edit_get", async () => {
     if (!canRead()) return failure("The read scope is required.");
-    const proposed = await getClientEntryEdit(db, userId, client, args.id);
+    const proposed = await getClientEntryEdit(db, userId, args.id);
     return proposed ? result(proposed) : failure("not_found");
   }));
   server.registerTool("tomola_entry_edit_status", {
-    description: "Check the status of an edit proposal created by this client. Returns pending, applied, discarded or unknown with no post or proposal text." + contentWarning,
+    description: "Check the status of an edit proposal created by any of the member's AI connections. Returns pending, applied, discarded or unknown with no post or proposal text." + contentWarning,
     inputSchema: z.object({ id }), scopeChallenge: requireScopes("draft"), annotations: { readOnlyHint: true, openWorldHint: false },
-  }, async (args) => runDraftRead("tomola_entry_edit_status", async () => result(await getClientEntryEditStatus(db, userId, client, args.id))));
+  }, async (args) => runDraftRead("tomola_entry_edit_status", async () => result(await getClientEntryEditStatus(db, userId, args.id))));
   server.registerTool("tomola_entry_edit_discard", {
-    description: "Discard a pending edit proposal created by this client at the specified version." + contentWarning,
+    description: "Discard a pending edit proposal created by any of the member's AI connections at the specified version." + contentWarning,
     inputSchema: z.object({ id, expectedVersion: z.number().int().positive().max(2_147_483_647) }),
     scopeChallenge: requireScopes("draft"), annotations: { destructiveHint: true, openWorldHint: false },
   }, async (args) => runDraft("tomola_entry_edit_discard", async () => {
-    const discarded = await discardEntryEdit(db, userId, args.id, args.expectedVersion, client);
-    if (discarded) return result(await getClientEntryEditStatus(db, userId, client, args.id));
-    const current = await getClientEntryEditStatus(db, userId, client, args.id);
+    const discarded = await discardEntryEdit(db, userId, args.id, args.expectedVersion);
+    if (discarded) return result(await getClientEntryEditStatus(db, userId, args.id));
+    const current = await getClientEntryEditStatus(db, userId, args.id);
     return failure(current.status === "unknown" ? "not_found" : "edit_conflict");
   }));
   server.registerTool("tomola_entry_delete_prepare", {

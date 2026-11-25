@@ -1500,7 +1500,7 @@
   "mcp_disclosure": "Information read by the AI is sent to its provider. Removing the AI stops future access, but information already sent cannot be taken back.",
   "mcp_private_records": "Your own stances and stance-change records are not shared with AI. You can select and copy records yourself on the \"Your stances\" page in Settings.",
   "mcp_scope_read": "Read members' posts, translations, notifications about posts, and the shared glossary.",
-  "mcp_scope_draft": "Create, read, edit and delete only drafts created by this client. Publishing requires your approval in the browser.",
+  "mcp_scope_draft": "Create, read, edit and delete drafts made by your AI connections (not drafts you write in the browser). Publishing requires your approval in the browser.",
   "mcp_scope_offline": "The AI stays connected until you remove it (this cannot be deselected here). To stop, remove it under “{settings}” in Settings.",
   "mcp_no_permissions": "This app requested neither reading nor draft access, so it cannot be connected. Specify the abilities in your AI app and try again.",
   "mcp_allow": "Connect",

@@ -11,7 +11,7 @@ import * as rates from "~/lib/rate-limit.server";
 import { createAuth } from "~/lib/auth/auth.server";
 import { isAllowedAuthEndpoint } from "~/lib/auth/endpoints.server";
 import type { Db } from "~/lib/db/client.server";
-import { oauthAccessToken, oauthClientAssertion, oauthConsent, oauthClient, drafts, entries, notifications, profiles, translations, oauthRefreshToken, mcpRevokedToken, rateLimits, session, verification, villages, villageMembers } from "~/lib/db/schema";
+import { apiTokens, draftReceipts, oauthAccessToken, oauthClientAssertion, oauthConsent, oauthClient, drafts, entries, notifications, profiles, translations, oauthRefreshToken, mcpRevokedToken, rateLimits, session, verification, villages, villageMembers } from "~/lib/db/schema";
 import { browserBindingIdentifier } from "~/lib/auth/magic-link-browser.server";
 import { lineMark, revokedLineId } from "~/lib/mcp/line.server";
 import { authenticateRead } from "~/lib/api/read-auth.server";
@@ -24,7 +24,7 @@ import { loadConsentRequest, authorizationRedirect, consentRequestValid } from "
 import { listConnections, pruneRotationReplays, pruneUnusedClients, revokeConnection } from "~/lib/mcp/connections.server";
 import { signOpenInAiToken, verifyOpenInAiToken } from "~/lib/open-in-ai.server";
 import { recoverPasskeys } from "~/lib/auth/passkeys.server";
-import { createClientDraft, deleteClientDraft, getClientDraft, listClientDrafts, updateClientDraft, type McpClientIdentity } from "~/lib/mcp/drafts.server";
+import { createClientDraft, deleteClientDraft, getClientDraft, getClientDraftStatus, listClientDrafts, updateClientDraft, type McpClientIdentity } from "~/lib/mcp/drafts.server";
 import { magicLinkOutcome } from "~/lib/auth/magic-link.server";
 import { hashMagicLinkToken } from "~/lib/auth/plugins";
 import { createMaintenanceHandlers, ensureCleanupScheduled } from "~/lib/jobs/maintenance-jobs.server";
@@ -225,6 +225,7 @@ async function memberOutput(response: Response) {
 }
 
 const memberJson = async (response: Response) => JSON.parse(parseBlocks(await memberOutput(response))[0].body);
+const callForJson = async (credential: string, name: string, args: object = {}) => memberJson(await memberCall(credential, name, args));
 
 describe("Member MCP workflow discovery", () => {
   it("reports effective consent even when no scopes remain and distinguishes browser confirmation", async () => {
@@ -250,6 +251,9 @@ describe("Member MCP workflow discovery", () => {
       await db.update(oauthConsent).set({ scopes: [] }).where(eq(oauthConsent.clientId, clientId));
       expect(await memberJson(await memberCall(token, "tomola_capabilities"))).toMatchObject({ scopes: [] });
       expect((await memberCall(token, "tomola_latest")).status).toBe(403);
+      for (const name of ["tomola_draft_create", "tomola_draft_list", "tomola_draft_get", "tomola_draft_status", "tomola_draft_update", "tomola_draft_delete"]) {
+        expect((await memberCall(token, name)).status).toBe(403);
+      }
     } finally { vi.unstubAllEnvs(); vi.stubEnv("BETTER_AUTH_URL", base); vi.stubEnv("ENABLED_LANGS", "ja,en"); }
   });
 
@@ -302,15 +306,29 @@ describe("Member MCP workflow discovery", () => {
       const proposal = await memberJson(await memberCall(oauth, "tomola_village_change_prepare", { slug: shared.slug, name: "Proposed fixture name" }));
       expect(proposal).toMatchObject({ village: shared.slug, status: "pending", approvalUrl: `${base}/village-proposals/${proposal.id}` });
       const other = (await authorize(await register())).access_token;
-      const inaccessible = await memberCall(other, "tomola_village_change_get", { id: proposal.id });
-      expect((await inaccessible.json()).result.isError).toBe(true);
-      expect(await memberJson(await memberCall(oauth, "tomola_village_change_get", { id: proposal.id }))).toEqual(proposal);
-      expect(await memberOutput(await memberCall(oauth, "tomola_village_change_discard", { id: proposal.id }))).toContain("Proposal discarded.");
+      expect(await callForJson(other, "tomola_village_change_get", { id: proposal.id })).toEqual(proposal);
+      expect((await memberCall(other, "tomola_village_change_prepare", { slug: shared.slug, icon: { action: "reset" } })).status).toBe(403);
+      expect(await memberOutput(await memberCall(other, "tomola_village_change_discard", { id: proposal.id }))).toContain("Proposal discarded.");
     } finally { vi.stubEnv("VILLAGES", ""); }
   });
 });
 
 describe("MCP ownership and output security", () => {
+  it("reads, tracks and discards a post edit proposed by another connection of the same member", async () => {
+    const first = (await authorize(await register())).access_token;
+    const second = (await authorize(await register())).access_token;
+    const topic = await createTopic(db, "member", { body: "Existing post", lang: "en" });
+    if (!topic.ok) throw new Error(topic.error);
+    const body = "A proposed revision";
+    const proposal = await callForJson(first, "tomola_entry_edit_prepare", { entryId: topic.id, body });
+    expect(await callForJson(second, "tomola_entry_edit_get", { id: proposal.id })).toMatchObject({ body, version: proposal.version });
+    expect(await callForJson(second, "tomola_entry_edit_status", { id: proposal.id })).toEqual(proposal);
+    expect(await callForJson(second, "tomola_entry_edit_discard", { id: proposal.id, expectedVersion: proposal.version }))
+      .toMatchObject({ status: "discarded", version: proposal.version + 1 });
+    expect(await callForJson(first, "tomola_entry_edit_status", { id: proposal.id })).toMatchObject({ status: "discarded" });
+    expect((await db.select().from(entries).where(eq(entries.id, topic.id)))[0].body).toBe("Existing post");
+  });
+
   it("cannot obtain draft confirmation with an OAuth bearer token alone", async () => {
     const accessToken = (await authorize(await register())).access_token;
     const draft = await memberJson(await memberCall(accessToken, "tomola_draft_create", { kind: "topic", body: "OAuth confirmation fixture", lang: "en" }));
@@ -426,24 +444,93 @@ describe("MCP ownership and output security", () => {
       expect(await db.select().from(drafts).orderBy(drafts.id)).toEqual(before);
     } finally { spy.mockRestore(); }
   });
-  it("binds CRUD before reading rows, including same-member other clients and browser drafts", async () => {
-    const own = await createClientDraft(db, "member", a, { kind: "topic", lang: "ja", body: "client A body" });
-    const other = await createClientDraft(db, "member", b, { kind: "topic", lang: "ja", body: "client B private" });
-    const browser = await createDraft(db, "member", { kind: "topic", lang: "ja", body: "browser private" });
-    if (!own.ok || !other.ok || !browser.ok) throw new Error("fixture drafts");
-    expect((await listClientDrafts(db, "member", a)).map((row) => row.id)).toContain(own.id);
-    for (const forbidden of [other.id, browser.id]) {
-      expect(await getClientDraft(db, "member", a, forbidden)).toBeNull();
-      expect(await updateClientDraft(db, "member", a, forbidden, { expectedVersion: 1, body: "other draft" })).toMatchObject({ ok: false, error: "not_found" });
-      expect(await deleteClientDraft(db, "member", a, forbidden, 1)).toEqual({ ok: false, error: "not_found" });
+  it("shares AI drafts within a member and excludes browser drafts and other members", async () => {
+    const shared = await createClientDraft(db, "member", b, { kind: "topic", lang: "ja", body: "Shared draft" });
+    const browser = await createDraft(db, "member", { kind: "topic", lang: "ja", body: "Browser draft" });
+    const foreign = await createClientDraft(db, "other", b, { kind: "topic", lang: "ja", body: "Another member's draft" });
+    if (!shared.ok || !browser.ok || !foreign.ok) throw new Error("fixture drafts");
+    const listed = (await listClientDrafts(db, "member")).map(row => row.id);
+    expect(listed).toContain(shared.id);
+    expect(listed).not.toContain(browser.id);
+    expect(listed).not.toContain(foreign.id);
+    expect(await getClientDraft(db, "member", shared.id)).toMatchObject({ body: "Shared draft", clientName: b.name });
+    expect(await getClientDraftStatus(db, "member", shared.id)).toEqual({ draftId: shared.id, status: "pending", version: 1 });
+    for (const id of [browser.id, foreign.id, Number.MAX_SAFE_INTEGER]) {
+      expect(await getClientDraft(db, "member", id)).toBeNull();
+      expect(await getClientDraftStatus(db, "member", id)).toEqual({ draftId: id, status: "unknown" });
+      for (const client of [a, b]) {
+        expect(await updateClientDraft(db, "member", client, id, { expectedVersion: 1, body: "Other draft" })).toEqual({ ok: false, error: "not_found" });
+      }
+      expect(await deleteClientDraft(db, "member", id, 1)).toEqual({ ok: false, error: "not_found" });
     }
-    expect(await getClientDraft(db, "other", a, own.id)).toBeNull();
-    expect(await updateClientDraft(db, "member", a, own.id, { expectedVersion: 1, body: "edited" })).toMatchObject({ ok: true });
-    expect(await getClientDraft(db, "member", a, own.id)).toMatchObject({ body: "edited", version: 2, clientId: "client-a", clientName: "A", clientUpdatedAt: expect.any(Date) });
-    expect(await updateClientDraft(db, "member", a, own.id, { expectedVersion: 2, title: "Only the title changes" })).toMatchObject({ ok: true });
-    expect(await getClientDraft(db, "member", a, own.id)).toMatchObject({ body: "edited", title: "Only the title changes", version: 3 });
-    expect(await getClientDraft(db, "member", b, other.id)).toMatchObject({ body: "client B private", version: 1 });
-    expect(await deleteClientDraft(db, "member", a, own.id, 3)).toEqual({ ok: true });
+    const now = new Date();
+    expect(await updateClientDraft(db, "member", a, shared.id, { expectedVersion: 1, body: "Edited" }, now)).toMatchObject({ ok: true, version: 2 });
+    expect(await getClientDraft(db, "member", shared.id)).toMatchObject({
+      body: "Edited", version: 2, clientId: a.id, clientName: a.name, clientUri: a.uri, clientUpdatedAt: now, clientKey: b.key,
+    });
+    expect(await updateClientDraft(db, "member", b, shared.id, { expectedVersion: 1, body: "Stale edit" })).toEqual({ ok: false, error: "draft_conflict" });
+    expect(await deleteClientDraft(db, "member", shared.id, 1)).toEqual({ ok: false, error: "draft_conflict" });
+    expect(await updateClientDraft(db, "member", a, shared.id, { expectedVersion: 2, title: "Only the title changes" })).toMatchObject({ ok: true, version: 3 });
+    expect(await getClientDraft(db, "member", shared.id)).toMatchObject({ body: "Edited", title: "Only the title changes", version: 3 });
+    expect(await deleteClientDraft(db, "member", shared.id, 3)).toEqual({ ok: true });
+    expect(await getClientDraftStatus(db, "member", shared.id)).toEqual({ draftId: shared.id, status: "discarded" });
+  });
+
+  it("shares drafts across OAuth and personal tokens with client-scoped creation retries", async () => {
+    const clientId = await register({ client_name: "OAuth draft editor", client_uri: "https://editor.example.org" });
+    const oauth = (await authorize(clientId)).access_token;
+    const pat = await createApiToken(db, "member", { name: "Draft token fixture", kind: "draft" });
+    if (!pat.ok) throw new Error(pat.error);
+    const input = { requestId: "shared-creation-replay", kind: "topic", lang: "en", body: "Original AI draft" };
+    const created = await callForJson(pat.token, "tomola_draft_create", input);
+    const oauthDraft = await callForJson(oauth, "tomola_draft_create", input);
+    expect(oauthDraft.id).not.toBe(created.id);
+    expect(await callForJson(oauth, "tomola_draft_get", { id: created.id })).toMatchObject({ id: created.id, clientName: "Draft token fixture" });
+    expect(await callForJson(pat.token, "tomola_draft_get", { id: oauthDraft.id })).toMatchObject({ id: oauthDraft.id, clientName: "OAuth draft editor" });
+    expect(await callForJson(pat.token, "tomola_draft_update", { id: oauthDraft.id, expectedVersion: 1, body: "Edited using a PAT" }))
+      .toMatchObject({ version: 2, clientName: "Draft token fixture" });
+
+    const [receipt] = await db.select().from(draftReceipts).where(eq(draftReceipts.draftId, created.id));
+    const args = { id: created.id, expectedVersion: 1, body: "Edited using OAuth" };
+    expect(await callForJson(oauth, "tomola_draft_update", {
+      ...args, via: "web", authorId: "other", tokenId: null, clientKey: "other", clientId: "other",
+      clientName: "Other", clientUri: "https://other.example.org", clientUpdatedAt: "2000-01-01T00:00:00Z",
+    })).toMatchObject({ body: args.body, version: 2, clientId, clientName: "OAuth draft editor", clientUri: "https://editor.example.org" });
+    const edited = await getClientDraft(db, "member", created.id);
+    expect(edited).toMatchObject({
+      via: "api", authorId: "member", tokenId: pat.summary.id, clientKey: `token:${pat.summary.id}`, clientId,
+      clientName: "OAuth draft editor", clientUri: "https://editor.example.org", clientUpdatedAt: expect.any(Date),
+      aiBaseline: { title: null, body: args.body },
+    });
+    expect(await db.select().from(draftReceipts).where(eq(draftReceipts.draftId, created.id))).toEqual([receipt]);
+    expect(receipt).toMatchObject({ clientKey: edited?.clientKey, requestHash: expect.any(String) });
+
+    expect(await callForJson(pat.token, "tomola_draft_update", { ...args, expectedVersion: 2 })).toMatchObject({ version: 2, clientName: "OAuth draft editor" });
+    expect(await callForJson(pat.token, "tomola_draft_create", input)).toMatchObject({ id: created.id, body: args.body, version: 2, clientName: "OAuth draft editor", status: "pending" });
+    expect(await getClientDraft(db, "member", created.id)).toEqual(edited);
+    const conflict = await memberCall(pat.token, "tomola_draft_create", { ...input, body: "Different content" });
+    expect((await conflict.json()).result).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("request_id_conflict") }] });
+
+    await memberOutput(await memberCall(oauth, "tomola_draft_delete", { id: created.id, expectedVersion: 2 }));
+    expect(await callForJson(pat.token, "tomola_draft_create", input)).toEqual({ draftId: created.id, status: "discarded" });
+    await memberOutput(await memberCall(pat.token, "tomola_draft_delete", { id: oauthDraft.id, expectedVersion: 2 }));
+  });
+
+  it("keeps legacy and orphaned API drafts available through active connections only", async () => {
+    const pat = await createApiToken(db, "member", { name: "Retired draft token", kind: "draft" });
+    if (!pat.ok) throw new Error(pat.error);
+    const legacy = await createDraft(db, "member", { kind: "topic", lang: "en", body: "Legacy API draft" }, { via: "api" });
+    if (!legacy.ok) throw new Error(legacy.error);
+    const orphan = await callForJson(pat.token, "tomola_draft_create", { kind: "topic", lang: "en", body: "API draft with a deleted token" });
+    await db.delete(apiTokens).where(eq(apiTokens.id, pat.summary.id));
+    expect((await memberCall(pat.token, "tomola_draft_get", { id: orphan.id })).status).toBe(401);
+    expect(await getClientDraft(db, "member", legacy.id)).toMatchObject({ clientKey: null });
+    expect(await getClientDraft(db, "member", orphan.id)).toMatchObject({ tokenId: null });
+    for (const id of [legacy.id, orphan.id]) {
+      expect(await callForJson(draftToken, "tomola_draft_status", { id })).toEqual({ draftId: id, status: "pending", version: 1 });
+      expect(await callForJson(draftToken, "tomola_draft_update", { id, expectedVersion: 1, body: "Edited shared API draft" })).toMatchObject({ version: 2 });
+      await memberOutput(await memberCall(draftToken, "tomola_draft_delete", { id, expectedVersion: 2 }));
+    }
   });
   it("redacts generated and member-pasted credentials and always marks the payload untrusted", () => {
     const input = `https://tomola.example/t/1.md?lang=en&k=secret ${readToken} oai2.user.123.0.hash.signature`;
@@ -482,6 +569,7 @@ describe("MCP ownership and output security", () => {
     const forbidden = await modern("tools/call", readToken, { name: "tomola_draft_create", arguments: { kind: "topic", body: "cannot save" } });
     expect(forbidden.status).toBe(403);
     expect(forbidden.headers.get("www-authenticate")).toContain('scope="draft"');
+    expect((await memberCall(readToken, "tomola_draft_list")).status).toBe(403);
     const readDenied = await modern("tools/call", draftToken, { name: "tomola_latest", arguments: {} });
     expect(readDenied.status).toBe(403);
     expect(readDenied.headers.get("www-authenticate")).toContain('scope="read"');

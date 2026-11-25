@@ -50,7 +50,7 @@ async function setup() {
   return { h, token: token.token };
 }
 
-it("extends the existing HTTP creation and MCP create/update contracts without expanding client ownership", async () => {
+it("validates draft destinations through HTTP creation and shared MCP draft updates", async () => {
   const { h, token } = shared;
   const post = (village: string) => handleDraftCreate(new Request(BASE + "/api/drafts", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "text/markdown" }, body: `---\nlang: en\nvillage: ${JSON.stringify(village)}\n---\nContract body.` }), { db: h.db });
   const created = await post("en");
@@ -85,14 +85,13 @@ it("extends the existing HTTP creation and MCP create/update contracts without e
   expect(view(await call("tomola_draft_update", { id: saved.id, expectedVersion: saved.version, village: "ja" }))).toMatchObject({ village: "ja", version: 2 });
   const other = await createApiToken(h.db, h.ids.vt_owner, { name: "Other client", kind: "draft" });
   if (!other.ok) throw new Error(other.error);
-  const wrongClient = await call("tomola_draft_update", { id: saved.id, expectedVersion: 2, village: "en" }, other.token);
-  expect(wrongClient).toMatchObject({ isError: true });
-  expect(parseBlocks(wrongClient.content[0].text)[0].body.trim().split(":")[0]).toBe("not_found");
-  expect(view(await call("tomola_draft_get", { id: saved.id }))).toMatchObject({ village: "ja", version: 2 });
-  const missingVillage = await call("tomola_draft_update", { id: saved.id, expectedVersion: 2, village: "missing-target" });
+  const sharedUpdate = await call("tomola_draft_update", { id: saved.id, expectedVersion: 2, village: "en" }, other.token);
+  expect(view(sharedUpdate)).toMatchObject({ village: "en", version: 3, clientName: "Other client" });
+  expect(view(await call("tomola_draft_get", { id: saved.id }))).toMatchObject({ village: "en", version: 3 });
+  const missingVillage = await call("tomola_draft_update", { id: saved.id, expectedVersion: 3, village: "missing-target" });
   expect(missingVillage).toMatchObject({ isError: true });
   expect(parseBlocks(missingVillage.content[0].text)[0].body.trim().split(":")[0]).toBe("village_required");
-  expect(view(await call("tomola_draft_get", { id: saved.id }))).toMatchObject({ village: "ja", version: 2 });
+  expect(view(await call("tomola_draft_get", { id: saved.id }))).toMatchObject({ village: "en", version: 3 });
   vi.stubEnv("VILLAGES", "");
   const off = await post("{invalid: ignored}");
   expect(off.status).toBe(201);

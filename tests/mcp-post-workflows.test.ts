@@ -36,27 +36,32 @@ describe("MCP post approvals through the browser routes", () => {
     const input = { kind: "topic", lang: "en", title: "Draft for review", body, requestId: "browser-version" };
     const made = success(await createClientDraft(h.db, owner, client, input));
     expect(made.status).toEqual({ draftId: made.id, status: "pending", version: 1 });
-    const updated = success(await updateClientDraft(h.db, owner, client, made.id, { expectedVersion: 1, body: "The newer source text." }));
+    const path = `/drafts/${made.id}`;
+    const form = (version: string, text = body) => ({ intent: "publish", version, title: input.title, body: text, lang: "en" });
+    const oldReview = await previewDraftPublication(h.db, owner, path, await h.request(path, { form: form("1") }).formData());
+    expect(oldReview.confirmation).toEqual(expect.any(String));
+    const updated = success(await updateClientDraft(h.db, owner, otherClient, made.id, { expectedVersion: 1, body: "The newer source text." }));
     expect(updated.draft.version).toBe(2);
-    const submit = (intent: string, version: number, confirmation = "") => h.outcome(() => action(h.args(h.request(`/drafts/${made.id}`, {
-      as: "workflow_owner", form: { intent, version: String(version), title: input.title, body, lang: "en", confirmation },
+    const submit = (intent: string, version: number, confirmation = "", text = body) => h.outcome(() => action(h.args(h.request(path, {
+      as: "workflow_owner", form: { ...form(String(version), text), intent, confirmation },
     }), { id: String(made.id) })));
     for (const intent of ["save", "delete", "publish"]) expect(await submit(intent, 1)).toMatchObject({ status: 409 });
-    expect(await getClientDraftStatus(h.db, owner, client, made.id)).toMatchObject({ status: "pending", version: 2 });
-    expect(await getClientDraftStatus(h.db, owner, otherClient, made.id)).toEqual({ draftId: made.id, status: "unknown" });
-    expect(await getClientDraftStatus(h.db, differentMember, client, made.id)).toEqual({ draftId: made.id, status: "unknown" });
-    const path = `/drafts/${made.id}`;
-    const form = await h.request(path, { form: { intent: "publish", version: "2", title: input.title, body, lang: "en" } }).formData();
-    const { confirmation } = await previewDraftPublication(h.db, owner, path, form);
-    const published = await submit("publish", 2, confirmation);
+    expect(await getClientDraftStatus(h.db, owner, made.id)).toMatchObject({ status: "pending", version: 2 });
+    expect(await getClientDraftStatus(h.db, differentMember, made.id)).toEqual({ draftId: made.id, status: "unknown" });
+    expect(await submit("publish", 2, oldReview.confirmation, updated.draft.body))
+      .toMatchObject({ status: 409, value: { data: { error: "confirmation_changed" } } });
+    const currentReview = await h.request(path, { form: form("2", updated.draft.body) }).formData();
+    const { confirmation, lastEditor } = await previewDraftPublication(h.db, owner, path, currentReview);
+    expect(lastEditor).toMatchObject({ id: otherClient.id, name: otherClient.name });
+    const published = await submit("publish", 2, confirmation, updated.draft.body);
     expect(published).toMatchObject({ status: 302 });
     const [post] = await h.db.select().from(entries).where(eq(entries.title, input.title));
-    const receipt = await getClientDraftStatus(h.db, owner, client, made.id);
+    const receipt = await getClientDraftStatus(h.db, owner, made.id);
     expect(receipt).toMatchObject({ status: "published", entryUrl: expect.stringMatching(new RegExp(`/t/${post.id}$`)) });
     expect(await createClientDraft(h.db, owner, client, input)).toMatchObject({ ok: true, id: made.id, draft: null, status: receipt });
     expect(await createClientDraft(h.db, owner, client, { ...input, body: "Different request." })).toEqual({ ok: false, error: "request_id_conflict" });
     expect(await deleteOwnEntry(h.db, owner, post.id)).toMatchObject({ ok: true });
-    expect(await getClientDraftStatus(h.db, owner, client, made.id)).toEqual({ draftId: made.id, status: "published" });
+    expect(await getClientDraftStatus(h.db, owner, made.id)).toEqual({ draftId: made.id, status: "published" });
   });
 
   it.each(["topic", "reply"] as const)("requires confirmation for a linked client %s draft with a retired signing preference", async kind => {
@@ -72,7 +77,7 @@ describe("MCP post approvals through the browser routes", () => {
       form: { body: text, lang: "en", fromDraft: String(made.id), fromDraftVersion: "1" },
     }), params)));
     expect(await submit()).toMatchObject({ status: 409, value: { data: { error: "confirmation_required" } } });
-    expect(await getClientDraftStatus(h.db, author, client, made.id)).toMatchObject({ status: "pending", version: 1 });
+    expect(await getClientDraftStatus(h.db, author, made.id)).toMatchObject({ status: "pending", version: 1 });
     expect(await h.db.select().from(entries).where(and(eq(entries.authorId, author), eq(entries.body, body)))).toEqual([]);
     const { action: draftAction } = await import("~/routes/draft");
     const path = `/drafts/${made.id}`;
@@ -88,7 +93,7 @@ describe("MCP post approvals through the browser routes", () => {
     expect(await h.db.select({ id: entries.id }).from(entries).where(and(eq(entries.authorId, author), eq(entries.body, body))))
       .toEqual([{ id: published.id }]);
     const entryPath = threadId ? `/t/${threadId}#c-${published.id}` : `/t/${published.id}`;
-    expect(await getClientDraftStatus(h.db, author, client, made.id)).toMatchObject({ status: "published", entryUrl: expect.stringContaining(entryPath) });
+    expect(await getClientDraftStatus(h.db, author, made.id)).toMatchObject({ status: "published", entryUrl: expect.stringContaining(entryPath) });
 
     const pending = success(await createClientDraft(h.db, author, client, { kind, threadId, lang: "en", body }));
     expect(pending.id).not.toBe(made.id);
@@ -97,7 +102,7 @@ describe("MCP post approvals through the browser routes", () => {
     }), params)));
     expect(await submitPending("1")).toMatchObject({ status: 409, value: { data: { error: "confirmation_required" } } });
     expect(await submitPending("2")).toMatchObject({ status: 409, value: { data: { error: "draft_conflict" } } });
-    expect(await getClientDraftStatus(h.db, author, client, pending.id)).toMatchObject({ status: "pending", version: 1 });
+    expect(await getClientDraftStatus(h.db, author, pending.id)).toMatchObject({ status: "pending", version: 1 });
     expect(await h.db.select().from(entries).where(and(eq(entries.authorId, author), eq(entries.body, body)))).toEqual([published]);
   });
 
@@ -110,9 +115,10 @@ describe("MCP post approvals through the browser routes", () => {
     const params = { id: String(id) };
     expect(made.proposal).toMatchObject({ status: "pending", version: 1, approvalUrl: expect.stringContaining(path) });
     expect(await prepareEntryEdit(h.db, differentMember, client, topic.id, { body })).toEqual({ ok: false, error: "not_found" });
-    expect(await getClientEntryEdit(h.db, owner, otherClient, id)).toBeNull();
-    expect(await getClientEntryEdit(h.db, owner, client, id)).toMatchObject({ body, stale: false });
-    expect(await discardEntryEdit(h.db, owner, id, 1, otherClient)).toBe(false);
+    expect(await getClientEntryEdit(h.db, differentMember, id)).toBeNull();
+    expect(await getClientEntryEditStatus(h.db, differentMember, id)).toEqual({ id, status: "unknown" });
+    expect(await getClientEntryEdit(h.db, owner, id)).toMatchObject({ body, stale: false });
+    expect(await discardEntryEdit(h.db, differentMember, id, 1)).toBe(false);
     expect(await h.outcome(() => loader(h.args(h.request(path, { as: "workflow_reader" }), params)))).toMatchObject({ status: 404 });
     expect(await h.outcome(() => loader(h.args(h.request(path, { as: "workflow_owner" }), params)))).toMatchObject({ value: { data: { content: { body }, current: { body: "Original source text." } } } });
     const form = { intent: "apply", entryId: String(topic.id), entryKind: "topic", version: "1", body, lang: "en" };
@@ -123,13 +129,13 @@ describe("MCP post approvals through the browser routes", () => {
     expect(await submit(request({ ...form, signatureAssertion: "invalid-json" }))).toMatchObject({ status: 302, location: `/t/${topic.id}?edited=${topic.id}` });
     expect(await h.db.select().from(memberSignatures).where(eq(memberSignatures.entryId, topic.id))).toEqual([]);
     expect(await h.db.select().from(signingChallenges).where(eq(signingChallenges.userId, owner))).toEqual([]);
-    expect(await getClientEntryEdit(h.db, owner, client, id)).toBeNull();
+    expect(await getClientEntryEdit(h.db, owner, id)).toBeNull();
     expect(await h.db.select({ title: entryEditProposals.title, body: entryEditProposals.body, state: entryEditProposals.state }).from(entryEditProposals)
       .where(eq(entryEditProposals.id, id))).toEqual([{ title: null, body: null, state: "applied" }]);
-    expect(await getClientEntryEditStatus(h.db, owner, client, id)).toMatchObject({ status: "applied", version: 2 });
+    expect(await getClientEntryEditStatus(h.db, owner, id)).toMatchObject({ status: "applied", version: 2 });
     expect(await h.db.select().from(entries).where(eq(entries.id, topic.id))).toMatchObject([{ title: null, body }]);
     await deleteOwnEntry(h.db, owner, topic.id);
-    expect(await getClientEntryEditStatus(h.db, owner, client, id)).toEqual({ id, version: 2, status: "applied" });
+    expect(await getClientEntryEditStatus(h.db, owner, id)).toEqual({ id, version: 2, status: "applied" });
   });
 
   it("rejects stale and expired edits, exports current proposals and discards their text", async () => {
@@ -141,17 +147,17 @@ describe("MCP post approvals through the browser routes", () => {
     expect(await exportOwnEntryEditProposals(h.db, owner, new Date())).toEqual([expect.objectContaining({ id, entry_id: reply.id, body })]);
     expect(await exportOwnEntryEditProposals(h.db, differentMember, new Date())).toEqual([]);
     expect(await editEntry(h.db, owner, reply.id, { body: "A newer manual reply." })).toMatchObject({ ok: true });
-    expect(await getClientEntryEdit(h.db, owner, client, id)).toMatchObject({ stale: true });
+    expect(await getClientEntryEdit(h.db, owner, id)).toMatchObject({ stale: true });
     const submit = () => h.outcome(() => action(h.args(h.request(`/mcp/entry-edits/${id}`, { as: "workflow_owner",
       form: { intent: "apply", entryId: String(reply.id), entryKind: "reply", version: "1", body, lang: "en" },
     }), { id: String(id) })));
     expect(await submit()).toMatchObject({ status: 409 });
-    expect(await discardEntryEdit(h.db, owner, id, 1, client)).toBe(true);
+    expect(await discardEntryEdit(h.db, owner, id, 1)).toBe(true);
     expect(await submit()).toMatchObject({ status: 409 });
-    expect(await getClientEntryEditStatus(h.db, owner, client, id)).toMatchObject({ status: "discarded" });
+    expect(await getClientEntryEditStatus(h.db, owner, id)).toMatchObject({ status: "discarded" });
     const then = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
     const expired = success(await prepareEntryEdit(h.db, owner, client, reply.id, { body }, then)).proposal.id;
-    expect(await getClientEntryEditStatus(h.db, owner, client, expired)).toEqual({ id: expired, status: "unknown" });
+    expect(await getClientEntryEditStatus(h.db, owner, expired)).toEqual({ id: expired, status: "unknown" });
     expect(await pruneEntryEditProposals(h.db, new Date())).toBe(1);
     expect(await h.db.select().from(entryEditProposals).where(eq(entryEditProposals.id, expired))).toEqual([]);
     expect(await exportOwnEntryEditProposals(h.db, owner, new Date())).toEqual([]);
@@ -199,12 +205,12 @@ describe.skipIf(!REAL_PG_URL)("MCP approval races in PostgreSQL", { tags: ["post
     expect(await first.select().from(draftReceipts).where(and(eq(draftReceipts.authorId, author), eq(draftReceipts.requestId, input.requestId)))).toHaveLength(1);
     const competing = await Promise.all([
       updateClientDraft(first, author, client, id, { expectedVersion: 1, body: "First alternative." }),
-      updateClientDraft(second, author, client, id, { expectedVersion: 1, body: "Second alternative." }),
+      updateClientDraft(second, author, otherClient, id, { expectedVersion: 1, body: "Second alternative." }),
     ]);
     expect(competing.filter(result => result.ok)).toHaveLength(1);
     expect(competing.filter(result => !result.ok)).toEqual([{ ok: false, error: "draft_conflict" }]);
-    expect(await deleteClientDraft(first, author, client, id, 1)).toEqual({ ok: false, error: "draft_conflict" });
-    expect(await deleteClientDraft(first, author, client, id, 2)).toEqual({ ok: true });
+    expect(await deleteClientDraft(first, author, id, 1)).toEqual({ ok: false, error: "draft_conflict" });
+    expect(await deleteClientDraft(first, author, id, 2)).toEqual({ ok: true });
     expect(await createClientDraft(second, author, client, input)).toMatchObject({ id, draft: null, status: { status: "discarded" } });
   });
 
@@ -214,7 +220,7 @@ describe.skipIf(!REAL_PG_URL)("MCP approval races in PostgreSQL", { tags: ["post
     const blocker = holdTx(db, tx => tx.select().from(drafts).where(eq(drafts.id, made.id)).for("update"));
     const outcomes: Array<ReturnType<typeof publishDraft> | ReturnType<typeof deleteClientDraft>> = [];
     const publish = () => { outcomes.push(publishDraft(publication, author, made.id)); };
-    const remove = () => { outcomes.push(deleteClientDraft(discard, author, client, made.id, 1)); };
+    const remove = () => { outcomes.push(deleteClientDraft(discard, author, made.id, 1)); };
     try {
       await blocker.ready;
       if (publishFirst) publish(); else remove();
@@ -225,7 +231,7 @@ describe.skipIf(!REAL_PG_URL)("MCP approval races in PostgreSQL", { tags: ["post
       const [winner, loser] = await expectSettlesWithin(Promise.all(outcomes), 15_000, "the draft publication and discard");
       expect(winner.ok).toBe(true);
       expect(loser).toEqual({ ok: false, error: "not_found" });
-      expect(await getClientDraftStatus(db, author, client, made.id)).toMatchObject({ status: publishFirst ? "published" : "discarded" });
+      expect(await getClientDraftStatus(db, author, made.id)).toMatchObject({ status: publishFirst ? "published" : "discarded" });
     } finally {
       await blocker.rollback();
       await Promise.allSettled(outcomes);

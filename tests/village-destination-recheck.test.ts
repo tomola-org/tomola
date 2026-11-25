@@ -88,20 +88,20 @@ it("keeps a refused draft and returns its resolved destination for review before
   expect((await h.outcome(() => draftAction(h.args(h.request(path, { as: "vfix_actor", form: { ...form, version, villageDisplayed: "ja" } }), { id: String(draft.id) })))).status).toBe(302);
 });
 
-it("loads MCP draft-list destinations together and preserves the client boundary", async () => {
+it("loads destinations together for all of the member's AI drafts", async () => {
   const h = shared;
   const token = await createApiToken(h.db, h.ids.vfix_actor, { name: "List fixture", kind: "draft" });
   if (!token.ok) throw new Error(token.error);
   const client = { key: `token:${token.summary.id}`, id: `token:${token.summary.id}`, name: "List fixture", uri: null, tokenId: token.summary.id };
   for (const village of ["en", "ja", "en"]) expect(await createClientDraft(h.db, h.ids.vfix_actor, client, { kind: "topic", lang: "en", body: "An owned list draft.", village })).toMatchObject({ ok: true });
-  await createClientDraft(h.db, h.ids.vfix_actor, { ...client, key: "other-client", tokenId: null }, { kind: "topic", lang: "en", body: "Other client excluded." });
+  await createClientDraft(h.db, h.ids.vfix_actor, { ...client, key: "other-client", tokenId: null }, { kind: "topic", lang: "en", body: "Another AI draft." });
   const auth = await getAuth();
   const queries = watchSelect(h.db);
   const response = await handleMcpRequest(new Request(BASE + "/mcp", { method: "POST", headers: { authorization: `Bearer ${token.token}`, "content-type": "application/json", accept: "application/json, text/event-stream", "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "tomola_draft_list" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "tomola_draft_list", arguments: {}, _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientInfo": { name: "List fixture", version: "1" }, "io.modelcontextprotocol/clientCapabilities": {} } } }) }), { db: h.db, auth, baseURL: BASE });
   const result = await response.json();
   const rows = JSON.parse(parseBlocks(result.result.content[0].text)[0].body) as { village: string; body: string }[];
-  expect(rows.map(row => row.village).sort()).toEqual(["en", "en", "ja"]);
-  expect(rows.every(row => row.body === "An owned list draft.")).toBe(true);
+  expect(rows.map(row => row.village).sort()).toEqual(["en", "en", "ja", null]);
+  expect(rows.find(row => row.village === null)?.body).toBe("Another AI draft.");
   expect(queries.filter(query => /from "drafts"/.test(query.toSQL().sql))).toHaveLength(1);
   expect(queries.filter(query => /from "villages"/.test(query.toSQL().sql))).toHaveLength(0);
 });

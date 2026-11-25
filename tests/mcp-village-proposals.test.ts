@@ -49,7 +49,7 @@ async function propose(input: Parameters<typeof createVillageProposal>[3]) {
 }
 const villageRow = async (slug: string) => (await h.db.select().from(villages).where(eq(villages.slug, slug)))[0];
 
-it("keeps the proposal private to its member and client and applies only a current same-origin browser confirmation", async () => {
+it("keeps the proposal private to its member and applies only a current same-origin browser confirmation", async () => {
   const slug = "proposal-text";
   const village = await addVillage(slug);
   const proposal = await propose({ slug, name: "New name", description: "Updated description" });
@@ -59,11 +59,9 @@ it("keeps the proposal private to its member and client and applies only a curre
   const apply = (as: string, value = version, origin?: string) => h.outcome(() => action(h.args(h.request(path, {
     as, form: { version: value, intent: "apply" }, headers: origin ? { origin } : undefined,
   }), { id })));
-  expect(await getClientVillageProposal(h.db, owner(), client, id)).toEqual({ ok: true, proposal });
-  for (const [userId, identity] of [[owner(), otherClient], [coowner(), client]] as const) {
-    expect(await getClientVillageProposal(h.db, userId, identity, id)).toEqual({ ok: false, error: "not_found" });
-    expect(await discardClientVillageProposal(h.db, userId, identity, id)).toBe(false);
-  }
+  expect(await getClientVillageProposal(h.db, owner(), id)).toEqual({ ok: true, proposal });
+  expect(await getClientVillageProposal(h.db, coowner(), id)).toEqual({ ok: false, error: "not_found" });
+  expect(await discardClientVillageProposal(h.db, coowner(), id)).toBe(false);
   expect(await load()).toMatchObject({ status: 302 });
   expect(await load("proposal_coowner")).toMatchObject({ status: 404 });
   expect(await load("proposal_owner")).toMatchObject({ status: 200, value: { init: { headers: { "Cache-Control": "private, no-store" } }, data: { review: {
@@ -95,7 +93,7 @@ it("keeps the rewritten icon in the submitter's private preview and publishes a 
   expect(await h.outcome(() => loader(h.args(outsider, { id })))).toMatchObject({ status: 404 });
   expect(await h.db.select().from(media).where(eq(media.villageId, village.id))).toEqual([]);
   expect((await mediaFile({ request: h.request(stored.url) })).status).toBe(404);
-  expect(await getClientVillageProposal(h.db, owner(), client, id)).toMatchObject({ ok: true, proposal: { icon: "replace" } });
+  expect(await getClientVillageProposal(h.db, owner(), id)).toMatchObject({ ok: true, proposal: { icon: "replace" } });
   const exported = await buildMemberExport(h.db, owner());
   expect(exported.village_proposals).toMatchObject([{ id, village: slug, icon: { mime: "image/webp" } }]);
   expect((await buildMemberExport(h.db, coowner())).village_proposals).toEqual([]);
@@ -134,7 +132,7 @@ it("rejects a stale base or a departed owner and allows text proposals for an en
   await addVillage(slug);
   const original = await propose({ slug, name: "Proposal" });
   expect(await editVillage(h.db, coowner(), slug, { name: "Old name", description: "Original description", sourceLang: "ja" })).toMatchObject({ ok: true });
-  expect(await getClientVillageProposal(h.db, owner(), client, original.id)).toMatchObject({ ok: true, proposal: { status: "stale" } });
+  expect(await getClientVillageProposal(h.db, owner(), original.id)).toMatchObject({ ok: true, proposal: { status: "stale" } });
   expect(await editVillage(h.db, coowner(), slug, { name: "Old name", description: "Original description", sourceLang: "en" })).toMatchObject({ ok: true });
   expect(await applyVillageProposal(h.db, owner(), original.id, original.version)).toEqual({ ok: false, error: "stale" });
   const path = villageProposalPath(original.id);
@@ -147,7 +145,7 @@ it("rejects a stale base or a departed owner and allows text proposals for an en
   expect(await changeVillageMembership(h.db, owner(), slug, "leave")).toBe(true);
   expect(await readVillageProposalReview(h.db, owner(), second.id)).toEqual({ ok: false, error: "not_found" });
   expect(await applyVillageProposal(h.db, owner(), second.id, second.version)).toEqual({ ok: false, error: "not_found" });
-  expect(await discardClientVillageProposal(h.db, owner(), client, second.id)).toBe(true);
+  expect(await discardClientVillageProposal(h.db, owner(), second.id)).toBe(true);
 });
 
 it("rolls back a text edit if storing the candidate icon would exceed the member quota", async () => {
@@ -161,7 +159,7 @@ it("rolls back a text edit if storing the candidate icon would exceed the member
   try {
     expect(await applyVillageProposal(h.db, owner(), proposal.id, proposal.version)).toEqual({ ok: false, error: "image_limit" });
     expect(await villageRow(slug)).toMatchObject({ name: "Old name", iconMediaId: null });
-    expect(await getClientVillageProposal(h.db, owner(), client, proposal.id)).toMatchObject({ ok: true, proposal: { status: "pending" } });
+    expect(await getClientVillageProposal(h.db, owner(), proposal.id)).toMatchObject({ ok: true, proposal: { status: "pending" } });
     expect(await h.db.select().from(villageEvents).where(eq(villageEvents.villageId, village.id))).toEqual([]);
   } finally {
     await h.db.delete(media).where(and(inArray(media.id, fill.map(row => row.id)), eq(media.uploadedBy, owner())));
@@ -183,11 +181,11 @@ it("serializes disposal of the proposal against applying it", async () => {
   const village = await addVillage(slug);
   const { id, version } = await propose({ slug, name: "Apply or discard" });
   const [applied, discarded] = await Promise.all([
-    applyVillageProposal(h.db, owner(), id, version), discardClientVillageProposal(h.db, owner(), client, id),
+    applyVillageProposal(h.db, owner(), id, version), discardClientVillageProposal(h.db, owner(), id),
   ]);
   expect(applied.ok).toBe(!discarded);
   expect(await h.db.select({ n: count() }).from(villageEvents).where(eq(villageEvents.villageId, village.id))).toEqual([{ n: discarded ? 0 : 1 }]);
-  expect(await getClientVillageProposal(h.db, owner(), client, id)).toEqual({ ok: false, error: "not_found" });
+  expect(await getClientVillageProposal(h.db, owner(), id)).toEqual({ ok: false, error: "not_found" });
 });
 
 it("caps pending proposals per member across clients, excludes expired proposals and physically removes them", async () => {
@@ -198,7 +196,7 @@ it("caps pending proposals per member across clients, excludes expired proposals
   expect(await createVillageProposal(h.db, owner(), otherClient, { slug, description: "Over the cap" })).toEqual({ ok: false, error: "limit" });
   const now = new Date();
   await h.db.update(villageProposals).set({ expiresAt: now, createdAt: new Date(now.getTime() - 1000) }).where(eq(villageProposals.id, first.id));
-  expect(await getClientVillageProposal(h.db, owner(), client, first.id)).toEqual({ ok: false, error: "not_found" });
+  expect(await getClientVillageProposal(h.db, owner(), first.id)).toEqual({ ok: false, error: "not_found" });
   expect(await applyVillageProposal(h.db, owner(), first.id, first.version)).toEqual({ ok: false, error: "not_found" });
   expect(await pruneVillageProposals(h.db, now)).toBe(1);
   expect(await createVillageProposal(h.db, owner(), otherClient, { slug, description: "In the available slot" })).toMatchObject({ ok: true });

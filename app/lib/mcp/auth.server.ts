@@ -39,7 +39,7 @@ export async function withMcpAuth(request: Request, deps: { db: Db; auth: McpAut
   const origin = new URL(deps.baseURL).origin;
   const claims = await verifyLocalMcpJwt(request, deps.auth, origin);
   if (!claims) return mcpUnauthorized(origin, 401, MCP_RESOURCE_SCOPES.join(" "));
-  // JWT verification alone cannot implement revocation or the creation-client boundary.
+  // JWT verification alone cannot check live consent, client state or revocation.
   if (typeof claims.sub !== "string" || typeof claims.client_id !== "string" || typeof claims.tomola_consent !== "string" || typeof claims.scope !== "string") return mcpUnauthorized(origin);
   const [grant] = await deps.db.select({ consent: oauthConsent, client: oauthClient }).from(oauthConsent)
     .innerJoin(oauthClient, eq(oauthConsent.clientId, oauthClient.clientId))

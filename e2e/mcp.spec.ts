@@ -29,8 +29,10 @@ test("OAuth consent, draft publication, post and village review, and immediate r
     const parameters = new URLSearchParams({ client_id: clientId, redirect_uri: loopback.redirectURI, response_type: "code", scope: "read draft", state: "browser-fixture", code_challenge_method: "S256", code_challenge: createHash("sha256").update(verifier).digest("base64url"), resource: `${baseURL}/mcp` });
     return `${baseURL}/api/auth/oauth2/authorize?${parameters}`;
   };
-  const start = async (target: Page, clientId: string) => {
-    await target.goto(authorizeUrl(clientId));
+  const start = async (target: Page, clientId: string, prompt?: "consent") => {
+    const url = new URL(authorizeUrl(clientId));
+    if (prompt) url.searchParams.set("prompt", prompt);
+    await target.goto(url.href);
     await expect(target).toHaveURL(/\/mcp\/consent\?/);
   };
   const exchange = async (target: Page, clientId: string) => {
@@ -77,11 +79,18 @@ test("OAuth consent, draft publication, post and village review, and immediate r
   // Keeping the connection is not a choice: it is a line of text, not a checkbox.
   await expect(page.getByText(enMessages.mcp_scope_offline.replace("{settings}", enMessages.settings_connections_link), { exact: true })).toBeVisible();
   await expect(page.getByRole("checkbox")).toHaveCount(2);
-  await page.getByRole("checkbox", { name: enMessages.mcp_scope_draft, exact: true }).uncheck();
+  const draftPermission = page.getByRole("checkbox", { name: enMessages.mcp_scope_draft, exact: true });
+  await draftPermission.uncheck();
+  await page.getByRole("button", { name: enMessages.mcp_allow, exact: true }).click();
+  const firstReadToken = await exchange(page, first);
+  expect((await call(page.request, firstReadToken, "tomola_latest")).status()).toBe(200);
+  expect((await call(page.request, firstReadToken, "tomola_draft_create", { kind: "topic", body: "scope blocked" })).status()).toBe(403);
+
+  await start(page, first, "consent");
+  await draftPermission.check();
   await page.getByRole("button", { name: enMessages.mcp_allow, exact: true }).click();
   const firstToken = await exchange(page, first);
   expect((await call(page.request, firstToken, "tomola_latest")).status()).toBe(200);
-  expect((await call(page.request, firstToken, "tomola_draft_create", { kind: "topic", body: "scope blocked" })).status()).toBe(403);
 
   const japanese = await browser.newContext({ locale: "ja-JP", storageState: await page.context().storageState(), extraHTTPHeaders: clientHeaders("127.0.0.32") });
   try {
@@ -94,33 +103,37 @@ test("OAuth consent, draft publication, post and village review, and immediate r
     await expect(ja.getByText(jaMessages.mcp_disclosure, { exact: true })).toBeVisible();
     await ja.getByRole("button", { name: jaMessages.mcp_allow, exact: true }).click();
     const token = await exchange(ja, second);
-    const toolJson = async (name: string, args: object = {}) => {
-      const response = await call(ja.request, token, name, args);
+    const toolJson = async (name: string, args: object = {}, accessToken = token) => {
+      const response = await call(ja.request, accessToken, name, args);
       expect(response.status(), await response.text()).toBe(200);
       const { result } = await response.json();
       expect(result.isError, JSON.stringify(result)).not.toBe(true);
       return JSON.parse(result.content[0].text.split("\n---\n").at(-1));
     };
-    const create = { requestId: "browser-draft", kind: "topic", lang: "en", title: "MCP signed publication", body: "Prepared only by the second client." };
-    const draft = await toolJson("tomola_draft_create", create);
-    expect(draft).toMatchObject({ clientId: second, version: 1 });
+    const create = { requestId: "browser-draft", kind: "topic", lang: "en", title: "MCP signed publication", body: "Prepared by the first client." };
+    const draft = await toolJson("tomola_draft_create", create, firstToken);
+    expect(draft).toMatchObject({ clientId: first, version: 1 });
     expect(new URL(draft.approvalUrl).searchParams.has("k")).toBe(false);
-    expect(await toolJson("tomola_draft_create", create)).toMatchObject({ id: draft.id, version: 1 });
+    expect(await toolJson("tomola_draft_create", create, firstToken)).toMatchObject({ id: draft.id, version: 1 });
     const updated = await toolJson("tomola_draft_update", { id: draft.id, expectedVersion: draft.version, body: "Last updated by the second client." });
-    expect(updated.version).toBe(2);
+    expect(updated).toMatchObject({ version: 2, clientId: second, clientName: "Fictional second client" });
+    await ja.goto(`${draft.approvalUrl}/preview`);
+    await expect(ja.getByRole("main")).toContainText("Fictional second client");
     await ja.goto(draft.approvalUrl);
     // This scenario reads existing text without typing; wait for the approval handler to finish loading.
     await waitForClientRoute(ja);
     await expect(ja.getByRole("textbox", { name: jaMessages.field_body, exact: true })).toHaveValue("Last updated by the second client.");
     await ja.getByRole("button", { name: jaMessages.draft_publish, exact: true }).click();
-    await expect(ja.getByRole("dialog", { name: jaMessages.signing_heading, exact: true })).toContainText(second);
+    const signing = ja.getByRole("dialog", { name: jaMessages.signing_heading, exact: true });
+    await expect(signing).toContainText("Fictional second client");
+    await expect(signing).toContainText(second);
     await ja.getByRole("dialog", { name: jaMessages.signing_heading }).getByRole("button", { name: jaMessages.confirm_publish, exact: true }).click();
     await ja.waitForURL(/\/t\/(\d+)\?posted=\1$/);
     await expect(ja.getByRole("heading", { name: "MCP signed publication", exact: true })).toBeVisible();
     const entryId = Number(new URL(ja.url()).pathname.split("/").at(-1));
     const receipt = { status: "published", draftId: draft.id, entryUrl: `${baseURL}/t/${entryId}` };
     expect(await toolJson("tomola_draft_status", { id: draft.id })).toMatchObject(receipt);
-    expect(await toolJson("tomola_draft_create", create)).toMatchObject(receipt);
+    expect(await toolJson("tomola_draft_create", create, firstToken)).toMatchObject(receipt);
 
     const edit = await toolJson("tomola_entry_edit_prepare", { entryId, body: "Revised text for the browser review." });
     await ja.goto(edit.approvalUrl);
