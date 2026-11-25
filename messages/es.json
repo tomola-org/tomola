@@ -1538,7 +1538,7 @@
   "mcp_disclosure": "La información leída por la IA se envía a su proveedor. Desconectar la IA detiene accesos futuros, pero la información ya enviada no se puede recuperar.",
   "mcp_private_records": "Sus propias posturas y el historial de cambios de postura no se comparten con la IA. Puede seleccionar y copiar registros usted mismo en la página «Sus posturas» dentro de Configuración.",
   "mcp_scope_read": "Leer publicaciones de miembros, traducciones, notificaciones sobre publicaciones y el glosario compartido.",
-  "mcp_scope_draft": "Crear, leer, editar y eliminar solo los borradores creados por este cliente. Publicar requiere su aprobación en el navegador.",
+  "mcp_scope_draft": "Crear, leer, editar y eliminar los borradores creados por sus conexiones de IA (no los que usted escribe en el navegador). Publicar requiere su aprobación en el navegador.",
   "mcp_scope_offline": "La IA permanece conectada hasta que usted la elimine (esto no se puede desmarcar aquí). Para detenerla, elimínela en «{settings}» dentro de Configuración.",
   "mcp_no_permissions": "Esta aplicación no solicitó acceso de lectura ni de borradores, por lo que no se puede conectar. Especifique las funciones en su aplicación de IA e inténtelo de nuevo.",
   "mcp_allow": "Conectar",

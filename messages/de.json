@@ -406,7 +406,7 @@
   "mcp_login_title": "KI-Client verbinden",
   "mcp_client_identity": "Client-ID",
   "mcp_consent_title": "Berechtigungen der KI-Verbindung prüfen",
-  "mcp_scope_draft": "Nur von diesem Client erstellte Entwürfe erstellen, lesen, bearbeiten und löschen. Die Veröffentlichung erfordert deine Zustimmung im Browser.",
+  "mcp_scope_draft": "Entwürfe erstellen, lesen, bearbeiten und löschen, die deine KI-Verbindungen erstellt haben (nicht die Entwürfe, die du im Browser schreibst). Die Veröffentlichung erfordert deine Zustimmung im Browser.",
   "mcp_last_used": "Zuletzt verwendet",
   "mcp_never_used": "Noch nicht verwendet",
   "mcp_personal_tokens": "Persönliche Zugriffstoken getrennt verwalten",

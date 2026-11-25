@@ -1462,7 +1462,7 @@
   "mcp_disclosure": "Thông tin do AI đọc sẽ được gửi tới nhà cung cấp AI đó. Việc gỡ bỏ AI sẽ ngăn chặn các lần truy cập sau này, nhưng thông tin đã gửi không thể thu hồi.",
   "mcp_private_records": "Lập trường của riêng bạn và lịch sử thay đổi lập trường không được chia sẻ với AI. Bạn có thể tự chọn và sao chép các bản ghi trên trang \"Lập trường của bạn\" trong Cài đặt.",
   "mcp_scope_read": "Đọc bài đăng của thành viên, bản dịch, thông báo về bài đăng và bảng thuật ngữ dùng chung.",
-  "mcp_scope_draft": "Chỉ tạo, đọc, sửa và xóa bản nháp do ứng dụng này tạo. Việc đăng bài cần bạn phê duyệt trong trình duyệt.",
+  "mcp_scope_draft": "Tạo, đọc, sửa và xóa bản nháp do các kết nối AI của bạn tạo (không gồm bản nháp bạn viết trong trình duyệt). Việc đăng bài cần bạn phê duyệt trong trình duyệt.",
   "mcp_scope_offline": "AI vẫn sẽ duy trì kết nối cho đến khi bạn gỡ bỏ (không thể bỏ chọn mục này tại đây). Để dừng lại, hãy gỡ bỏ trong mục “{settings}” ở Cài đặt.",
   "mcp_no_permissions": "Ứng dụng này không yêu cầu quyền đọc cũng như quyền tạo bản nháp, vì vậy không thể kết nối. Hãy chỉ định các quyền trong ứng dụng AI của bạn và thử lại.",
   "mcp_allow": "Kết nối",

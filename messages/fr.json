@@ -1538,7 +1538,7 @@
   "mcp_disclosure": "Les informations lues par l’IA sont envoyées à son fournisseur. Retirer l’IA empêche tout accès futur, mais les informations déjà envoyées ne peuvent pas être récupérées.",
   "mcp_private_records": "Vos propres positions et l'historique de vos changements de position ne sont pas partagés avec l'IA. Vous pouvez sélectionner et copier vous-même ces données sur la page « Vos positions » dans les Paramètres.",
   "mcp_scope_read": "Lire les publications des membres, les traductions, les notifications concernant les publications et le glossaire partagé.",
-  "mcp_scope_draft": "Créer, lire, modifier et supprimer uniquement les brouillons créés par ce client. La publication nécessite votre approbation dans le navigateur.",
+  "mcp_scope_draft": "Créer, lire, modifier et supprimer les brouillons créés par vos connexions d’IA (pas les brouillons que vous rédigez dans le navigateur). La publication nécessite votre approbation dans le navigateur.",
   "mcp_scope_offline": "L’IA reste connectée jusqu’à ce que vous la retiriez (ceci ne peut pas être désélectionné ici). Pour l’arrêter, retirez-la sous « {settings} » dans les Paramètres.",
   "mcp_no_permissions": "Cette application n’a demandé aucun accès en lecture ni pour les brouillons, elle ne peut donc pas être connectée. Spécifiez les autorisations dans votre application d’IA puis réessayez.",
   "mcp_allow": "Connecter",

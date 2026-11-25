@@ -1462,7 +1462,7 @@
   "mcp_disclosure": "Informasi yang dibaca oleh AI dikirim ke penyedianya. Menghapus AI akan menghentikan akses mendatang, tetapi informasi yang sudah terkirim tidak dapat ditarik kembali.",
   "mcp_private_records": "Sikap Anda sendiri dan riwayat perubahan sikap tidak dibagikan kepada AI. Anda dapat memilih dan menyalin catatan sendiri di halaman \"Sikap Anda\" pada Pengaturan.",
   "mcp_scope_read": "Membaca unggahan anggota, terjemahan, pemberitahuan tentang unggahan, dan glosarium bersama.",
-  "mcp_scope_draft": "Membuat, membaca, mengedit, dan menghapus hanya draf yang dibuat oleh klien ini. Menerbitkan memerlukan persetujuan Anda di peramban.",
+  "mcp_scope_draft": "Membuat, membaca, mengedit, dan menghapus draf yang dibuat oleh koneksi AI Anda (bukan draf yang Anda tulis di peramban). Menerbitkan memerlukan persetujuan Anda di peramban.",
   "mcp_scope_offline": "AI tetap terhubung sampai Anda menghapusnya (ini tidak dapat dibatalkan pilihannya di sini). Untuk menghentikannya, hapus di bawah “{settings}” pada Pengaturan.",
   "mcp_no_permissions": "Aplikasi ini tidak meminta izin membaca maupun akses draf, sehingga tidak dapat dihubungkan. Tentukan kemampuan dalam aplikasi AI Anda dan coba lagi.",
   "mcp_allow": "Hubungkan",
