@@ -163,7 +163,17 @@ describe("Simplified and Traditional are translated into each other", () => {
     const toHant = seen.filter((r) => r.to === "zh-Hant");
     expect(toHant).toHaveLength(3);
     expect(toHant.every((r) => r.from === "zh-Hans")).toBe(true);
-    expect(buildTranslationPrompt(toHant[0]).system).toContain(`Target language: ${TARGET_LANG_SPECS["zh-Hant"]}`);
+    expect(toHant.filter((req) => req.field === "title")).toHaveLength(2);
+    expect(toHant.filter((req) => req.field === "body")).toHaveLength(1);
+    for (const req of toHant) {
+      const { system } = buildTranslationPrompt(req);
+      if (req.field === "title") {
+        expect(system).toContain(`Target language: ${targetLangSpec("zh-Hant", { plainText: true })}`);
+        expect(system).not.toContain("Markdown syntax");
+      } else {
+        expect(system).toContain(`Target language: ${TARGET_LANG_SPECS["zh-Hant"]}`);
+      }
+    }
   });
 
   it("is also done the other way, from Traditional to Simplified", async () => {
