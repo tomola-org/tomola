@@ -35,8 +35,8 @@ export type TranslationRequest = {
   text: string;
   from: SourceLang;
   to: Lang;
-  // Titles are displayed as plain text. Normalize their Markdown only for checks,
-  // retaining the engine's original output for storage and display.
+  // Post titles are single-line plain text. Check for added Markdown without
+  // adding Markdown escapes to the stored output.
   field?: "title" | "body";
   // Legacy caller fields, ignored by translation prompts since v6. Use only the
   // bounded terminology field for response references; never import their claims.

@@ -20,6 +20,7 @@ const JA_WORDING =
   " Give one translation: never offer alternative words in the output (such as A（またはB）).";
 
 const PRESERVE = " Preserve code, URLs, formulas and Markdown syntax. Do not add emphasis or line breaks absent from the source.";
+const PRESERVE_PLAIN_TEXT = " Preserve code, URLs and formulas. Do not add Markdown formatting, emphasis or line breaks absent from the source.";
 
 export const TARGET_LANG_SPECS: Partial<Record<Lang, string>> = {
   en: "Use typographic quotation marks (“ ” ‘ ’), apostrophes (’), ellipses (…) and en dashes (–) for numeric ranges." + PRESERVE,
@@ -51,6 +52,7 @@ export function sourceLangSpec(lang: SourceLang): string | undefined {
 }
 
 // Target-language instruction, or undefined if absent.
-export function targetLangSpec(lang: Lang): string | undefined {
-  return TARGET_LANG_SPECS[lang];
+export function targetLangSpec(lang: Lang, { plainText = false } = {}): string | undefined {
+  const spec = TARGET_LANG_SPECS[lang];
+  return plainText ? spec?.replace(PRESERVE, PRESERVE_PLAIN_TEXT) : spec;
 }

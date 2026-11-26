@@ -2,7 +2,9 @@ import { preservesFigureMath, sameFigureLabel } from "~/lib/figure";
 import type { Lang, SourceLang } from "~/lib/languages";
 import { FLAG_LINK_MISMATCH, FLAG_QUALITY_MISMATCH, FLAG_STRUCTURE_MISMATCH, FLAG_UNTRANSLATED, FLAG_UNTRANSLATED_SCRIPT, FLAG_UNTRANSLATED_SIMILAR } from "./flags";
 import { detectCopy, type CopyVerdict } from "./copy-detection.core.server";
-import { checkChatContent, checkStructure, normalizeTranslationDollars } from "./structure.core.server";
+import { checkChatContent, checkStructure, checkTitleContent, normalizeTranslationDollars } from "./structure.core.server";
+import { linkSpans } from "./link-targets.core.server";
+import { decodePlainTextEntities, isPostTitleTranslation } from "./prompt.server";
 import type { TranslationRequest } from "./types";
 import { FLAG_OUTPUT_LEAK } from "./flags";
 import { hasTranslationOutputLeak } from "./output-leak.core.server";
@@ -58,14 +60,19 @@ export function inspectTranslation(req: TranslationRequest, text: string, engine
     notes.push("Your previous output expanded excessively or included reasoning that was not in the source. Return only the translation, without analysis, alternatives, rules or commentary, preserving the source content and line breaks.");
     return { flags: [FLAG_OUTPUT_LEAK], notes };
   }
-  const checkedText = plain ? body : normalizeTranslationDollars(req.text, body);
+  const title = isPostTitleTranslation(req);
+  const checkedText = title ? decodePlainTextEntities(body, req.text, linkSpans) : plain ? body : normalizeTranslationDollars(req.text, body);
   const normalizedText = prefix + checkedText;
-  const check = (plain ? checkChatContent : checkStructure)(req.text, checkedText, { mentions: req.mentions, from: req.from, to: req.to });
+  const check = title
+    ? checkTitleContent(req.text, checkedText, req.mentions)
+    : (plain ? checkChatContent : checkStructure)(req.text, checkedText, { mentions: req.mentions, from: req.from, to: req.to });
   const flags = [...check.flags];
   const counts = check.mismatches.filter((m) => !m.startsWith("links:") && !m.startsWith("mentions:"));
   if ((flags.includes(FLAG_STRUCTURE_MISMATCH) || flags.includes(FLAG_QUALITY_MISMATCH)) && counts.length > 0) {
     notes.push(
-      `your previous translation did not preserve the structure of the source (${counts.join("; ")}). Translate again, and keep every code block, every inline code span, and every math formula and delimiter, heading, list item, table and paragraph of the source exactly as it is. Translate all prose without omissions or additions. Do not translate anything inside code, including comments, docstrings, and strings.`,
+      title
+        ? `your previous translation added formatting to a title (${counts.join("; ")}). Translate again as a single line of plain text, not Markdown. Remove added Markdown such as *...*, _..._ and **...**, and remove added line breaks. Use the target language's plain-text quotation marks or title brackets for names of works instead of Markdown italics.`
+        : `your previous translation did not preserve the structure of the source (${counts.join("; ")}). Translate again, and keep every code block, every inline code span, and every math formula and delimiter, heading, list item, table and paragraph of the source exactly as it is. Translate all prose without omissions or additions. Do not translate anything inside code, including comments, docstrings, and strings.`,
     );
   }
   if (check.mismatches.some((m) => m.startsWith("mentions:"))) {
@@ -76,15 +83,13 @@ export function inspectTranslation(req: TranslationRequest, text: string, engine
   if (flags.includes(FLAG_LINK_MISMATCH)) {
     notes.push(LINK_MISMATCH_RETRY);
   }
-  // The fake engine writes "[ja] original": a near copy by construction, so only an identical copy counts for it.
-  const verdict = judgeCopy(req.text, text, req.from, req.to, { near: engineId !== "fake", mentions: req.mentions, ...(plain ? { plainText: true } : {}) });
+  // Compare titles as displayed after entity decoding. For Markdown output,
+  // compare before escaping dollars so an exact source copy still counts.
+  // The fake engine prefixes copies with "[ja] ", so skip its near-copy checks.
+  const verdict = judgeCopy(req.text, title ? normalizedText : text, req.from, req.to, { near: engineId !== "fake", mentions: req.mentions, ...(plain ? { plainText: true } : {}) });
   if (verdict.copy && verdict.reason) {
     flags.push(COPY_FLAG[verdict.reason]);
     notes.push("your previous output was identical to the source text, or nearly so, or it was not written in the target language. Translate the whole text into the target language; do not copy it.");
   }
-  // Copy detection uses the raw output above: escaping dollars must not turn an
-  // exact source copy into a merely similar, displayable translation.
-  // Titles need the same currency checks, but their plain-text display must not
-  // receive Markdown escapes or autolink rewrites.
-  return { notes, flags, ...(req.field !== "title" && normalizedText !== text ? { normalizedText } : {}) };
+  return { notes, flags, ...(normalizedText !== text && (title || req.field !== "title") ? { normalizedText } : {}) };
 }

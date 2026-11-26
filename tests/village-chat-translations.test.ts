@@ -14,7 +14,7 @@ import { deleteOwnChat } from "~/lib/village-chat-own.server";
 import { getBudgetStatus, getChatBudgetStatus, recordUsage } from "~/lib/llm/usage.server";
 import { translate, translateChat } from "~/lib/llm/index.server";
 import { createFakeEngine } from "~/lib/llm/engines/fake.server";
-import { buildTranslationPrompt, CHAT_PROMPT_VERSION, decodeChatEntities } from "~/lib/llm/prompt.server";
+import { buildTranslationPrompt, CHAT_PROMPT_VERSION, decodePlainTextEntities } from "~/lib/llm/prompt.server";
 import { translateChecked } from "~/lib/llm/translate.server";
 import { inspectTranslation } from "~/lib/llm/translation-inspect.core.server";
 import type { TranslationEngine } from "~/lib/llm/types";
@@ -398,9 +398,9 @@ it("announces pending before calling the engine when a paused job resumes and th
 
 it("preserves original entity spellings and counts while decoding only new output references", async () => {
   const source = "Keep &nbsp; and https://example.com/?x=1&amp;y=2 literally.";
-  expect(decodeChatEntities("Extra &amp; then https://example.com/?x=1&amp;y=2 and &nbsp; &nbsp; &eacute; &#x1f600;", source))
+  expect(decodePlainTextEntities("Extra &amp; then https://example.com/?x=1&amp;y=2 and &nbsp; &nbsp; &eacute; &#x1f600;", source))
     .toBe("Extra & then https://example.com/?x=1&amp;y=2 and &nbsp; \u00a0 é 😀");
-  expect(decodeChatEntities("&amp; &amp; &#160; &#160; &madeup;", "&amp; &#160;")).toBe("&amp; & &#160; \u00a0 &madeup;");
+  expect(decodePlainTextEntities("&amp; &amp; &#160; &#160; &madeup;", "&amp; &#160;")).toBe("&amp; & &#160; \u00a0 &madeup;");
   const w = await world();
   const engine = { ...createFakeEngine(), async translate() { return { text: `[ja] ${source}`, model: "fake-1", promptVersion: "test", inputTokens: 1, outputTokens: 1 }; } };
   expect((await translateChat(w.db, { text: source, from: "en", to: "ja", chat: { context: [] } }, { chatEngine: engine })).flags).toEqual([]);
@@ -409,10 +409,10 @@ it("preserves original entity spellings and counts while decoding only new outpu
 it("protects every repeated source URL while decoding new references in prose", async () => {
   const source = "See https://e.com/?a=1&amp;b=2", url = "https://e.com/?a=1&amp;b=2";
   const text = `${url} を見て。再掲 ${url}`;
-  expect(decodeChatEntities(text, source)).toBe(text);
-  expect(decodeChatEntities(`&amp; ${text} &amp; &eacute;`, source)).toBe(`& ${text} & é`);
+  expect(decodePlainTextEntities(text, source)).toBe(text);
+  expect(decodePlainTextEntities(`&amp; ${text} &amp; &eacute;`, source)).toBe(`& ${text} & é`);
   // Duplicated URLs must not consume the allowance for literal prose references.
-  expect(decodeChatEntities(`${text} &amp; &amp;`, `${source} &amp;`)).toBe(`${text} &amp; &`);
+  expect(decodePlainTextEntities(`${text} &amp; &amp;`, `${source} &amp;`)).toBe(`${text} &amp; &`);
   const w = await world();
   const engine = { ...createFakeEngine(), async translate() { return { text, model: "fake-1", promptVersion: "test", inputTokens: 1, outputTokens: 1 }; } };
   expect(await translateChat(w.db, { text: source, from: "en", to: "ja", chat: { context: [] } }, { chatEngine: engine })).toMatchObject({ text, flags: [] });

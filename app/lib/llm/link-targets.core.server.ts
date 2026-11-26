@@ -22,7 +22,7 @@ const markdown = createMarkdownProcessor().use(function linkDestinationPositions
 const htmlTag = /^<(\/?)([a-z][\da-z-]*)(?=[\s/>])/i;
 const voidTags = new Set("area base br col embed hr img input link meta param source track wbr".split(" "));
 
-function linkSpans(source: string): Span[] {
+export function linkSpans(source: string): Span[] {
   // Micromark discards a leading BOM before counting token and node offsets.
   const offset = source.startsWith("\uFEFF") ? 1 : 0;
   const spans: Span[] = [], html: Span[] = [];

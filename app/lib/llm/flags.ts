@@ -1,6 +1,6 @@
 // Flags stored in translations.flags from LLM output checks.
 // Also used by browser display rules (app/lib/display.ts) to decide which primary flags prevent display, so this module is not server-only.
-// - structure_mismatch: legacy code-count warning after retry. Display the primary with its warning, including existing rows.
+// - structure_mismatch: code-count or structure warning after retry, including added Markdown or line breaks in post titles. Keep the primary visible unless another flag hides it.
 // - quality_mismatch: changed code/math contents, missing mentions/blocks or extreme prose length. Hide the primary.
 // - link_mismatch: translation contains URLs/links/images absent from source (possible prompt injection or URL rewrite). Hide the primary.
 // - untranslated: identical to source, with no translation. Hide the primary.

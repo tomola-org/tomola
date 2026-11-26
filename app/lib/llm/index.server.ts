@@ -6,7 +6,7 @@ import { resolveChatEngine, resolveEmbeddingEngine, resolveEngines, type EngineS
 import { LlmError } from "./errors.server";
 import { assertBudget, getBudgetState, getChatBudgetStatus } from "./usage.server";
 import { budgetAllows } from "./usage-policy";
-import { CHAT_PROMPT_VERSION, decodeChatEntities } from "./prompt.server";
+import { CHAT_PROMPT_VERSION, decodePlainTextEntities } from "./prompt.server";
 import { villageChatEnabled } from "../village-chat-enabled.server";
 import { prepareTranslationLinks, translateChecked, type CheckedTranslation, type ProtectedTranslationContext } from "./translate.server";
 import { currentDivergenceSampleRate, isDivergenceSampled } from "./divergence-sample.server";
@@ -64,7 +64,7 @@ export async function translateChat(db: Db, req: TranslationRequest & { chat: { 
   });
   const result = await translateChecked({ ...metered, async translate(request) {
     const translated = await metered.translate(request);
-    return { ...translated, text: decodeChatEntities(translated.text, request.text), promptVersion: CHAT_PROMPT_VERSION };
+    return { ...translated, text: decodePlainTextEntities(translated.text, request.text), promptVersion: CHAT_PROMPT_VERSION };
   } }, req);
   return { ...result, engine: engine.id, costUsdMicro };
 }

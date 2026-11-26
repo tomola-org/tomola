@@ -446,10 +446,20 @@ export type StructureCheck = {
 
 // The mentions of the source that the translation lost: compared after NFKC and lower case ("＠Hana" and "@hana" are the same mention), in the prose of the translation
 // (not in its code or math). The result is the mentions as they were passed in.
-function missingMentions(mentions: readonly string[], translated: string): string[] {
+function missingMentions(mentions: readonly string[], prose: string): string[] {
   const fold = (s: string) => s.normalize("NFKC").toLowerCase();
-  const prose = fold(proseOf(translated));
-  return mentions.filter((mention) => !prose.includes(fold(mention)));
+  const text = fold(prose);
+  return mentions.filter((mention) => !text.includes(fold(mention)));
+}
+
+function checkLinks(source: string, translated: string, mismatches: string[], flags: string[]) {
+  // Translated URLs must be a subset of original URLs. Removing is allowed; additions are invented links.
+  const sourceLinks = extractLinks(source);
+  const added = [...extractLinks(translated)].filter((u) => !sourceLinks.has(u));
+  if (added.length > 0) {
+    mismatches.push(`links: ${added.length} URL(s) in the translation that are not in the source`);
+    flags.push(FLAG_LINK_MISMATCH);
+  }
 }
 
 // Each source mention must survive. Retry both warning and quality failures once;
@@ -469,17 +479,43 @@ export function checkStructure(source: string, translated: string, opts: { menti
   const code = checkCodeContent(source, translated, { skipFenced: a.codeBlocks !== b.codeBlocks });
   if (mismatches.length || code.countMismatch) flags.push(FLAG_STRUCTURE_MISMATCH);
   const quality = qualityMismatches(source, translated, opts);
-  const mentions = missingMentions(opts.mentions ?? [], translated).map(lost => `mentions: ${lost} missing`);
+  const mentions = missingMentions(opts.mentions ?? [], proseOf(translated)).map(lost => `mentions: ${lost} missing`);
   if ((code.contentChanged || quality.length || mentions.length) && !flags.includes(FLAG_QUALITY_MISMATCH)) flags.push(FLAG_QUALITY_MISMATCH);
   mismatches.push(...code.mismatches, ...quality, ...mentions);
-  // Translated URLs must be a subset of original URLs. Removing is allowed; additions are invented links.
-  const sourceLinks = extractLinks(source);
-  const added = [...extractLinks(translated)].filter((u) => !sourceLinks.has(u));
-  if (added.length > 0) {
-    mismatches.push(`links: ${added.length} URL(s) in the translation that are not in the source`);
-    flags.push(FLAG_LINK_MISMATCH);
-  }
+  checkLinks(source, translated, mismatches, flags);
   return { ok: mismatches.length === 0, mismatches, flags };
+}
+
+const TITLE_MARKUP = new Set(["emphasis", "strong", "delete", "inlineCode", "code", "heading", "blockquote", "list", "image", "imageReference", "linkReference"]);
+
+function countTitleMarkup(text: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  const bom = text.startsWith("\uFEFF") ? 1 : 0;
+  const walk = (node: MdNode) => {
+    const start = node.position?.start.offset;
+    const bracketLink = node.type === "link" && start !== undefined && text[start + bom] === "[";
+    if (TITLE_MARKUP.has(node.type) || bracketLink) counts.set(node.type, (counts.get(node.type) ?? 0) + 1);
+    node.children?.forEach(walk);
+  };
+  walk(markdown.parse(text) as unknown as MdNode);
+  return counts;
+}
+
+export function checkTitleContent(source: string, translated: string, mentions: readonly string[] = []): StructureCheck {
+  const original = countTitleMarkup(source);
+  const mismatches = [...countTitleMarkup(translated)]
+    .filter(([type, count]) => count > (original.get(type) ?? 0))
+    .map(([type]) => `added Markdown ${type}`);
+  if (!/[\r\n]/.test(source) && /[\r\n]/.test(translated)) mismatches.push("added a line break");
+  const flags = mismatches.length ? [FLAG_STRUCTURE_MISMATCH] : [];
+  const lost = missingMentions(mentions, translated);
+  if (lost.length) {
+    mismatches.push(...lost.map(mention => `mentions: ${mention} missing`));
+    flags.push(FLAG_QUALITY_MISMATCH);
+  }
+  // Keep the existing URL comparison, including its treatment of literal dollars.
+  checkLinks(source, normalizeTranslationDollars(source, translated), mismatches, flags);
+  return { ok: !mismatches.length, mismatches, flags };
 }
 
 // Plain chat has no code/math delimiters. Inspect literal URLs even inside
@@ -489,9 +525,7 @@ export function checkChatContent(source: string, translated: string, opts: { men
     ...extractLinks(text),
     ...chatParts(text).filter(part => part.type === "link").map(part => normalizeUrl(part.href)),
   ]);
-  const fold = (text: string) => text.normalize("NFKC").toLowerCase();
-  const body = fold(translated);
-  const mismatches = (opts.mentions ?? []).filter(mention => !body.includes(fold(mention))).map(mention => `mentions: ${mention} missing`);
+  const mismatches = missingMentions(opts.mentions ?? [], translated).map(mention => `mentions: ${mention} missing`);
   const flags = mismatches.length ? [FLAG_QUALITY_MISMATCH] : [];
   const original = links(source);
   const added = [...links(translated)].filter(url => !original.has(url));

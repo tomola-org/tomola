@@ -46,7 +46,7 @@ it("pins post rules and their prompt version when Markdown instructions change",
   const text = LANGS.map(to => translationSystemPrompt(to === "ja" ? "en" : "ja", to, "fixed")).join("\n");
   expect({ post: PROMPT_VERSION, chat: CHAT_PROMPT_VERSION, shared: createHash("sha256").update(text).digest("hex") },
     "Review changed instructions and bump the affected prompt versions before updating this fingerprint.")
-    .toEqual({ post: "translate-v15", chat: "chat-v4", shared: "7b1fdcbf8377ef3eafd2b3615d275a9a3d8f05e0c352807fe9d3fd2e0bb5247a" });
+    .toEqual({ post: "translate-v16", chat: "chat-v4", shared: "7b1fdcbf8377ef3eafd2b3615d275a9a3d8f05e0c352807fe9d3fd2e0bb5247a" });
 });
 
 it("keeps the plain-text chat prompt unchanged by post-only Markdown rules", () => {

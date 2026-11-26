@@ -48,7 +48,7 @@ export async function prepareTranslationLinks(req: TranslationRequest, context?:
 
 // Translate and check structure, links and untranslated output. On failure, retry once with a warning.
 // Persistent output leaks throw a terminal error before storage. Other failed
-// checks flag the second output. Legacy structure_mismatch remains
+// checks flag the second output. The structure_mismatch warning remains
 // visible; quality_mismatch hides strong preservation failures. Other display
 // rules live in ./flags. Rethrow engine failures unchanged.
 export async function translateChecked(engine: TranslationEngine, req: TranslationRequest, options: {
