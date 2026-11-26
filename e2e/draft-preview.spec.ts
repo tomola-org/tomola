@@ -1,7 +1,7 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { saveEditorDraft } from "./draft-autosave-helper";
-import { chooseEditorMode, enMessages as en, formatMessage, messageTitleField, state, useMember, waitForFormReady } from "./helpers";
+import { chooseEditorMode, enMessages as en, formatMessage, messageTitleField, state, useMember, waitForFormReady, waitForHydration } from "./helpers";
 import { routeModule } from "./support/module-route";
 
 const previewPath = /\/drafts\/\d+\/preview$/;
@@ -30,8 +30,11 @@ async function midway(body: Locator) {
 async function clickStickyAction(action: Locator) {
   await expect(action).toBeInViewport({ ratio: 1 });
   const { x, y, width, height } = (await action.boundingBox())!;
+  const center = { x: x + width / 2, y: y + height / 2 };
+  expect(await action.evaluate((button, { x, y }) => button.contains(document.elementFromPoint(x, y)), center),
+    "the sticky action should be the hit target at its center").toBe(true);
   // Locator clicks scroll the target past the page's scroll padding first.
-  await action.page().mouse.click(x + width / 2, y + height / 2);
+  await action.page().mouse.click(center.x, center.y);
 }
 
 const positionInBody = (body: Locator) => body.evaluate(element => {
@@ -121,8 +124,44 @@ test("an existing draft returns to the same part of the visual editor after the 
   await expectRestored(rich, before);
 });
 
+test("sticky draft actions keep the writing position while tabbing", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await useMember(page, "preview_sticky_focus@example.com");
+  const created = await page.request.post("/t/new", {
+    headers: { Origin: state().baseURL },
+    form: { intent: "draft", body: longBody, lang: "en" },
+    maxRedirects: 0,
+  });
+  expect(created.status()).toBe(302);
+  const savedPath = created.headers().location;
+  expect(savedPath).toMatch(/^\/drafts\/\d+\?saved=1$/);
+  const body = bodyField(page);
+  const actions = page.locator("[data-write-actions]");
+  const status = actions.getByRole("status");
+  const publishDraft = actions.getByRole("button", { name: en.draft_publish, exact: true });
+  const preview = previewButton(page);
+
+  await page.goto(savedPath);
+  await waitForFormReady(editorForm(page));
+  await expect(status).toHaveText(en.draft_autosave_saved);
+  await midway(body);
+  expect(await actions.evaluate(row => Math.abs(row.getBoundingClientRect().top))).toBeLessThan(2);
+
+  await publishDraft.evaluate(button => button.focus({ preventScroll: true }));
+  const scrollY = () => page.evaluate(() => window.scrollY);
+  const before = await scrollY();
+  expect(await positionInBody(body)).toBeGreaterThan(0.25);
+  await page.keyboard.press("Tab");
+  await expect(preview).toBeFocused();
+  expect(Math.abs(await scrollY() - before)).toBeLessThan(2);
+  await page.keyboard.press("Shift+Tab");
+  await expect(publishDraft).toBeFocused();
+  expect(Math.abs(await scrollY() - before)).toBeLessThan(2);
+});
+
 for (const method of ["link", "back"] as const) {
-  test(`a first preview restores the writing position in the saved draft via ${method}`, async ({ page }) => {
+  const returnMethod = method === "link" ? "link after reload" : "browser Back";
+  test(`a first preview restores the writing position in the saved draft via ${returnMethod}`, async ({ page }) => {
     await openEditor(page, `preview_new_${method}`);
     const body = bodyField(page);
     await body.fill(longBody);
@@ -133,8 +172,11 @@ for (const method of ["link", "back"] as const) {
     await expect(page).toHaveURL(previewPath);
     const draft = new URL(page.url()).pathname.replace(/\/preview$/, "");
     const returnLink = page.getByRole("link", { name: en.draft_preview_back });
-    if (method === "link") await returnLink.click();
-    else await page.goBack();
+    if (method === "link") {
+      await page.reload();
+      await waitForHydration(page);
+      await returnLink.click();
+    } else await page.goBack();
     await expect(page).toHaveURL(url => url.pathname === draft);
     await expectRestored(body, before);
     await expect(body).toHaveValue(longBody);

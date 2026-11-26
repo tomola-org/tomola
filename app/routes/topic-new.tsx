@@ -275,19 +275,17 @@ function TopicNewForm({ loaderData, actionData }: Route.ComponentProps) {
           alt={loaderData.alt}
           altNotFound={loaderData.altNotFound}
           sharePrefilled={loaderData.sharePrefilled}
-          actions={<WriteActions status={<>
-            {status}
-            {store && recovery && <DraftAutosave key={recovery.round} recovered={recovery.record} owner={loaderData.ownerId} scope={screen} store={store} {...loaderData.draftStart} newTopic onLinked={setLinkedId} onRestore={fields => {
-              setAsksStance(fields.get("asksStance") === "1");
-              setIntro(fields.get("intro") === "1");
-              setRestoredPosting({ village: String(fields.get("village") ?? ""), explicit: fields.get("villageExplicit") === "1" });
-            }} />}
-          </>}>
+          actions={<WriteActions status={status}>
             {/* Post is the first submit button and remains the default for Enter. */}
             <SendButton>{m.submit_post()}</SendButton>
             {!intro && <DraftPreviewButton />}
             <noscript><SendButton variant="outline" intent="draft" formNoValidate>{m.save_draft()}</SendButton>
             {error === "draft_conflict" && <SendButton variant="outline" intent="draft" formAction={loaderData.newDraftAction} formNoValidate>{m.save_draft_as_new()}</SendButton>}</noscript>
+            {store && recovery && <DraftAutosave inline key={recovery.round} recovered={recovery.record} owner={loaderData.ownerId} scope={screen} store={store} {...loaderData.draftStart} newTopic onLinked={setLinkedId} onRestore={fields => {
+              setAsksStance(fields.get("asksStance") === "1");
+              setIntro(fields.get("intro") === "1");
+              setRestoredPosting({ village: String(fields.get("village") ?? ""), explicit: fields.get("villageExplicit") === "1" });
+            }} />}
           </WriteActions>}
         >
           <details open={!!actionData?.values?.aiMaterial}><summary className="ui-meta">{loaderData.aiMaterialLabels.add}</summary>

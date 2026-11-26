@@ -26,10 +26,10 @@ const unpack = (snapshot: string) => {
   return form;
 };
 
-export default function DraftAutosave({ owner, scope, startTitle = "", startBody, draft, onSaved, onLinked, onRestore, newTopic = false, store = localDraftStore, recovered, recoveryToken }: {
+export default function DraftAutosave({ owner, scope, startTitle = "", startBody, draft, onSaved, onLinked, onRestore, newTopic = false, store = localDraftStore, recovered, recoveryToken, onSaveStatus }: {
   owner: string; scope: string; startTitle?: string; startBody: string; draft?: { id: number; version: number };
   onSaved?: (saved: AutosavedDraft) => void; onLinked?: (id: number | undefined) => void; onRestore?: (fields: FormData) => void; newTopic?: boolean; store?: DraftStore; recovered?: LocalDraft | null;
-  recoveryToken?: string;
+  recoveryToken?: string; onSaveStatus?: (message: string) => void;
 }) {
   const ownedStore = useMemo(() => draftStoreForOwner(owner, store), [owner, store]);
   const { read: readLocalDraft, write: writeLocalDraft, remove: removeLocalDraft } = ownedStore;
@@ -438,8 +438,11 @@ export default function DraftAutosave({ owner, scope, startTitle = "", startBody
     }
     if (navigation.state === "idle") paused.current = false;
   }, [navigation.state, navigation.location, navigation.formData, location.pathname, owner, scope, removeLocalDraft]);
-  return <p ref={holder} data-draft-autosave={status} className="ui-help text-muted-foreground">
-    <span aria-live="off">{status === "saving" ? m.draft_autosave_saving() : status === "saved" ? m.draft_autosave_saved() : ""}</span>
+  const saveStatus = status === "saving" ? m.draft_autosave_saving() : status === "saved" ? m.draft_autosave_saved() : "";
+  useEffect(() => { onSaveStatus?.(saveStatus); }, [onSaveStatus, saveStatus]);
+  const warning = status === "failed" || status === "missing" || copied || localFailed || missing;
+  return <p ref={holder} data-draft-autosave={status} className={onSaveStatus && !warning ? "sr-only" : "basis-full ui-help text-muted-foreground"}>
+    {!onSaveStatus && <span aria-live="off">{saveStatus}</span>}
     <span aria-live="polite">{status === "failed" ? m.draft_autosave_failed() : status === "missing" ? m.ai_write_gone() : ""}</span>
     <span aria-live="polite">{copied && <> {m.draft_autosave_copied()}</>}</span>
     {localFailed && <span role="alert"> {m.local_draft_failed()}</span>}

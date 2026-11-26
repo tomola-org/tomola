@@ -175,6 +175,13 @@ test("a topic with math, a footnote and an external image: the preview and the p
   await expect(article.getByRole("link", { name: "リンクの画像" })).toHaveAttribute("href", "https://example.org/page");
   // The footnote heading for screen readers uses the body's language, Japanese.
   await expect(article.locator("[data-footnotes] h2")).toHaveText("脚注");
+  await boss.goto(`/t/${topicId}/edit`);
+  await waitForFormReady(boss.locator("form", { has: boss.getByLabel(enMessages.report_field_title) }));
+  // The body preview fetches rendered HTML from the same origin under the CSP.
+  const renderedBody = boss.waitForResponse(response => new URL(response.url()).pathname === "/preview" && response.request().method() === "POST");
+  await boss.getByRole("button", { name: enMessages.preview, exact: true }).click();
+  expect((await renderedBody).ok()).toBe(true);
+  await expect(boss.locator("form .longread .katex").first()).toBeVisible();
   expect(external, "no request to the external image hosts").toEqual([]);
   expectClean(bossCsp);
 });
@@ -227,7 +234,7 @@ test("the handle suggestions for an @mention and the preview member link work un
   expect(ok.status()).toBe(200);
   expect(ok.headers()["cache-control"]).toBe("private, no-store");
   expect(await ok.json()).toEqual({ handles: ["mika"], names: { mika: { displayName: null, displayNameLatin: null, label: null } } });
-  // This shared page should not carry the unsubmitted preview into the next scenario.
+  // Return to the saved draft and clear the editor before reusing this page.
   await boss.getByRole("link", { name: enMessages.draft_preview_back, exact: true }).click();
   await body.fill("");
 });

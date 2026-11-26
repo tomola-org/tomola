@@ -96,16 +96,16 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
   const browserDraft = draft.via === "web" && !requiresReview;
   // A first save from the new-topic screen comes here with ?saved=1: this screen says it was saved, and the mark is taken off the address a little later.
   const location = useLocation();
-  const savedHere = useRef(new URLSearchParams(location.search).get("saved") === "1");
+  const [savedHere] = useState(() => new URLSearchParams(location.search).get("saved") === "1");
   useEffect(() => {
-    if (!savedHere.current) return;
+    if (!savedHere) return;
     const timer = setTimeout(() => {
       const url = new URL(window.location.href);
       url.searchParams.delete("saved");
       window.history.replaceState(window.history.state, "", url);
     }, 5000);
     return () => clearTimeout(timer);
-  }, []);
+  }, [savedHere]);
   useEffect(() => {
     if (!actionData || lastAction.current === actionData) return;
     lastAction.current = actionData;
@@ -121,8 +121,10 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
   const guardDraft = editorRound > 0 || draft.id !== loaderData.draft.id ? draft : originalDraft.current;
   const error = feedback?.error ?? undefined;
   const errorText = feedback?.error ? (feedback.error === "draft_conflict" ? m.ai_write_conflict() : feedback.error === "not_found" ? m.ai_write_gone() : entryErrorMessage(feedback.error, draft.kind)) : undefined;
+  const showSaved = savedHere && !feedback || feedback?.saved && !feedback.error;
+  const savedInRow = showSaved && draft.kind === "topic" && !feedback?.altRemoved;
   const status = <>
-    {(savedHere.current && !feedback || feedback?.saved && !feedback.error) && <p role="status" className="text-success-foreground">{feedback?.altRemoved ? m.draft_alt_removed() : m.draft_saved()}</p>}
+    {showSaved && !savedInRow && <p role="status" className="text-success-foreground">{feedback?.altRemoved ? m.draft_alt_removed() : m.draft_saved()}</p>}
     {feedback?.previewFailed && <p id="draft-error" role="alert" className="ui-help text-muted-foreground">{m.draft_autosave_failed()}</p>}
     {!feedback?.previewFailed && errorText && !(loaderData.posting && draft.kind === "topic" && isVillageTargetError(error)) && <p id="draft-error" role="alert" className="text-destructive">{errorText}</p>}
     {error === "confirmation_required" && <noscript><p>{draft.kind === "topic" ? m.draft_confirmation_use_preview() : m.draft_confirmation_reply_javascript()}</p></noscript>}
@@ -149,7 +151,7 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
     <noscript><SendButton variant="outline" intent="save" formNoValidate>{m.save_draft()}</SendButton></noscript>
   </>;
   const ai = browserDraft && <AiEditorTools ownerId={loaderData.ownerId} connectDraftLabel={loaderData.connectDraftLabel} kind={draft.kind} threadId={draft.threadId ?? undefined} parentId={draft.parentId} draft={{ id: draft.id, version }} onSaved={saved => { setVersion(saved.version); setSigningView(saved.signingView); }} candidate={candidate} onCandidateChange={setCandidate} />;
-  const autosave = <DraftAutosave owner={loaderData.ownerId} recoveryToken={loaderData.recoveryToken} scope={`draft:${draft.id}`} startTitle={orBlank(guardDraft.title)} startBody={guardDraft.body} draft={{ id: draft.id, version }} onSaved={saved => {
+  const autosave = <DraftAutosave inline={draft.kind === "topic"} notice={savedInRow ? m.draft_autosave_saved() : undefined} owner={loaderData.ownerId} recoveryToken={loaderData.recoveryToken} scope={`draft:${draft.id}`} startTitle={orBlank(guardDraft.title)} startBody={guardDraft.body} draft={{ id: draft.id, version }} onSaved={saved => {
     setVersion(saved.version); setSigningView(saved.signingView);
     setResolvedConflict(actionData);
     if (saved.id !== draft.id) {
@@ -194,7 +196,7 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
           error={error} errorId="draft-error"
           BodyEditor={LongFormBody}
           autoLang={false}
-          actions={<WriteActions status={<>{status}{autosave}</>}>{buttons}</WriteActions>}
+          actions={<WriteActions status={status}>{buttons}{autosave}</WriteActions>}
           posting={loaderData.posting ? { data: loaderData.posting, selected: feedback?.values?.village ?? (editorRound > 0 ? draft.village : undefined) ?? loaderData.posting.selected, explicit: loaderData.posting.explicit, error: loaderData.posting.error ?? undefined } : undefined}
           keeper={{ owner: loaderData.ownerId, scope: `draft:${draft.id}`, startTitle: orBlank(guardDraft.title), startBody: guardDraft.body }}
           defaultLang={draft.lang}

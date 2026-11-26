@@ -905,6 +905,10 @@ form[action="/save"] button[aria-pressed="true"] svg { fill: currentColor; }
     z-index: 11;
   }
 
+  [data-write-actions]:not([data-write-actions-compact]) * {
+    scroll-margin-block-start: calc(-1 * var(--write-actions-height, 4rem));
+  }
+
   form:has(> [data-write-actions]:not([data-write-actions-compact])) [data-rich-toolbar-slot] {
     inset-block-start: var(--write-actions-height, 4rem);
   }

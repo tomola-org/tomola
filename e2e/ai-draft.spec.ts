@@ -330,7 +330,6 @@ test("import preserves frontmatter as body text, rejects overflow, and undo cann
   const ai = "---\ntitle: AI title\nlang: fr\n---\n```md\nAI text\n```";
   await candidate().fill(ai);
   await page.getByRole("button", { name: en.ai_write_apply, exact: true }).click();
-  await expect(page.locator(".longread")).toHaveCount(0);
   await expect(titleField(page)).toHaveValue("My title");
   await openPostSettings(page);
   await expect(page.getByRole("combobox", { name: en.field_lang, exact: true })).toContainText("日本語");

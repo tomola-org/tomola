@@ -6,7 +6,26 @@ type PreviewReturn = { path: string; sourceKey: string; previewKey?: string; pos
 
 // The current preview has one return position in this tab. Keep only geometry,
 // and tie it to the history entries that belong to that preview.
+const storageKey = "tomola:draft-preview-position";
 let pending: PreviewReturn | undefined;
+
+function readPending() {
+  if (!pending) {
+    try {
+      const saved: PreviewReturn | null = JSON.parse(sessionStorage.getItem(storageKey) ?? "null");
+      if (Number.isFinite(saved?.position?.fraction) && Number.isFinite(saved?.position?.offset)) pending = saved ?? undefined;
+    } catch { /* Storage can be unavailable. */ }
+  }
+  return pending;
+}
+
+function setPending(saved: PreviewReturn | undefined) {
+  pending = saved;
+  try {
+    if (saved) sessionStorage.setItem(storageKey, JSON.stringify(saved));
+    else sessionStorage.removeItem(storageKey);
+  } catch { /* Keep the in-memory behavior when storage is unavailable. */ }
+}
 
 function editorBody(container: Element | null | undefined) {
   return container?.querySelector<HTMLElement>(
@@ -15,28 +34,28 @@ function editorBody(container: Element | null | undefined) {
 }
 
 export function captureDraftPreviewPosition() {
+  const source = { sourceKey: window.history.state?.key ?? "default", sourcePath: window.location.pathname };
   const body = editorBody(document.querySelector("form:has([data-draft-preview-button])"));
-  if (!body) return;
-  const { top, height } = body.getBoundingClientRect();
-  if (height === 0) return;
+  const { top, height } = body?.getBoundingClientRect() ?? { top: 0, height: 0 };
+  if (!height) return { ...source, position: undefined };
   const fraction = Math.max(0, Math.min(1, -top / height));
-  const position = { fraction, offset: -top - fraction * height };
-  return { sourceKey: window.history.state?.key ?? "default", sourcePath: window.location.pathname, position };
+  return { ...source, position: { fraction, offset: -top - fraction * height } };
 }
 
 export function rememberDraftPreviewPosition(path: string, captured: ReturnType<typeof captureDraftPreviewPosition>) {
-  if (!captured || captured.sourceKey !== (window.history.state?.key ?? "default") || captured.sourcePath !== window.location.pathname) return;
+  if (captured.sourceKey !== (window.history.state?.key ?? "default") || captured.sourcePath !== window.location.pathname) return;
   const editPath = path.slice(0, -"/preview".length);
   // After the first save, Back should reopen the saved draft in place of
   // the now-completed new-topic entry. The router will push the preview.
   if (window.location.pathname === "/t/new") window.history.replaceState(window.history.state, "", editPath);
-  pending = { path, sourceKey: captured.sourceKey, position: captured.position };
+  setPending(captured.position ? { path, sourceKey: captured.sourceKey, position: captured.position } : undefined);
 }
 
 export function useDraftPreviewBackState(id: number) {
   const { key } = useLocation();
   useLayoutEffect(() => {
-    if (pending?.path === `/drafts/${id}/preview`) pending.previewKey ??= key;
+    const saved = readPending();
+    if (saved?.path === `/drafts/${id}/preview` && !saved.previewKey) setPending({ ...saved, previewKey: key });
   }, [id, key]);
   return { draftPreviewReturn: key };
 }
@@ -45,7 +64,7 @@ export function useRestoreDraftPreviewPosition(main: RefObject<HTMLElement | nul
   const location = useLocation();
   const navigation = useNavigationType();
   useLayoutEffect(() => {
-    const saved = pending;
+    const saved = readPending();
     const container = main.current;
     if (!container || !saved?.previewKey || saved.path !== `/drafts/${id}/preview`) return;
     const returning = navigation === "POP"
@@ -63,7 +82,7 @@ export function useRestoreDraftPreviewPosition(main: RefObject<HTMLElement | nul
         const { top, height } = body.getBoundingClientRect();
         const { fraction, offset } = saved.position;
         window.scrollTo({ top: window.scrollY + top + fraction * height + offset, behavior: "instant" });
-        pending = undefined;
+        setPending(undefined);
         observer.disconnect();
       });
     };
