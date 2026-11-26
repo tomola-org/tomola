@@ -3,7 +3,7 @@ import { isSuspendedDeletedAddress } from "./suspended-email.server";
 import { RETENTION, daysBefore } from "~/lib/retention";
 import { drainRetentionRows, type RetentionResults } from "~/lib/retention-batch.server";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { and, desc, eq, gt, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "~/lib/db/client.server";
 import { invitations, profiles, user } from "~/lib/db/schema";
@@ -195,7 +195,9 @@ export async function revokeInvitation(db: Db, actorId: string, id: string, opts
   return rows.length > 0;
 }
 
-export async function pruneExpiredInvitationRecipients(db: Db, now = new Date(), results?: RetentionResults): Promise<void> {
-  await drainRetentionRows(db, "invitation_recipients", invitations,
-    and(isNull(invitations.usedAt), sql`${invitations.email} is not null`, lte(invitations.expiresAt, daysBefore(now, RETENTION.expiredInvitationDays)))!, results, sql`email = null`);
+export async function pruneInvitationRecipients(db: Db, now = new Date(), results?: RetentionResults): Promise<void> {
+  await drainRetentionRows(db, "invitation_recipients", invitations, and(isNotNull(invitations.email), or(
+    lte(invitations.usedAt, daysBefore(now, RETENTION.usedInvitationDays)),
+    and(isNull(invitations.usedAt), lte(invitations.expiresAt, daysBefore(now, RETENTION.expiredInvitationDays))),
+  ))!, results, sql`email = null`);
 }

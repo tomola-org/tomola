@@ -12,12 +12,15 @@ import {
   listInvitations,
   markInvitationUsed,
   normalizeEmail,
-  pruneExpiredInvitationRecipients,
+  pruneInvitationRecipients,
   revokeInvitation,
 } from "~/lib/invitations.server";
 import { createProfile } from "~/lib/profiles.server";
+import { m } from "~/paraglide/messages.js";
 import { createTestDb } from "./helpers/db";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
+import { renderInRouter } from "./helpers/render-in-router";
+import { routeElement } from "./helpers/route-fixtures";
 
 describe("invitations", () => {
   it("tells the invitation page who sent it, and nothing when there is no sender or no profile", async () => {
@@ -46,17 +49,23 @@ describe("invitations", () => {
     const other = (await listInvitations(db)).find(r => r.email === "operator-revoke@example.com")!;
     expect(await revokeInvitation(db, "stranger", other.id, { operator: true })).toBe(true);
   });
-  it("removes only unused recipient addresses thirty days after expiry", async () => {
+  it("clears unused recipients thirty days after expiry and used recipients thirty days after use", async () => {
     const db = await createTestDb();
-    const now = new Date("2030-01-01");
-    for (const [email, days] of [["old@example.com", 32], ["used@example.com", 32], ["recent@example.com", 30]] as const) await createInvitation(db, { email, now: new Date(now.getTime() - days * 86400_000), ttlDays: 1 });
-    const [used] = await db.select().from(invitations).where(eq(invitations.email, "used@example.com"));
-    await db.update(invitations).set({ usedAt: now }).where(eq(invitations.id, used.id));
-    await pruneExpiredInvitationRecipients(db, now);
-    const rows = await db.select().from(invitations);
-    expect(rows.filter(row => row.email === null)).toHaveLength(1);
-    expect(rows.find(row => row.id === used.id)?.email).toBe("used@example.com");
-    expect(rows.find(row => row.email === "recent@example.com")).toBeDefined();
+    const now = new Date("2030-01-01T00:00:00Z");
+    const ago = (days: number) => new Date(now.getTime() - days * 86_400_000);
+    const expired = await createInvitation(db, { email: "expired@example.com", now: ago(31), ttlDays: 1 });
+    const recentlyExpired = await createInvitation(db, { email: "recently-expired@example.com", now: ago(30), ttlDays: 1 });
+    const used = await createInvitation(db, { email: "used@example.com", now: ago(31) });
+    const recentlyUsed = await createInvitation(db, { email: "recently-used@example.com", now: ago(31), ttlDays: 3 });
+    const valid = await createInvitation(db, { email: "valid@example.com", now: ago(1) });
+    expect(await markInvitationUsed(db, used.email, { now: ago(30) })).toBe(1);
+    expect(await markInvitationUsed(db, recentlyUsed.email, { now: ago(29) })).toBe(1);
+
+    await pruneInvitationRecipients(db, now);
+    const rows = new Map((await db.select().from(invitations)).map(row => [row.id, row]));
+    expect(rows.get(expired.id)).toMatchObject({ email: null, usedAt: null });
+    expect(rows.get(used.id)).toMatchObject({ email: null, usedAt: ago(30) });
+    for (const kept of [recentlyExpired, recentlyUsed, valid]) expect(rows.get(kept.id)?.email).toBe(kept.email);
   });
   it("normalizes email", () => {
     expect(normalizeEmail("  Alice@Example.COM ")).toBe("alice@example.com");
@@ -287,6 +296,29 @@ describe("the operator's invitation list", () => {
     // Newest first.
     expect(rows[0].email).toBe("new@example.com");
     expect(JSON.stringify(res.value)).not.toContain(valid.token);
+  });
+
+  it("renders an erased recipient in the operator list without exposing the invitee account to the inviter", async () => {
+    const { default: AdminInvitations, loader } = await import("~/routes/admin-invitations");
+    const { loader: memberLoader } = await import("~/routes/invites-new");
+    process.env.OPERATOR_EMAILS = "hana@example.com";
+    const usedAt = new Date(Date.now() - 31 * 86_400_000);
+    const invitation = await createInvitation(h.db, { email: "erased-invitee@example.com", createdBy: h.ids.somchai, now: usedAt });
+    expect(await markInvitationUsed(h.db, invitation.email, { usedBy: h.ids.hana, now: usedAt })).toBe(1);
+    await pruneInvitationRecipients(h.db);
+
+    const loaderData = await loader(h.args(h.request("/admin/invitations", { as: "hana" })));
+    expect(loaderData.rows.find(row => row.id === invitation.id)).toMatchObject({
+      email: null, status: "used", inviterHandle: "somchai", usedByHandle: "hana", usedByExists: true, usedAt,
+    });
+    const html = await renderInRouter(() => routeElement(AdminInvitations, { loaderData }), "/admin/invitations");
+    expect(html).toContain(m.invites_recipient_removed());
+    expect(html).not.toContain(invitation.email);
+    const history = await memberLoader(h.args(h.request("/invites/new", { as: "somchai" })));
+    const memberRow = history.invitations.find(row => row.id === invitation.id);
+    expect(memberRow).toMatchObject({ email: null, status: "used" });
+    expect(memberRow).not.toHaveProperty("usedByHandle");
+    expect(memberRow).not.toHaveProperty("usedByExists");
   });
 
   it("tells apart a user with no display name yet and an invitation used without any account", async () => {

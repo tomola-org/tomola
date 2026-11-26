@@ -55,6 +55,11 @@ it("drains every maintenance category's 350-row backlog within one invocation", 
   await db.insert(session).values(each(i => ({ id: `s${i}`, token: `s${i}`, userId: "a", createdAt: OLD, updatedAt: OLD, expiresAt: OLD })));
   await db.insert(notifications).values(each(() => ({ userId: "a", kind: "mention", createdAt: OLD })));
   await db.insert(pushSubscriptions).values({ id: "retention-push", browserSecretHash: "fixture", userId: "a", vapidPublicKey: "fixture", browser: "Other", os: "Other", authorizingSessionId: "expired", authorizedUntil: OLD, stoppedReason: "member_stopped" });
+  await db.insert(pushSubscriptions).values(each(i => ({
+    id: `expired-push-${i}`, browserSecretHash: "fixture", userId: "a", vapidPublicKey: "fixture",
+    browser: "Other", os: "Other", authorizingSessionId: "expired", authorizedUntil: OLD,
+    endpoint: `https://push.example/${i}`, p256dh: "fixture-key", auth: "fixture-secret",
+  })));
   // Recent notices keep their finished deliveries out of notification cascades,
   // so this category must drain its own 350-row backlog in bounded batches.
   const recent = await db.insert(notifications).values(each(() => ({ userId: "a", kind: "mention", createdAt: NOW }))).returning({ id: notifications.id });
@@ -84,7 +89,7 @@ it("drains every maintenance category's 350-row backlog within one invocation", 
   await db.insert(media).values(each(i => ({ id: villageImageId(i), avatar: true, villageId: village.id, bytes: Buffer.from("image"), mime: "image/webp", width: 256, height: 256, byteSize: 5, uploadedBy: "a", uploadedAt: OLD })));
   for (const [i, report] of villageReports.entries()) await db.update(reports).set({ iconMediaId: villageImageId(i) }).where(eq(reports.id, report.id));
   await db.insert(moderationActions).values(each(i => ({ action: "clear_village_icon", targetVillageId: village.id, iconMediaIdBefore: villageImageId(i), actorId: "a", reason: "other", createdAt: OLD })));
-  const tables = [nushiReports, nushiReservations, chatNushiReservations, aiQuestionReports, suspendedEmailHashes, rateLimits, verification, session, chatAccessLog, notifications, pushDeliveries, llmUsage, signingChallenges, jobs, villageReportSnapshots, chatReportSnapshots, chatTranslationReports, invitations, invitationNoteTranslations, oauthClient, oauthRefreshToken, moderationActions, reports, media, entryEditProposals, villageProposals, oauthAccessToken, oauthClientAssertion];
+  const tables = [nushiReports, nushiReservations, chatNushiReservations, aiQuestionReports, suspendedEmailHashes, rateLimits, verification, session, chatAccessLog, notifications, pushDeliveries, pushSubscriptions, llmUsage, signingChallenges, jobs, villageReportSnapshots, chatReportSnapshots, chatTranslationReports, invitations, invitationNoteTranslations, oauthClient, oauthRefreshToken, moderationActions, reports, media, entryEditProposals, villageProposals, oauthAccessToken, oauthClientAssertion];
   await auditRetentionTransactions(db, tables);
 
   const results = await runMaintenanceCleanup(db, NOW);

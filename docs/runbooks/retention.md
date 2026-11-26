@@ -19,6 +19,16 @@ their expiry and replay window, plus one day of grace. A rotated row is removed
 only after its linked access-token rows have been removed by their own drain.
 These categories use the standard preservation hold and batch limits.
 
+The `push_subscriptions` category stops registrations whose authorization expired
+more than 30 days ago. It clears the delivery endpoint and subscription keys and
+keeps the row so that notification settings can prompt the browser to reconnect.
+The `invitation_recipients` category clears the email address 30 days after an
+invitation is used, or 30 days after an unused invitation expires. It keeps the
+invitation row and its inviter and invitee account references. The subsequent
+invitation note cleanup clears notes for erased recipients, along with cached
+translations and pending translation work. Both categories use the same
+preservation hold and batch limits as the other cleanups.
+
 The `identity_action_snapshots` and `identity_report_snapshots` categories clear
 saved display names and avatar image pointers after 180 days, measured from the
 action's creation or the report's handling time. Open reports remain intact.

@@ -1,10 +1,11 @@
 import { eq, and, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import type { Db } from "~/lib/db/client.server";
-import { aiQuestionReports, nushiReports, chatAccessLog, chatNushiReservations, llmUsage, notifications, nushiReservations, pushDeliveries, session, signingChallenges, suspendedEmailHashes, oauthAccessToken, oauthClientAssertion, oauthRefreshToken } from "~/lib/db/schema";
+import { aiQuestionReports, nushiReports, chatAccessLog, chatNushiReservations, llmUsage, notifications, nushiReservations, pushDeliveries, pushSubscriptions, session, signingChallenges, suspendedEmailHashes, oauthAccessToken, oauthClientAssertion, oauthRefreshToken } from "~/lib/db/schema";
 import { RETENTION, daysBefore, monthsBefore } from "~/lib/retention";
 import { drainRetentionRows, withRetentionRun, type RetentionResults, type RetentionRunOptions } from "~/lib/retention-batch.server";
 import { cleanupExpiredLimits } from "~/lib/rate-limit.server";
 import { dayOf } from "~/lib/nushi-requests.server";
+import { pushStoppedValues } from "~/lib/push/subscriptions.server";
 
 export function runRetentionCleanup(db: Db, now = new Date(), options: RetentionRunOptions = {}): Promise<RetentionResults> {
   return withRetentionRun(options, async () => {
@@ -23,6 +24,12 @@ export function runRetentionCleanup(db: Db, now = new Date(), options: Retention
       and(isNull(notifications.readAt), lt(notifications.createdAt, daysBefore(now, RETENTION.unreadNotificationDays))),
     )!, results);
     await drainRetentionRows(db, "push_deliveries", pushDeliveries, and(isNotNull(pushDeliveries.completedAt), lt(pushDeliveries.completedAt, daysBefore(now, RETENTION.finishedPushDays)))!, results);
+    const stopped = pushStoppedValues("expired");
+    await drainRetentionRows(db, "push_subscriptions", pushSubscriptions, and(
+      isNull(pushSubscriptions.stoppedReason),
+      lt(pushSubscriptions.authorizedUntil, daysBefore(now, RETENTION.expiredPushAuthorizationDays)),
+    )!, results, sql`stopped_reason = ${stopped.stoppedReason}, generation = ${stopped.generation},
+      endpoint = ${stopped.endpoint}, p256dh = ${stopped.p256dh}, auth = ${stopped.auth}`);
     // The ledger contains no member identifier or request text; no link to anonymize.
     await drainRetentionRows(db, "llm_usage", llmUsage, lt(llmUsage.createdAt, monthsBefore(now, RETENTION.llmUsageMonths)), results);
     // Historical posting challenges can contain copies of post text.

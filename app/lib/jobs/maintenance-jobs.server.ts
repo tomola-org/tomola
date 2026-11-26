@@ -10,7 +10,7 @@ import { runRetentionCleanup } from "~/lib/retention.server";
 import { pruneDeletedEntries } from "~/lib/entry-retention.server";
 import { pruneVillageReportSnapshots } from "~/lib/village-moderation.server";
 import { pruneIdentitySnapshots } from "~/lib/identity-retention.server";
-import { pruneExpiredInvitationRecipients } from "~/lib/invitations.server";
+import { pruneInvitationRecipients } from "~/lib/invitations.server";
 import { pruneInvitationNotes } from "~/lib/invitation-note.server";
 import { pruneRotationReplays, pruneUnusedClients } from "~/lib/mcp/connections.server";
 import { pruneEntryEditProposals } from "~/lib/mcp/post-proposals.server";
@@ -70,7 +70,7 @@ export function runMaintenanceCleanup(db: Db, now = new Date(), options: Retenti
     await pruneChatReportSnapshots(db, now, results);
     await pruneIdentitySnapshots(db, now, results);
     await pruneChatTranslationReports(db, now, results);
-    await pruneExpiredInvitationRecipients(db, now, results);
+    await pruneInvitationRecipients(db, now, results);
     await pruneInvitationNotes(db, now, results);
     await pruneUnusedClients(db, now, results);
     await pruneRotationReplays(db, now, results);

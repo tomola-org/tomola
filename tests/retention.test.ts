@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
-import { chatAccessLog, invitations, jobs, llmUsage, notifications, oauthAccessToken, oauthClient, oauthClientAssertion, oauthRefreshToken, rateLimits, reports, retentionHold, session, signingChallenges, verification, villages } from "~/lib/db/schema";
+import { chatAccessLog, invitationNoteTranslations, invitations, jobs, llmUsage, notifications, oauthAccessToken, oauthClient, oauthClientAssertion, oauthRefreshToken, pushSubscriptions, rateLimits, reports, retentionHold, session, signingChallenges, verification, villages } from "~/lib/db/schema";
 import { createMaintenanceHandlers, ensureCleanupScheduled, runMaintenanceCleanup } from "~/lib/jobs/maintenance-jobs.server";
 import { runDueJobs } from "~/lib/jobs/queue.server";
 import { runRetentionCleanup } from "~/lib/retention.server";
@@ -107,11 +107,44 @@ it("retains audit and notification records at the cutoff, holds all categories, 
   expect(await db.select().from(signingChallenges)).toEqual([]);
 });
 
+it("stops only unstopped push registrations whose authorization expired more than thirty days ago", async () => {
+  const db = await createTestDb();
+  await addMember(db, "a", "alice");
+  const credentials = { p256dh: "fixture-key", auth: "fixture-secret" };
+  const [old, boundary, recent, live, stopped] = await db.insert(pushSubscriptions).values([
+    { id: "old", authorizedUntil: ago(31) },
+    { id: "boundary", authorizedUntil: ago(30) },
+    { id: "recent", authorizedUntil: ago(29) },
+    { id: "live", authorizedUntil: ago(-1) },
+    { id: "stopped", authorizedUntil: ago(31), stoppedReason: "member_stopped", generation: 2 },
+  ].map(row => ({
+    userId: "a", browserSecretHash: "fixture-hash", vapidPublicKey: "fixture-vapid-key",
+    browser: "Firefox", os: "Linux", authorizingSessionId: "fixture-session", createdAt: ago(60),
+    ...(row.stoppedReason ? { endpoint: null, p256dh: null, auth: null } : { endpoint: `https://push.example/${row.id}`, ...credentials }),
+    ...row,
+  }))).returning();
+
+  await db.update(retentionHold).set({ active: true });
+  expect((await runRetentionCleanup(db, NOW)).push_subscriptions).toMatchObject({ removed: 0, remaining: 1, stop: "hold" });
+  expect(await db.select().from(pushSubscriptions)).toEqual(expect.arrayContaining([old, boundary, recent, live, stopped]));
+
+  await db.update(retentionHold).set({ active: false });
+  expect((await runRetentionCleanup(db, NOW)).push_subscriptions).toMatchObject({ removed: 1, remaining: 0, stop: "complete" });
+  const rows = await db.select().from(pushSubscriptions);
+  expect(rows).toHaveLength(5);
+  expect(rows).toEqual(expect.arrayContaining([boundary, recent, live, stopped, {
+    ...old, stoppedReason: "expired", generation: old.generation + 1, endpoint: null, p256dh: null, auth: null,
+  }]));
+});
+
 it("a preservation hold stops the existing maintenance cleanups too, then release resumes them", async () => {
   const db = await createTestDb();
   await addMember(db, "a", "alice");
   await db.insert(jobs).values({ kind: "old", status: "done", updatedAt: ago(31) });
   await db.insert(invitations).values({ id: "i", tokenHash: "x", email: "invitee@example.com", createdBy: "a", expiresAt: ago(31) });
+  await db.insert(invitations).values({ id: "used", tokenHash: "used", email: "registered@example.com", createdBy: "a",
+    createdAt: ago(40), expiresAt: ago(26), usedAt: ago(31), note: "Private fixture note", noteLang: "en" });
+  await db.insert(invitationNoteTranslations).values({ invitationId: "used", lang: "ja", state: "ready", text: "翻訳の見本" });
   await db.insert(verification).values({ id: "v", identifier: "v", value: "private", expiresAt: ago(1) });
   await db.insert(rateLimits).values({ key: "r", windowStart: ago(2), count: 1, expiresAt: ago(1) });
   await db.update(retentionHold).set({ active: true, reason: "test preservation" });
@@ -120,12 +153,21 @@ it("a preservation hold stops the existing maintenance cleanups too, then releas
     await ensureCleanupScheduled(db, ago(1));
     await runDueJobs(db, createMaintenanceHandlers(), { now: NOW });
     expect((await db.select().from(jobs).where(eq(jobs.kind, "old")))).toHaveLength(1);
-    expect((await db.select().from(invitations))[0].email).toBe("invitee@example.com");
+    expect(await db.select().from(invitations)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "i", email: "invitee@example.com" }),
+      expect.objectContaining({ id: "used", email: "registered@example.com", note: "Private fixture note" }),
+    ]));
+    expect(await db.select().from(invitationNoteTranslations)).toHaveLength(1);
     expect(await db.select().from(verification)).toHaveLength(1);
     expect(await db.select().from(rateLimits)).toHaveLength(1);
     expect(log).toHaveBeenCalledWith(expect.stringContaining("preservation hold"));
     await db.update(retentionHold).set({ active: false, reason: null });
-    await runRetentionCleanup(db, NOW);
+    const results = await runMaintenanceCleanup(db, NOW);
+    expect(results.invitation_recipients).toMatchObject({ removed: 2, remaining: 0, stop: "complete" });
+    expect((await db.select().from(invitations).where(eq(invitations.id, "used")))[0]).toMatchObject({
+      email: null, note: null, noteLang: null, usedAt: ago(31), createdBy: "a",
+    });
+    expect(await db.select().from(invitationNoteTranslations)).toEqual([]);
     expect(await db.select().from(verification)).toEqual([]);
     expect(await db.select().from(rateLimits)).toEqual([]);
   } finally { log.mockRestore(); }
