@@ -150,7 +150,6 @@
   "draft_updated": "Updated {date}",
   "draft_badge_api": "via API",
   "draft_via_api": "This draft was sent through the API. It becomes your post when you read it and publish it here.",
-  "draft_preview_body": "Preview body",
   "draft_preview_banner": "Draft: Unpublished",
   "draft_preview_destination": "Posting to: {place}",
   "draft_preview_publish": "Publish",

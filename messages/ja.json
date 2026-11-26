@@ -136,7 +136,6 @@
   "draft_updated": "{date} に更新",
   "draft_badge_api": "API経由",
   "draft_via_api": "この下書きはAPI経由で送られました。あなたが読んでここで公開すると、あなたの投稿になります。",
-  "draft_preview_body": "本文のプレビュー",
   "draft_preview_banner": "下書き：まだ公開していません",
   "draft_preview_destination": "投稿先：{place}",
   "draft_preview_publish": "公開する",
