@@ -207,11 +207,25 @@ describe("compareTranslations (the shared part)", () => {
       glossary: (from, to, text) => (text.includes("thread") ? [{ term: "thread", candidates: ["fil"] }] : []).concat(from === "ja" && to === "fr" ? [{ term: "整合性", candidates: ["alignement"] }] : []),
     });
     const reply = seen.find((r) => r.text === "A reply that needs the thread.")!;
-    expect(reply).toMatchObject({ from: "en", to: "fr", context: "The post above.", glossary: [{ term: "thread", candidates: ["fil"] }] });
+    expect(reply).toMatchObject({ field: "body", from: "en", to: "fr", context: "The post above.", glossary: [{ term: "thread", candidates: ["fil"] }] });
     const body = seen.find((r) => r.text.startsWith("整合性"))!;
-    expect(body).toMatchObject({ title: "ソフトの安全", glossary: [{ term: "整合性", candidates: ["alignement"] }] });
+    expect(body).toMatchObject({ field: "body", title: "ソフトの安全", glossary: [{ term: "整合性", candidates: ["alignement"] }] });
     // Do not pass context for title translation.
-    expect(seen.find((r) => r.text === "ソフトの安全")!.title).toBeUndefined();
+    const title = seen.find((r) => r.text === "ソフトの安全")!;
+    expect(title.field).toBe("title");
+    expect(title.title).toBeUndefined();
+  });
+
+  it("estimates a title with its shorter plain-text instructions", () => {
+    const item = ITEMS[0];
+    const opts = { to: ["fr"], engines: [fakeA(), fakeB()] } as const;
+    const titled = estimateCompare({ ...opts, items: [item] });
+    const twoBodies = estimateCompare({ ...opts, items: [
+      { ...item, title: undefined },
+      { id: "title-as-body", lang: item.lang, body: item.title! },
+    ] });
+    expect(titled.calls).toBe(twoBodies.calls);
+    expect(titled.per.A.inputTokens).toBeLessThan(twoBodies.per.A.inputTokens);
   });
 
   it("records a failure of one model in its side, and goes on", async () => {

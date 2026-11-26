@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { LANGS, type Lang } from "~/lib/languages";
 import { LlmError } from "./errors.server";
 import { costMicro } from "./pricing.server";
-import { estimateTokens, translationSystemPrompt } from "./prompt.server";
+import { buildTranslationPrompt, estimateTokens } from "./prompt.server";
 import type { ThinkingSetting } from "./thinking";
 import { translateChecked } from "./translate.server";
 import type { EngineId, GlossaryHint, LlmEnv, TranslationEngine } from "./types";
@@ -119,15 +119,15 @@ async function translateSide(slot: "A" | "B", engine: TranslationEngine, item: C
       }
     },
   };
-  const run = async (text: string, withContext: boolean) => {
-    const out = await translateChecked(metered, { text, from: item.lang, to, ...(withContext ? { ...(item.title ? { title: item.title } : {}), ...(item.context ? { context: item.context } : {}) } : {}), glossary: glossary(text) });
+  const run = async (text: string, field: "title" | "body") => {
+    const out = await translateChecked(metered, { text, field, from: item.lang, to, ...(field === "body" ? { ...(item.title ? { title: item.title } : {}), ...(item.context ? { context: item.context } : {}) } : {}), glossary: glossary(text) });
     if (out.attempts > 1) side.retried = true;
     for (const flag of out.flags) if (!side.flags.includes(flag)) side.flags.push(flag);
     return out.text;
   };
   try {
-    if (item.title && item.title.trim() !== "") side.title = await run(item.title, false);
-    side.body = await run(item.body, true);
+    if (item.title && item.title.trim() !== "") side.title = await run(item.title, "title");
+    side.body = await run(item.body, "body");
   } catch (error) {
     side.error = error instanceof Error ? error.message : String(error);
     side.body = null;
@@ -334,10 +334,10 @@ export function estimateCompare(opts: { items: readonly CompareItem[]; to: reado
   const per = { A: { inputTokens: 0, outputTokens: 0, costUsdMicro: 0 }, B: { inputTokens: 0, outputTokens: 0, costUsdMicro: 0 } };
   for (const item of opts.items) {
     for (const to of (item.to ?? opts.to).filter((l) => l !== item.lang)) {
-      const system = estimateTokens(translationSystemPrompt(item.lang, to, "0123456789abcdef"));
-      const fields = [item.title && item.title.trim() !== "" ? { text: item.title, context: 0 } : null, { text: item.body, context: (item.title?.length ?? 0) + (item.context?.length ?? 0) }].filter((f) => f !== null);
+      const fields = [item.title && item.title.trim() !== "" ? { text: item.title, field: "title" as const, context: 0 } : null, { text: item.body, field: "body" as const, context: (item.title?.length ?? 0) + (item.context?.length ?? 0) }].filter((f) => f !== null);
       for (const f of fields) {
-        const input = system + estimateTokens(f.text) + estimateTokens("x".repeat(f.context)) + 60;
+        const { system } = buildTranslationPrompt({ text: f.text, field: f.field, from: item.lang, to }, "0123456789abcdef");
+        const input = estimateTokens(system) + estimateTokens(f.text) + estimateTokens("x".repeat(f.context)) + 60;
         const output = Math.ceil(estimateTokens(f.text) * 1.5);
         calls += 2;
         (["A", "B"] as const).forEach((slot, i) => {
