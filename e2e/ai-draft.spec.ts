@@ -109,8 +109,6 @@ test("shared input makes one private draft, imports once, and posts the reviewed
   const combined = `${original}\n\nMy later note.\n\n${imported}`;
   await expect(body()).toHaveValue(combined);
   await expect(page.getByRole("button", { name: en.ai_write_apply, exact: true })).toBeDisabled();
-  await page.getByRole("button", { name: en.draft_preview_body, exact: true }).click();
-  await expect(page.locator(".longread")).toContainText("AI introduction.");
   if (evidence) {
     fs.mkdirSync(evidence, { recursive: true });
     await captureScreenshot(page, { path: `${evidence}/desktop-import.png`, fullPage: true }, "e2e-ai-draft");
@@ -119,9 +117,10 @@ test("shared input makes one private draft, imports once, and posts the reviewed
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await captureScreenshot(page, { path: `${evidence}/mobile-import.png`, fullPage: true }, "e2e-ai-draft");
   }
-  await saveEditorDraft(page);
-  await expect(page.getByText(en.draft_autosave_saved, { exact: true })).toBeVisible();
-  await expect(page).toHaveURL(/\/drafts\/\d+(?:\?saved=1)?$/);
+  await page.getByRole("button", { name: en.draft_save_and_preview, exact: true }).click();
+  await expect(page.locator("[data-reading-body]")).toContainText("AI introduction.");
+  await page.getByRole("link", { name: en.draft_preview_back, exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`${path}$`));
   await page.reload();
   await expect(body()).toHaveValue(combined);
   await page.getByRole("button", { name: en.draft_publish, exact: true }).click();
@@ -323,8 +322,9 @@ test("import preserves frontmatter as body text, rejects overflow, and undo cann
   await body().fill("[Source](https://example.org/a)\n\nOriginal comment");
   await saveEditorDraft(page);
   await expect(page).toHaveURL(/\/drafts\/\d+(?:\?saved=1)?$/);
-  await page.getByRole("button", { name: en.draft_preview_body, exact: true }).click();
-  await expect(page.locator(".longread")).toContainText("Original comment");
+  await page.getByRole("button", { name: en.draft_save_and_preview, exact: true }).click();
+  await expect(page.locator("[data-reading-body]")).toContainText("Original comment");
+  await page.getByRole("link", { name: en.draft_preview_back, exact: true }).click();
   await titleField(page).fill("My title");
   await openHelp();
   const ai = "---\ntitle: AI title\nlang: fr\n---\n```md\nAI text\n```";
@@ -446,7 +446,7 @@ test("imported text stays private until the member publishes it", async () => {
   }
 });
 
-test("reply and edit previews retain their existing behavior while an AI draft clears stale body and language previews", async () => {
+test("reply and edit previews stay inline and the draft article preview uses the latest body and language", async () => {
   await titleField(page).fill("Preview behavior topic");
   await body().fill("Published body for preview");
   await page.getByRole("button", { name: en.submit_post, exact: true }).click();
@@ -478,16 +478,17 @@ test("reply and edit previews retain their existing behavior while an AI draft c
   await body().fill("Draft preview body");
   await saveEditorDraft(page);
   await expect(page).toHaveURL(/\/drafts\/\d+(?:\?saved=1)?$/);
-  await page.getByRole("button", { name: en.draft_preview_body, exact: true }).click();
-  await expect(page.locator(".longread")).toContainText("Draft preview body");
+  await page.getByRole("button", { name: en.draft_save_and_preview, exact: true }).click();
+  await expect(page.locator("[data-reading-body]")).toContainText("Draft preview body");
+  await page.getByRole("link", { name: en.draft_preview_back, exact: true }).click();
   await body().fill("Updated draft body");
   await expect(page.locator(".longread")).toHaveCount(0);
-  await page.getByRole("button", { name: en.draft_preview_body, exact: true }).click();
-  await expect(page.locator(".longread")).toContainText("Updated draft body");
   await openPostSettings(page);
   await page.getByRole("combobox", { name: en.field_lang, exact: true }).click();
   await page.getByRole("option", { name: enMessages.language_name_en, exact: true }).click();
-  await expect(page.locator(".longread")).toHaveCount(0);
+  await page.getByRole("button", { name: en.draft_save_and_preview, exact: true }).click();
+  await expect(page.locator("[data-reading-body]")).toContainText("Updated draft body");
+  await expect(page.locator("[data-reading-body]")).toHaveAttribute("lang", "en");
 });
 
 test("unavailable browser storage still permits a choice and reuses it on the same draft", async () => {
@@ -532,7 +533,7 @@ for (const scenario of ["editor", "preview", "native", "expired"] as const) {
       const review = editor.getByRole("dialog", { name: en.signing_heading });
       const accept = review.getByRole("button", { name: en.confirm_publish, exact: true });
       const publish = editor.getByRole("button", { name: en.draft_publish, exact: true });
-      const preview = editor.getByRole("button", { name: en.preview, exact: true });
+      const preview = editor.getByRole("button", { name: en.draft_save_and_preview, exact: true });
       let text = source;
       let reviewedConfirmation: string | undefined;
       if (native) {
@@ -555,7 +556,7 @@ for (const scenario of ["editor", "preview", "native", "expired"] as const) {
           await other.goto(draftPath);
           text += " Updated in another tab.";
           await body(other).fill(text);
-          await other.getByRole("button", { name: en.preview, exact: true }).click();
+          await other.getByRole("button", { name: en.draft_save_and_preview, exact: true }).click();
           await expect(other).toHaveURL(new RegExp(`${draftPath}/preview$`));
           const rejected = editor.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === `${draftPath}/preview`);
           await publishPreview.click();

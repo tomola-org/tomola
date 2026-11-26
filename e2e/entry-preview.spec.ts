@@ -3,12 +3,12 @@ import { test } from "./editor-fixture";
 import { enMessages as en, openReplyMore, useMember, waitForFormReady } from "./helpers";
 
 test("topic and reply previews retain their published reading modes when edited", async ({ page, baseURL }) => {
-  await useMember(page, "longread_preview@example.com", "/t/new");
+  await useMember(page, "longread_preview@example.com", "/t/new?intro=1");
   const body = "文章の組みを確認する。\n\n## 見出し\n\n本文を読む。";
   const textarea = () => page.locator('textarea[name="body"]');
-  const show = async (compact: boolean, label = en.preview) => {
+  const show = async (compact: boolean) => {
     await waitForFormReady(page.locator("form", { has: textarea() }));
-    const button = page.getByRole("button", { name: label, exact: true });
+    const button = page.getByRole("button", { name: en.preview, exact: true });
     const preview = button.locator("..").locator(".longread");
     await button.click();
     await expect(preview).toContainText("本文を読む。");
@@ -19,9 +19,10 @@ test("topic and reply previews retain their published reading modes when edited"
   await waitForFormReady(page.locator("form", { has: textarea() }));
   await textarea().fill(body);
   // Automatic language selection uses the body language even in an English interface.
-  await show(false, en.draft_preview_body);
+  await show(false);
 
-  const response = await page.request.post("/t/new", { headers: { origin: baseURL! }, form: { lang: "ja", title: "Preview reading modes", body }, maxRedirects: 0 });
+  const villageDisplayed = await page.locator('input[name="villageDisplayed"]').evaluateAll(inputs => (inputs[0] as HTMLInputElement | undefined)?.value ?? "");
+  const response = await page.request.post("/t/new", { headers: { origin: baseURL! }, form: { lang: "ja", title: "Preview reading modes", body, villageDisplayed }, maxRedirects: 0 });
   expect(response.status()).toBe(302);
   const topic = new URL(response.headers().location, baseURL).pathname;
   page.on("dialog", dialog => dialog.accept());

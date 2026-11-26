@@ -1,11 +1,12 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { test } from "./editor-fixture";
 import { saveEditorDraft } from "./draft-autosave-helper";
-import { enMessages as en, formatMessage, messageTitleField, state, useMember, waitForFormReady } from "./helpers";
+import { chooseEditorMode, enMessages as en, formatMessage, messageTitleField, state, useMember, waitForFormReady } from "./helpers";
 import { routeModule } from "./support/module-route";
 
 const previewPath = /\/drafts\/\d+\/preview$/;
-const previewButton = (page: Page) => page.getByRole("button", { name: en.preview, exact: true });
+const previewButton = (page: Page) => page.getByRole("button", { name: en.draft_save_and_preview, exact: true });
+const bodyPreview = (page: Page) => page.getByRole("button", { name: en.preview, exact: true });
 const bodySelector = 'textarea[name="body"]';
 const bodyField = (page: Page) => page.locator(`main ${bodySelector}`);
 const editorForm = (page: Page) => page.locator("main form", { has: page.locator(bodySelector) });
@@ -16,10 +17,38 @@ async function openEditor(page: Page, member: string) {
   await waitForFormReady(editorForm(page));
 }
 
+const longBody = Array.from({ length: 65 }, (_, line) =>
+  `Paragraph ${line + 1}. Compare notes from the field, revisit the findings and leave room for the next question.`).join("\n\n");
+
+async function midway(body: Locator) {
+  await body.evaluate(element => {
+    const { top, height } = element.getBoundingClientRect();
+    window.scrollTo(0, window.scrollY + top + height * 0.45);
+  });
+}
+
+async function clickStickyAction(action: Locator) {
+  await expect(action).toBeInViewport({ ratio: 1 });
+  const { x, y, width, height } = (await action.boundingBox())!;
+  // Locator clicks scroll the target past the page's scroll padding first.
+  await action.page().mouse.click(x + width / 2, y + height / 2);
+}
+
+const positionInBody = (body: Locator) => body.evaluate(element => {
+  const { top, height } = element.getBoundingClientRect();
+  return -top / height;
+});
+
+async function expectRestored(body: Locator, before: number) {
+  await expect(body).toBeVisible();
+  await expect.poll(async () => Math.abs(await positionInBody(body) - before)).toBeLessThan(0.05);
+  await expect(body).not.toBeFocused();
+}
+
 test("opens and publishes a topic preview in the writing tab", async ({ page, context }) => {
   await openEditor(page, "preview_journey");
   await expect(previewButton(page)).toBeDisabled();
-  await expect(page.getByRole("button", { name: en.draft_preview_body, exact: true })).toBeVisible();
+  await expect(bodyPreview(page)).toHaveCount(0);
   const title = "A preview for the reading page";
   const text = "The same **article** will be published.";
   await messageTitleField(page).fill(title);
@@ -63,10 +92,80 @@ test("offers the article preview only when the introduction mark is off", async 
   const intro = page.getByRole("checkbox", { name: en.intro_checkbox });
   await expect(intro).toBeChecked();
   await expect(previewButton(page)).toHaveCount(0);
+  await expect(bodyPreview(page)).toBeVisible();
   await intro.uncheck();
   await expect(previewButton(page)).toBeEnabled();
+  await expect(bodyPreview(page)).toHaveCount(0);
   await intro.check();
   await expect(previewButton(page)).toHaveCount(0);
+  await expect(bodyPreview(page)).toBeVisible();
+});
+
+test("an existing draft returns to the same part of the visual editor after the width changes", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openEditor(page, "preview_draft_position");
+  await bodyField(page).fill(longBody);
+  await saveEditorDraft(page);
+  await chooseEditorMode(page, en.editor_mode_rich);
+  const rich = page.locator('main [contenteditable="true"][role="textbox"]');
+  await expect(rich).toBeVisible();
+  await expect(bodyPreview(page)).toHaveCount(0);
+  await midway(rich);
+  const before = await positionInBody(rich);
+  expect(before).toBeGreaterThan(0.25);
+  await clickStickyAction(previewButton(page));
+  await expect(page).toHaveURL(previewPath);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("link", { name: en.draft_preview_back }).click();
+  await expect(page).toHaveURL(/\/drafts\/\d+$/);
+  await expectRestored(rich, before);
+});
+
+for (const method of ["link", "back"] as const) {
+  test(`a first preview restores the writing position in the saved draft via ${method}`, async ({ page }) => {
+    await openEditor(page, `preview_new_${method}`);
+    const body = bodyField(page);
+    await body.fill(longBody);
+    await midway(body);
+    const before = await positionInBody(body);
+    expect(before).toBeGreaterThan(0.25);
+    await clickStickyAction(previewButton(page));
+    await expect(page).toHaveURL(previewPath);
+    const draft = new URL(page.url()).pathname.replace(/\/preview$/, "");
+    const returnLink = page.getByRole("link", { name: en.draft_preview_back });
+    if (method === "link") await returnLink.click();
+    else await page.goBack();
+    await expect(page).toHaveURL(url => url.pathname === draft);
+    await expectRestored(body, before);
+    await expect(body).toHaveValue(longBody);
+
+    // Revisiting the preview no longer carries the consumed position.
+    if (method === "link") await page.goBack();
+    else await page.goForward();
+    await expect(page).toHaveURL(previewPath);
+    await returnLink.click();
+    await expect(page).toHaveURL(url => url.pathname === draft);
+    await expect.poll(() => positionInBody(body)).toBeLessThan(0.1);
+  });
+}
+
+test("published topic edits can be saved while scrolled midway through the body", async ({ page }) => {
+  await openEditor(page, "preview_edit_actions");
+  const title = messageTitleField(page);
+  await title.fill("Writing actions in a published topic");
+  await bodyField(page).fill(longBody);
+  await title.press("Enter");
+  await expect(page).toHaveURL(/\/t\/\d+/);
+  const topic = new URL(page.url()).pathname;
+  await page.goto(`${topic}/edit`);
+  await waitForFormReady(editorForm(page));
+  const body = bodyField(page);
+  await body.fill(`${longBody}\n\nA new closing paragraph.`);
+  await midway(body);
+  expect(await positionInBody(body)).toBeGreaterThan(0.25);
+  await clickStickyAction(page.getByRole("button", { name: en.save_changes, exact: true }));
+  await expect(page).toHaveURL(url => url.pathname === topic);
+  await expect(page.locator("[data-reading-body]")).toContainText("A new closing paragraph.");
 });
 
 test("shows the API draft comparison below the banner and keeps the editor when review cannot load", async ({ page }) => {

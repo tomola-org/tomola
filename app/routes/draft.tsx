@@ -1,4 +1,5 @@
 import { submitDraftPreview } from "~/lib/draft-preview-submit";
+import { useRestoreDraftPreviewPosition } from "~/lib/draft-preview-position";
 import { withMarkdownRead } from "~/lib/markdown-budget.server";
 import { PersistentDetails } from "~/components/persistent-details";
 import { Button } from "~/components/ui/button";
@@ -12,6 +13,7 @@ import { isVillageTargetError } from "~/components/village-target";
 import { LongFormBody } from "~/components/long-form-body";
 import { draftAction } from "~/lib/draft-action.server";
 import { DraftPreviewButton } from "~/components/draft-preview-button";
+import { WriteActions } from "~/components/write-actions";
 import { DraftAutosave } from "~/components/draft-autosave-lazy";
 import { ReplyFields } from "~/components/reply-fields";
 import { requireMember, requireWriter } from "~/lib/auth/session.server";
@@ -89,6 +91,7 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
   const [candidate, setCandidate] = useState("");
   const [retained, setRetained] = useState<string | null>(null);
   const main = useRef<HTMLElement>(null);
+  useRestoreDraftPreviewPosition(main, draft.id);
   const lastAction = useRef(actionData);
   const browserDraft = draft.via === "web" && !requiresReview;
   // A first save from the new-topic screen comes here with ?saved=1: this screen says it was saved, and the mark is taken off the address a little later.
@@ -118,13 +121,13 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
   const guardDraft = editorRound > 0 || draft.id !== loaderData.draft.id ? draft : originalDraft.current;
   const error = feedback?.error ?? undefined;
   const errorText = feedback?.error ? (feedback.error === "draft_conflict" ? m.ai_write_conflict() : feedback.error === "not_found" ? m.ai_write_gone() : entryErrorMessage(feedback.error, draft.kind)) : undefined;
-  // What follows the writing surface: how the last save or publish went, the newer saved version when another screen saved first, and the buttons.
   const status = <>
     {(savedHere.current && !feedback || feedback?.saved && !feedback.error) && <p role="status" className="text-success-foreground">{feedback?.altRemoved ? m.draft_alt_removed() : m.draft_saved()}</p>}
     {feedback?.previewFailed && <p id="draft-error" role="alert" className="ui-help text-muted-foreground">{m.draft_autosave_failed()}</p>}
     {!feedback?.previewFailed && errorText && !(loaderData.posting && draft.kind === "topic" && isVillageTargetError(error)) && <p id="draft-error" role="alert" className="text-destructive">{errorText}</p>}
     {error === "confirmation_required" && <noscript><p>{draft.kind === "topic" ? m.draft_confirmation_use_preview() : m.draft_confirmation_reply_javascript()}</p></noscript>}
-    {!feedback?.previewFailed && feedback?.latest && <div className="space-y-2 rounded border p-3">
+  </>;
+  const latestVersion = !feedback?.previewFailed && feedback?.latest && <div className="space-y-2 rounded border p-3">
       <a href={`/drafts/${draft.id}`} target="_blank" rel="noreferrer noopener" className="underline">{m.ai_write_latest()}</a>
       <details><summary>{m.ai_write_latest()}</summary>
         <p>{feedback.latest.draft.title}</p>
@@ -138,19 +141,22 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
         setAsksStance(latest.draft.asksStance); setEditorRound(round => round + 1);
         setResolvedConflict(actionData);
       }}>{m.ai_write_use_latest()}</Button>
-    </div>}
-  </>;
+    </div>;
   const buttons = <>
     {/* AI drafts require content review. */}
     <SendButton intent="publish">{m.draft_publish()}</SendButton>
     {draft.kind === "topic" && <DraftPreviewButton />}
     <noscript><SendButton variant="outline" intent="save" formNoValidate>{m.save_draft()}</SendButton></noscript>
-    {/* Only alternative framings with unreadable originals may unlink. Save screen contents before removing the link. */}
-    {draft.kind === "topic" && draft.altOf !== null && draft.altTitle === null && (
-      <SendButton variant="outline" intent="remove_alt" formNoValidate>{m.draft_alt_remove()}</SendButton>
-    )}
   </>;
   const ai = browserDraft && <AiEditorTools ownerId={loaderData.ownerId} connectDraftLabel={loaderData.connectDraftLabel} kind={draft.kind} threadId={draft.threadId ?? undefined} parentId={draft.parentId} draft={{ id: draft.id, version }} onSaved={saved => { setVersion(saved.version); setSigningView(saved.signingView); }} candidate={candidate} onCandidateChange={setCandidate} />;
+  const autosave = <DraftAutosave owner={loaderData.ownerId} recoveryToken={loaderData.recoveryToken} scope={`draft:${draft.id}`} startTitle={orBlank(guardDraft.title)} startBody={guardDraft.body} draft={{ id: draft.id, version }} onSaved={saved => {
+    setVersion(saved.version); setSigningView(saved.signingView);
+    setResolvedConflict(actionData);
+    if (saved.id !== draft.id) {
+      setDraft(current => ({ ...current, id: saved.id, title: saved.title, body: saved.body, lang: saved.lang as typeof current.lang, asksStance: saved.asksStance, via: "web", tokenName: null, rawFrontmatter: null }));
+      window.history.replaceState(window.history.state, "", `/drafts/${saved.id}`);
+    }
+  }} />;
   return (
     <main ref={main} className="space-y-4">
       <h1 className="text-xl font-bold">{m.draft_title()}</h1>
@@ -188,7 +194,7 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
           error={error} errorId="draft-error"
           BodyEditor={LongFormBody}
           autoLang={false}
-          invalidatePreviewOnEdit={browserDraft}
+          actions={<WriteActions status={<>{status}{autosave}</>}>{buttons}</WriteActions>}
           posting={loaderData.posting ? { data: loaderData.posting, selected: feedback?.values?.village ?? (editorRound > 0 ? draft.village : undefined) ?? loaderData.posting.selected, explicit: loaderData.posting.explicit, error: loaderData.posting.error ?? undefined } : undefined}
           keeper={{ owner: loaderData.ownerId, scope: `draft:${draft.id}`, startTitle: orBlank(guardDraft.title), startBody: guardDraft.body }}
           defaultLang={draft.lang}
@@ -207,8 +213,12 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
             {draft.altTitle === null && <p role="status" className="rounded border border-notice-border bg-notice-soft p-2 ui-help text-notice-foreground">{m.draft_alt_origin_unreadable_help()}</p>}
           </> : undefined}
         >
-          {status}
-          <div className="flex flex-wrap items-center gap-3">{buttons}{ai}</div>
+          {latestVersion}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Only alternative framings with unreadable originals may unlink. Save screen contents before removing the link. */}
+            {draft.altOf !== null && draft.altTitle === null && <SendButton variant="outline" intent="remove_alt" formNoValidate>{m.draft_alt_remove()}</SendButton>}
+            {ai}
+          </div>
         </TopicFields> : <>
           <ReplyFields
             owner={loaderData.ownerId} threadId={draft.threadId ?? 0} keeper={{ scope: `draft:${draft.id}`, startBody: guardDraft.body }}
@@ -219,15 +229,9 @@ function DraftForm({ loaderData, actionData }: Route.ComponentProps) {
             aiTools={browserDraft ? { ownerId: loaderData.ownerId, connectDraftLabel: loaderData.connectDraftLabel, kind: draft.kind, threadId: draft.threadId ?? undefined, parentId: draft.parentId, draft: { id: draft.id, version }, onSaved: saved => { setVersion(saved.version); setSigningView(saved.signingView); }, candidate, onCandidateChange: setCandidate } : undefined}
           />
           {status}
+          {latestVersion}
+          {autosave}
         </>}
-      <DraftAutosave owner={loaderData.ownerId} recoveryToken={loaderData.recoveryToken} scope={`draft:${draft.id}`} startTitle={orBlank(guardDraft.title)} startBody={guardDraft.body} draft={{ id: draft.id, version }} onSaved={saved => {
-        setVersion(saved.version); setSigningView(saved.signingView);
-        setResolvedConflict(actionData);
-        if (saved.id !== draft.id) {
-          setDraft(current => ({ ...current, id: saved.id, title: saved.title, body: saved.body, lang: saved.lang as typeof current.lang, asksStance: saved.asksStance, via: "web", tokenName: null, rawFrontmatter: null }));
-          window.history.replaceState(window.history.state, "", `/drafts/${saved.id}`);
-        }
-      }} />
       </EntryForm>
       {retained !== null && <PersistentDetails open>
         <summary>{m.ai_write_retained()}</summary>

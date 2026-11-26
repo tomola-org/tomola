@@ -101,8 +101,10 @@ test("question explanations and a refused introduction preserve inputs with Java
 
 test("CJK emphasis slants in articles, replies and previews without changing its font", async () => {
   const bodies = { ja: "まわりの文字と *強調する文字* を読む。", "zh-Hans": "阅读周围文字与 *强调的文字*。", ko: "주변 글자와 *강조한 글자* 를 읽는다." };
+  await page.goto("/t/new");
+  const villageDisplayed = await page.locator('input[name="villageDisplayed"]').evaluateAll(inputs => (inputs[0] as HTMLInputElement | undefined)?.value ?? "");
   for (const lang of ["ja", "zh-Hans", "ko"] as const) {
-    const response = await context.request.post("/t/new", { headers: { Origin: state().baseURL }, form: { lang, title: `Emphasis fixture ${lang}`, body: bodies[lang] }, maxRedirects: 0 });
+    const response = await context.request.post("/t/new", { headers: { Origin: state().baseURL }, form: { lang, title: `Emphasis fixture ${lang}`, body: bodies[lang], villageDisplayed }, maxRedirects: 0 });
     expect(response.status()).toBe(302);
     const url = new URL(response.headers().location, state().baseURL).pathname; posted.push(url);
     const id = url.split("/").at(-1)!;
@@ -117,9 +119,9 @@ test("CJK emphasis slants in articles, replies and previews without changing its
     await openPostSettings(page);
     await page.getByRole("combobox", { name: ja.field_lang, exact: true }).click();
     await page.getByRole("option", { name: LANG_LABELS[lang], exact: true }).click();
-    await page.getByRole("button", { name: ja.draft_preview_body, exact: true }).click();
-    await expect(page.locator("main form .longread")).toHaveAttribute("lang", lang);
-    await italic(page.locator("main form .longread em"));
+    await page.getByRole("button", { name: ja.draft_save_and_preview, exact: true }).click();
+    await expect(page.locator("[data-reading-body]")).toHaveAttribute("lang", lang);
+    await italic(page.locator("[data-reading-body] em"));
     await page.goto(`${url}/edit`);
     await expect(page.getByRole("button", { name: ja.media_insert, exact: true })).toBeVisible();
     await expect(page.getByText(mediaHelp, { exact: true })).not.toBeVisible();

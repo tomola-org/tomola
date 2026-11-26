@@ -1,5 +1,6 @@
 import { data, isRouteErrorResponse } from "react-router";
 import type { SigningContent } from "~/lib/signing";
+import { captureDraftPreviewPosition, rememberDraftPreviewPosition } from "~/lib/draft-preview-position";
 
 let previousView: { path: string; content: SigningContent } | undefined;
 
@@ -30,12 +31,18 @@ export function clearPreviousDraftView(id: number) {
 
 export async function submitDraftPreview<T, F>(request: Request, serverAction: () => Promise<T>, blocked: F) {
   const retained = request.clone();
+  const position = captureDraftPreviewPosition();
   try {
     return await serverAction();
   } catch (error) {
     if (request.signal.aborted || isRouteErrorResponse(error)) throw error;
     if (error instanceof Response) {
-      if (error.headers.get("Location")?.endsWith("/preview")) rememberPreviousView(error, await retained.formData());
+      const path = error.headers.get("Location");
+      if (path && /^\/drafts\/\d+\/preview$/.test(path)) {
+        const form = await retained.formData();
+        rememberPreviousView(error, form);
+        if (form.get("intent") === "preview" && !request.signal.aborted) rememberDraftPreviewPosition(path, position);
+      }
       throw error;
     }
     if ((await retained.formData()).get("intent") !== "preview") throw error;

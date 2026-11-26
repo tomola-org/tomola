@@ -45,12 +45,12 @@ for (const width of [1366, 390]) {
     await page.unroute("**/media");
     await captureScreenshot(page, { path: path.join(screenDir, `inserted-${width}.png`), fullPage: true }, "e2e-media");
     await page.keyboard.insertText("A synthetic diagram");
-    await page.getByRole("button", { name: en.draft_preview_body, exact: true }).click();
+    await page.getByRole("button", { name: en.draft_save_and_preview, exact: true }).click();
     const preview = page.locator('main img[alt="A synthetic diagram"]'); await expect(preview).toBeVisible();
     await expect(preview).toHaveAttribute("width", "2000");
     await expect(preview).toHaveAttribute("height", "1000");
     await captureScreenshot(page, { path: path.join(screenDir, `preview-${width}.png`), fullPage: true }, "e2e-media");
-    await page.getByRole("button", { name: en.submit_post, exact: true }).click();
+    await page.getByRole("button", { name: en.draft_preview_publish, exact: true }).click();
     await expect(page).toHaveURL(/\/t\/\d+/); topicURL = new URL(page.url()).origin + new URL(page.url()).pathname;
     const image = page.locator('main img[alt="A synthetic diagram"]').first();
     await expect(image).toBeVisible();

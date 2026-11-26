@@ -161,6 +161,7 @@
   "draft_previewed": "Previewed",
   "nav_drafts_previewed_count": "Previewed drafts still unpublished: {count}",
   "draft_title": "Edit draft",
+  "draft_save_and_preview": "Save and preview",
   "draft_saved": "Draft saved.",
   "draft_publish": "Publish",
   "draft_delete": "Delete draft",

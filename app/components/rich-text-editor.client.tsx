@@ -692,8 +692,8 @@ export function RichTextEditor({ invalid, describedBy, placeholder, tall = false
   ]];
   const foldedClass = moreOpen ? "" : "max-sm:hidden";
   return <div hidden={!ready} className="rich-text-editor min-w-0 space-y-2">
-    {/* The slot sticks to the top of the screen while the editor is scrolled through; on a narrow screen with the keyboard up the toolbar inside it moves above the keyboard. */}
-    <div ref={toolbarSlot} className="sticky top-0 z-10 bg-background"><div ref={toolbar} role="toolbar" aria-label={m.editor_toolbar()} className="editor-toolbar flex flex-wrap items-center gap-y-1 bg-background py-1">
+    {/* The formatting tools stick below the write actions, or move above the keyboard on narrow screens. */}
+    <div ref={toolbarSlot} data-rich-toolbar-slot="" className="sticky z-10 bg-background"><div ref={toolbar} role="toolbar" aria-label={m.editor_toolbar()} className="editor-toolbar flex flex-wrap items-center gap-y-1 bg-background py-1">
       {groups.map((tools, index) => <div key={index} className={`${tools.every(tool => "secondary" in tool && tool.secondary) ? foldedClass : ""} flex flex-wrap gap-1 not-first:ms-2 not-first:border-s not-first:border-border not-first:ps-2`}>
         {tools.map(tool => <Button key={tool.label} type="button" variant={"pressed" in tool && tool.pressed ? "default" : "outline"}
           size={"icon" in tool ? "icon" : "default"} aria-label={tool.label} title={tool.label} aria-pressed={"pressed" in tool ? tool.pressed : undefined}

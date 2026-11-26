@@ -90,7 +90,7 @@ export function LongFormBody({ children, id, lang, pasteFrontmatter, placeholder
     <Button type="button" size="xs" variant="outline" pressed={!active} disabled={!hydrated} onClick={() => choose(false)}>{m.editor_mode_markdown()}</Button>
     <Button type="button" size="xs" variant="outline" pressed={active} disabled={!hydrated} onClick={() => choose(true)}>{m.editor_mode_rich()}</Button>
   </div>;
-  return <div ref={container} data-rich-editor-active={active} data-rich-editor-pending={wanted && !active} className="min-w-0 space-y-2">
+  return <div ref={container} data-rich-editor-active={active} data-rich-editor-pending={wanted && !active} data-long-form-ready={hydrated && (!wanted || active)} className="min-w-0 space-y-2">
     {/* The label is kept for the accessible name and for assistive tools; it is not drawn. A click on it puts the cursor in the editor. */}
     <FieldLabel htmlFor={active ? `${id}-rich` : id} className="sr-only" onClick={() => { if (active) document.getElementById(`${id}-rich`)?.focus(); }}>{m.field_body()}</FieldLabel>
     {hydrated && toggle}

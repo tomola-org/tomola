@@ -16,6 +16,7 @@ import { drafts } from "~/lib/db/schema";
 import { villageReaderFor } from "~/lib/display-lang.server";
 import { draftAction } from "~/lib/draft-action.server";
 import { clearPreviousDraftView, previousDraftView } from "~/lib/draft-preview-submit";
+import { useDraftPreviewBackState } from "~/lib/draft-preview-position";
 import { entryErrorMessage } from "~/lib/entry-error-message";
 import { renderEntryHtml } from "~/lib/entries.server";
 import type { SourceLang } from "~/lib/languages";
@@ -101,6 +102,7 @@ export default function DraftPreview({ loaderData, actionData }: Route.Component
   useEffect(() => { clearPreviousDraftView(id); }, [id]);
   const viewed = prior.id === id && prior.version === version && prior.content?.lang === content.lang ? prior.content : baseline;
   const editPath = `/drafts/${id}`;
+  const backState = useDraftPreviewBackState(id);
   const place = village ? postingVillageName(village, author.handle) : m.village_target_unavailable();
   const error = actionData?.error;
   const conflictMessage = m.draft_preview_conflict();
@@ -126,7 +128,7 @@ export default function DraftPreview({ loaderData, actionData }: Route.Component
           {posting && <p className="ui-meta">{m.draft_preview_destination({ place })}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Link to={editPath} className={buttonVariants({ variant: "outline" })}>{m.draft_preview_back()}</Link>
+          <Link to={editPath} state={backState} className={buttonVariants({ variant: "outline" })}>{m.draft_preview_back()}</Link>
           <SendButton intent="publish" disabled={stale || !content.body.trim() || posting !== null && !village}>{m.draft_preview_publish()}</SendButton>
         </div>
       </aside>

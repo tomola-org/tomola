@@ -155,7 +155,8 @@ test("Japanese default, explicit Markdown and empty image descriptions at both w
       await newPost(page); await expect(rich(page)).toBeVisible();
       await expect(page.getByRole("button", { name: ja.editor_mode_rich, exact: true })).toHaveAttribute("aria-pressed", "true");
       await expect(page.getByRole("button", { name: ja.media_insert, exact: true })).toBeVisible();
-      await expect(page.getByRole("button", { name: ja.draft_preview_body, exact: true })).toBeHidden();
+      await expect(page.getByRole("button", { name: ja.preview, exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: ja.draft_save_and_preview, exact: true })).toBeVisible();
       await captureScreenshot(page, { path: path.join(directory, `default-${width}.png`), fullPage: true, animations: "disabled" }, "e2e-editor-default");
       await rich(page).pressSequentially("画像の前の段落。");
       const chooser = page.waitForEvent("filechooser");
@@ -180,7 +181,8 @@ test("Japanese default, explicit Markdown and empty image descriptions at both w
       await chooseEditorMode(page, ja.editor_mode_markdown);
       await expect(body(page)).toBeVisible();
       await expect(page.getByText(ja.writing_tips, { exact: true })).toBeVisible();
-      await expect(page.getByRole("button", { name: ja.draft_preview_body, exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: ja.preview, exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: ja.draft_save_and_preview, exact: true })).toBeVisible();
       await captureScreenshot(page, { path: path.join(directory, `markdown-${width}.png`), fullPage: true, animations: "disabled" }, "e2e-editor-default");
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       await expect(page.locator("[data-draft-autosave]")).toHaveAttribute("data-draft-autosave", "saved");

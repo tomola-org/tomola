@@ -15,9 +15,9 @@ import { startsWithFrontmatter } from "~/lib/text";
 import { m } from "~/paraglide/messages.js";
 
 // The writing surface shared by new topics and drafts: destination, title,
-// question and introduction options, body, then language settings. `children` are the route's own buttons.
+// question and introduction options, primary actions, body, then language settings and secondary controls.
 // The keyed body stays mounted when the options move, preserving native editing history and input-method composition.
-export function TopicFields({ defaultLang, defaultTitle = "", defaultBody = "", selectedLang = "", autoLang = true, asksStance, onAsksStanceChange, intro, onIntroChange, showIntro, alt, altNotFound, altFixedNote, sharePrefilled, BodyEditor, posting, invalidatePreviewOnEdit = false, keeper, notices, error, errorId, children }: {
+export function TopicFields({ defaultLang, defaultTitle = "", defaultBody = "", selectedLang = "", autoLang = true, asksStance, onAsksStanceChange, intro, onIntroChange, showIntro, alt, altNotFound, altFixedNote, sharePrefilled, BodyEditor, posting, keeper, notices, error, errorId, actions, children }: {
   error?: string;
   errorId?: string;
   defaultLang: SourceLang;
@@ -38,10 +38,10 @@ export function TopicFields({ defaultLang, defaultTitle = "", defaultBody = "", 
   sharePrefilled?: boolean;
   BodyEditor?: ComponentType<BodyEditorProps>;
   posting?: { data: PostingVillages; selected: string; explicit: boolean; error?: string; reviewedBody?: string; reset?: number };
-  invalidatePreviewOnEdit?: boolean;
   // owner and scope name the local record; start* is the text the screen starts from (the prefill, or the saved draft), not what a refused form shows again.
   keeper?: { owner: string; scope: string; startTitle?: string; startBody: string };
   notices?: ReactNode;
+  actions: ReactNode;
   children?: ReactNode;
 }) {
   const titleInput = useRef<HTMLInputElement>(null);
@@ -88,8 +88,9 @@ export function TopicFields({ defaultLang, defaultTitle = "", defaultBody = "", 
       </div>}
       {sharePrefilled && <p role="status" className="ui-help text-muted-foreground">{m.share_prefill_notice()}</p>}
     </div>
+    {actions}
     <EntryFields error={error} errorId={errorId} key="body" defaultLang={defaultLang} defaultBody={defaultBody} pasteFrontmatter={autoLang ? "topic" : undefined} onBodyInput={value => setPasted(startsWithFrontmatter(value))} showLanguage={false} rows={12} tall
-      bodyPlaceholder={asksStance || alt ? m.field_body_placeholder_question() : m.field_body_placeholder_topic()} invalidatePreviewOnEdit={invalidatePreviewOnEdit} previewLanguage={lang} bodyPreviewLabel
+      bodyPlaceholder={asksStance || alt ? m.field_body_placeholder_question() : m.field_body_placeholder_topic()} bodyPreview={intro}
       writingHelp={<MediaInsertHelp />} bodyAccessory={<><MediaInsert compact /><NushiComposerEntry /></>} BodyEditor={BodyEditor} editorLang={lang || defaultLang} />
     <div className="space-y-2">
       <PostSettings summary={summary} open={error === "invalid_lang"}>

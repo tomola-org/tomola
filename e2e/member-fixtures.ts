@@ -67,7 +67,7 @@ export const VILLAGE_MEMBER_FIXTURES: readonly SeedMember[] = [
 export const MEMBER_FIXTURES: readonly SeedMember[] = [
   ...[...AI_CONFIRMATION_CASES.map(scenario => `ai_confirm_${scenario}`), "ai_import_writer", "legacy_form_writer",
   ].map(handle => ({ email: `${handle}@example.com`, handle, homeArea: "en" as const, uiLocale: "en" as const })),
-  ...["journey", "reminder", "queued", "native", "transport", "intro", "conflict", "review"].map(scenario => ({ email: `preview_${scenario}@example.com`, handle: `preview_${scenario}`, homeArea: "ja" as const, uiLocale: "en" as const })),
+  ...["journey", "reminder", "queued", "native", "transport", "intro", "conflict", "review", "draft_position", "new_link", "new_back", "edit_actions"].map(scenario => ({ email: `preview_${scenario}@example.com`, handle: `preview_${scenario}`, homeArea: "ja" as const, uiLocale: "en" as const })),
   { email: "login_methods_flow@example.com", handle: "login_methods_flow", homeArea: "ja", uiLocale: "ja" },
   { email: "login_methods_images@example.com", handle: "login_methods_images", homeArea: "ja", uiLocale: "ja" },
   { email: "zslug_creator@example.com", handle: "zslug_creator", homeArea: "en", readLangs: ["en"], uiLocale: "en" },

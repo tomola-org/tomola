@@ -147,6 +147,7 @@
   "draft_previewed": "プレビューした",
   "nav_drafts_previewed_count": "プレビューした下書きが{count}件、まだ公開していません",
   "draft_title": "下書きを編集",
+  "draft_save_and_preview": "保存してプレビュー",
   "draft_saved": "下書きを保存しました。",
   "draft_publish": "公開",
   "draft_delete": "下書きを削除",

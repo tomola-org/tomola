@@ -154,13 +154,13 @@ test("a topic with math, a footnote and an external image: the preview and the p
   await openPostSettings(boss);
   await boss.getByLabel(enMessages.field_lang).click();
   await boss.getByRole("listbox").getByRole("option", { name: "日本語", exact: true }).click();
-  // Preview fetches the server render through JavaScript (connect-src 'self'); external images become links.
-  await expect(async () => {
-    await boss.getByRole("button", { name: enMessages.draft_preview_body, exact: true }).click();
-    await expect(boss.locator("div.longread .katex").first()).toBeVisible({ timeout: 5_000 });
-  }).toPass({ timeout: 30_000 });
-  await expect(boss.locator("div.longread").getByRole("link", { name: "外部の画像" })).toHaveAttribute("href", "https://cdn.example.net/tracker.png");
-  await boss.getByRole("button", { name: enMessages.submit_post, exact: true }).click();
+  // The article preview renders math under the CSP and turns external images into links.
+  await boss.getByRole("button", { name: enMessages.draft_save_and_preview, exact: true }).click();
+  const preview = boss.locator("[data-reading-body]");
+  await expect(preview.locator(".katex").first()).toBeVisible();
+  await expect(preview.getByRole("link", { name: "外部の画像" })).toHaveAttribute("href", "https://cdn.example.net/tracker.png");
+  await boss.getByRole("button", { name: enMessages.draft_preview_publish, exact: true }).click();
+  await expect(boss).toHaveURL(/\/t\/\d+/);
   await expect(boss.getByRole("heading", { level: 1, name: "共生と協力について" })).toBeVisible();
   topicId = new URL(boss.url()).pathname.split("/").at(-1)!;
   const article = boss.locator("article").first();
@@ -217,11 +217,10 @@ test("the handle suggestions for an @mention and the preview member link work un
   await openPostSettings(boss);
   await boss.getByLabel(enMessages.field_lang).click();
   await boss.getByRole("listbox").getByRole("option", { name: enMessages.language_name_en, exact: true }).click();
-  await expect(async () => {
-    await boss.getByRole("button", { name: enMessages.draft_preview_body, exact: true }).click();
-    await expect(boss.locator("div.longread a.mention")).toHaveText(["@mika"], { timeout: 5_000 });
-  }).toPass({ timeout: 30_000 });
-  await expect(boss.locator("div.longread a.mention")).toHaveAttribute("href", /^\/u\/id\/[a-z0-9]{12}$/);
+  await boss.getByRole("button", { name: enMessages.draft_save_and_preview, exact: true }).click();
+  const mention = boss.locator("[data-reading-body] a.mention");
+  await expect(mention).toHaveText(["@mika"]);
+  await expect(mention).toHaveAttribute("href", /^\/u\/id\/[a-z0-9]{12}$/);
   expectClean(bossCsp);
   // A visitor without a session is refused with 401 (not the login page), and the answer is not cached.
   const ok = await boss.request.get("/mentions/suggest?q=mi");
@@ -229,6 +228,7 @@ test("the handle suggestions for an @mention and the preview member link work un
   expect(ok.headers()["cache-control"]).toBe("private, no-store");
   expect(await ok.json()).toEqual({ handles: ["mika"], names: { mika: { displayName: null, displayNameLatin: null, label: null } } });
   // This shared page should not carry the unsubmitted preview into the next scenario.
+  await boss.getByRole("link", { name: enMessages.draft_preview_back, exact: true }).click();
   await body.fill("");
 });
 

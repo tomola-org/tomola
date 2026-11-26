@@ -75,8 +75,8 @@ test("typing @ and a start of a handle in the body offers the members; the arrow
   await waitForFormReady(mei.locator("form", { has: titleField(mei) }));
   await titleField(mei).fill(TITLE);
   // The preview links the named member through the public id.
-  await mei.getByRole("button", { name: enMessages.draft_preview_body, exact: true }).click();
-  const preview = mei.locator(".longread");
+  await mei.getByRole("button", { name: enMessages.draft_save_and_preview, exact: true }).click();
+  const preview = mei.locator("[data-reading-body]");
   // The author names herself too (@mei): emphasized like any member, and not notified.
   const mentions = preview.locator("a.mention");
   await expect(mentions).toHaveText(["@ben", "@mei"]);
@@ -96,7 +96,8 @@ test("typing @ and a start of a handle in the body offers the members; the arrow
 
 test("the post links the named member's public id and mails the named member", async () => {
   const before = logSize();
-  await mei.getByRole("button", { name: enMessages.submit_post, exact: true }).click();
+  await mei.getByRole("button", { name: enMessages.draft_preview_publish, exact: true }).click();
+  await expect(mei).toHaveURL(/\/t\/\d+/);
   await expect(mei.getByRole("heading", { level: 1, name: TITLE })).toBeVisible();
   topicPath = new URL(mei.url()).pathname;
   const mention = mei.locator("article a.mention");

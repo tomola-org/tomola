@@ -24,5 +24,5 @@ export function DraftPreviewButton() {
       form.removeEventListener("change", refresh);
     };
   }, []);
-  return <span ref={anchor} data-draft-preview-button=""><SendButton intent="preview" variant="outline" disabled={empty} formNoValidate>{m.preview()}</SendButton></span>;
+  return <span ref={anchor} data-draft-preview-button=""><SendButton intent="preview" variant="outline" disabled={empty} formNoValidate>{m.draft_save_and_preview()}</SendButton></span>;
 }

@@ -6,6 +6,7 @@ import { MarkdownBusyError, withMarkdownRead } from "~/lib/markdown-budget.serve
 import { LongFormBody } from "~/components/long-form-body";
 import { useContext, useEffect, useRef, useState } from "react";
 import { DraftPreviewButton } from "~/components/draft-preview-button";
+import { WriteActions } from "~/components/write-actions";
 import { DraftAutosave } from "~/components/draft-autosave-lazy";
 import DraftKeeperContent, { type DraftKeeperProps } from "~/components/draft-keeper-content";
 import { FormLanguageChangeContext } from "~/components/form-contexts";
@@ -243,6 +244,7 @@ function TopicNewForm({ loaderData, actionData }: Route.ComponentProps) {
   const error = actionData?.error ?? loaderData.posting?.error ?? undefined;
   const previewFailed = actionData && "previewFailed" in actionData && actionData.previewFailed;
   const posting = loaderData.posting ? { data: loaderData.posting, reset: discarded, selected: actionData?.values?.village ?? (restoredPosting?.explicit ? restoredPosting.village : loaderData.posting.selected), explicit: actionData?.values?.villageExplicit ?? restoredPosting?.explicit ?? loaderData.posting.explicit, error: actionData?.error ?? loaderData.posting.error ?? undefined, reviewedBody: actionData?.error === "village_changed" ? actionData.values?.body : undefined } : undefined;
+  const status = error && (previewFailed || !(posting && isVillageTargetError(error))) && <p id="topic-new-error" role="alert" className={previewFailed ? "ui-help text-muted-foreground" : "text-destructive"}>{previewFailed && error !== "ai_material_invalid" ? loaderData.previewFailureLabel : error === "ai_material_invalid" ? loaderData.aiMaterialLabels.error : entryErrorMessage(error)}</p>;
   return (
     <main className="space-y-4">
       <h1 className="text-xl font-bold">{m.topic_new_title()}</h1>
@@ -273,26 +275,27 @@ function TopicNewForm({ loaderData, actionData }: Route.ComponentProps) {
           alt={loaderData.alt}
           altNotFound={loaderData.altNotFound}
           sharePrefilled={loaderData.sharePrefilled}
+          actions={<WriteActions status={<>
+            {status}
+            {store && recovery && <DraftAutosave key={recovery.round} recovered={recovery.record} owner={loaderData.ownerId} scope={screen} store={store} {...loaderData.draftStart} newTopic onLinked={setLinkedId} onRestore={fields => {
+              setAsksStance(fields.get("asksStance") === "1");
+              setIntro(fields.get("intro") === "1");
+              setRestoredPosting({ village: String(fields.get("village") ?? ""), explicit: fields.get("villageExplicit") === "1" });
+            }} />}
+          </>}>
+            {/* Post is the first submit button and remains the default for Enter. */}
+            <SendButton>{m.submit_post()}</SendButton>
+            {!intro && <DraftPreviewButton />}
+            <noscript><SendButton variant="outline" intent="draft" formNoValidate>{m.save_draft()}</SendButton>
+            {error === "draft_conflict" && <SendButton variant="outline" intent="draft" formAction={loaderData.newDraftAction} formNoValidate>{m.save_draft_as_new()}</SendButton>}</noscript>
+          </WriteActions>}
         >
           <details open={!!actionData?.values?.aiMaterial}><summary className="ui-meta">{loaderData.aiMaterialLabels.add}</summary>
             <label className="block" htmlFor="new-ai-material">{loaderData.aiMaterialLabels.title}</label>
             <Textarea ref={aiMaterialRef} id="new-ai-material" name="aiMaterial" rows={8} maxLength={POST_AI_MATERIAL_CHARS} defaultValue={actionData?.values?.aiMaterial ?? ""} />
             <p className="ui-help">{loaderData.aiMaterialLabels.help}</p>
           </details>
-          {error && (previewFailed || !(posting && isVillageTargetError(error))) && <p id="topic-new-error" role="alert" className={previewFailed ? "ui-help text-muted-foreground" : "text-destructive"}>{previewFailed && error !== "ai_material_invalid" ? loaderData.previewFailureLabel : error === "ai_material_invalid" ? loaderData.aiMaterialLabels.error : entryErrorMessage(error)}</p>}
-          <div className="flex flex-wrap items-center gap-3">
-            {/* The first 「投稿」 button is the default for Enter submission. */}
-            <SendButton>{m.submit_post()}</SendButton>
-            {!intro && <DraftPreviewButton />}
-            <noscript><SendButton variant="outline" intent="draft" formNoValidate>{m.save_draft()}</SendButton>
-            {error === "draft_conflict" && <SendButton variant="outline" intent="draft" formAction={loaderData.newDraftAction} formNoValidate>{m.save_draft_as_new()}</SendButton>}</noscript>
-            {!intro && <AiEditorTools ownerId={loaderData.ownerId} connectDraftLabel={loaderData.connectDraftLabel} kind="topic" />}
-          </div>
-          {store && recovery && <DraftAutosave key={recovery.round} recovered={recovery.record} owner={loaderData.ownerId} scope={screen} store={store} {...loaderData.draftStart} newTopic onLinked={setLinkedId} onRestore={fields => {
-            setAsksStance(fields.get("asksStance") === "1");
-            setIntro(fields.get("intro") === "1");
-            setRestoredPosting({ village: String(fields.get("village") ?? ""), explicit: fields.get("villageExplicit") === "1" });
-          }} />}
+          {!intro && <AiEditorTools ownerId={loaderData.ownerId} connectDraftLabel={loaderData.connectDraftLabel} kind="topic" />}
         </TopicFields>
       </EntryForm>
     </main>

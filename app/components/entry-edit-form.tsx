@@ -17,6 +17,7 @@ import { LANG_LABELS, isLang } from "~/lib/languages";
 import type { StanceTag } from "~/lib/stances";
 import { m } from "~/paraglide/messages.js";
 import { EntryForm, SendButton } from "~/components/entry-form";
+import { WriteActions } from "~/components/write-actions";
 
 const AiImport = lazy(() => import("~/components/edit-ai-import"));
 const RefusedEditKeeper = lazy(() => import("~/components/refused-edit-keeper"));
@@ -77,6 +78,12 @@ export function EntryEditForm({
   const [opened] = useState({ ...entry, editVersion: values?.editVersion ?? editVersion });
   const base = fixNote ? entry : opened;
   const long = entry.kind === "topic";
+  const status = error && <p id={errorId} role="alert" className="text-destructive">{conflict?.message ?? errorText ?? entryErrorMessage(error, entry.kind)}{conflict && <> <a className="underline" href={conflict.href} target="_blank" rel="noreferrer noopener">{conflict.label}</a></>}</p>;
+  const actions = <>
+    <SendButton>{m.save_changes()}</SendButton>
+    {/* Leaving with unsaved changes asks first through the form's guard. */}
+    <Link to={cancelTo} className="ui-meta underline">{m.cancel()}</Link>
+  </>;
   return (
     <main className="space-y-4">
       <h1 className="text-2xl font-bold">{heading}</h1>
@@ -89,6 +96,7 @@ export function EntryEditForm({
         {destination}
         {entry.kind === "topic" && <TitleField error={error} errorId={errorId} required={entry.asksStance === true} defaultValue={values?.title ?? entry.title ?? undefined} />}
         {warning && <p className="ui-help text-muted-foreground">{warning}</p>}
+        {long && <WriteActions status={status}>{actions}</WriteActions>}
         <EntryFields previewKind={entry.kind} error={error} errorId={errorId} fixedLang={fixNote ? entry.lang : undefined} defaultLang={entry.lang} selectedLang={values?.lang} defaultBody={values?.body ?? entry.body} BodyEditor={BodyEditor} bodyAccessory={bodyAccessory} writingHelp={writingHelp} showLanguage={false} tall={long} previewLanguage={lang} />
         {!fixNote && <PostSettings summary={(long ? m.post_summary_lang : m.reply_summary_lang)({ lang: lang === "other" ? m.source_language_other() : isLang(lang) ? LANG_LABELS[lang] : lang })} open={error === "invalid_lang"}>
           <EntryLanguage error={error} errorId={errorId} defaultLang={entry.lang} value={lang} onChange={setLang} />
@@ -101,14 +109,7 @@ export function EntryEditForm({
             <Textarea {...entryFieldError(error, "note", errorId)} ref={noteRef} id={noteId} dir="auto" name="note" required rows={2} maxLength={500} defaultValue={values?.note ?? ""} />
           </FieldLabel>
         )}
-        {error && <p id={errorId} role="alert" className="text-destructive">{conflict?.message ?? errorText ?? entryErrorMessage(error, entry.kind)}{conflict && <> <a className="underline" href={conflict.href} target="_blank" rel="noreferrer noopener">{conflict.label}</a></>}</p>}
-        <div className="flex items-center gap-4">
-          <SendButton>{m.save_changes()}</SendButton>
-          {/* A plain link: leaving with unsaved changes asks first (the form's guard), like every other way of leaving. */}
-          <Link to={cancelTo} className="ui-meta underline">
-            {m.cancel()}
-          </Link>
-        </div>
+        {!long && <>{status}<div className="flex items-center gap-4">{actions}</div></>}
       </EntryForm>
     </main>
   );

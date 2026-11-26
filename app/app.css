@@ -889,3 +889,23 @@ form[action="/save"] button[aria-pressed="true"] svg { fill: currentColor; }
 .longread details { margin-block: 1em; padding-inline-start: 1em; border-inline-start: 2px solid var(--border); }
 .longread details > summary { cursor: pointer; font-weight: 600; }
 .longread details[open] > summary { margin-block-end: .75em; }
+
+[data-rich-toolbar-slot] {
+  inset-block-start: 0;
+}
+
+@media (min-height: 32rem) {
+  html:has([data-write-actions]:not([data-write-actions-compact])) {
+    scroll-padding-block-start: var(--write-actions-height, 4rem);
+  }
+
+  [data-write-actions]:not([data-write-actions-compact]) {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 11;
+  }
+
+  form:has(> [data-write-actions]:not([data-write-actions-compact])) [data-rich-toolbar-slot] {
+    inset-block-start: var(--write-actions-height, 4rem);
+  }
+}
