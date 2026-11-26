@@ -10,6 +10,8 @@ export type MarkdownNode = {
   type: string;
   name?: string;
   value?: string;
+  url?: string;
+  title?: string | null;
   alt?: string | null;
   label?: string | null;
   identifier?: string;

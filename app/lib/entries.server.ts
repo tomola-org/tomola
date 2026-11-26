@@ -10,6 +10,9 @@ import { inspectEntrySpam, lockAbuseWriter } from "./moderation-automation.serve
 import { safeErrorText } from "~/lib/error-text.server";
 import { syncMediaReferences } from "~/lib/media-references.server";
 import { decorateMotionHtml, motionImages } from "./motion-display.server";
+import { videoIdsInHtml } from "./video-card-html.server";
+import { syncYoutubeReferences } from "./video-card-references.server";
+import { prepareVideoCardDisplay } from "./video-cards.server";
 import { activeEntryRender, prepareEntryRender, renderEntryForWrite, type PreparedEntryRender } from "./entry-render-preparation.server";
 import { withMarkdownScope, withMarkdownRead, MarkdownBudgetError } from "./markdown-budget.server";
 import { and, count, desc, eq, exists, gte, inArray, isNotNull, isNull, max, ne, notInArray, or, sql, type Column, type GetColumnData, type SQL } from "drizzle-orm";
@@ -33,7 +36,6 @@ import { entryVisibility, readThreadReplyPage, replyPagesOf, type EntryVisibilit
 import {
   checkBodyBudget,
   renderEntryOrPlain,
-  renderMarkdownOrPlain,
   renderMarkdownResult,
   RENDER_VERSION,
   tryRenderEntry,
@@ -373,6 +375,7 @@ async function createTopicImplementation<E extends string>(
     if (altOf !== null) await touchQuestion(tx, altOf, now);
     await syncEntryReferences(tx, row.id, now);
     await syncMediaReferences(tx, row.id, parsed.data.body, rendered.html);
+    await syncYoutubeReferences(tx, row.id, videoIdsInHtml(rendered.html), now);
     // The author follows their own topic (a topic they took off is never followed again: autoFollow leaves an existing row alone). notifyForNewEntry is called for a topic
     // too, as the one place that tells the members mentioned in the body.
     await autoFollow(tx, authorId, row.id, now);
@@ -503,6 +506,7 @@ async function createReplyImplementation<E extends string>(
     }
     await syncEntryReferences(tx, row.id, now);
     await syncMediaReferences(tx, row.id, parsed.data.body, rendered.html);
+    await syncYoutubeReferences(tx, row.id, videoIdsInHtml(rendered.html), now);
     // Update listing aggregates (reply count and last activity) incrementally. The topic-row lock serializes concurrent replies so none are missed.
     await tx
       .update(entries)
@@ -767,6 +771,7 @@ export async function applyEntryEdit(
     .where(eq(entries.id, entryId));
   await syncEntryReferences(tx, entryId, now);
   await syncMediaReferences(tx, entryId, after.body, rendered.html);
+  await syncYoutubeReferences(tx, entryId, videoIdsInHtml(rendered.html), now);
   if (before.deletedAt) return { revisionId: revision?.id ?? null, sourceHash: hash, mentions };
   // Rebuild sentence boundaries. Carry unchanged-field translations into the new source revision for title-only/body-only edits without retranslation or marking stale.
   // If the body changed, remove its disagreements. Keep remaining human translations and mark them stale;
@@ -803,19 +808,19 @@ export function parseTopicText(input: { title: unknown; body: unknown }): { ok: 
 
 // The source render (including restoration after an appeal). An unrenderable body still has a plain fallback; topics get a card version, replies never do.
 export async function renderEntryHtml(kind: "topic" | "reply", id: number, body: string, lang: string, mentions: MentionTargets): Promise<RenderedEntry> {
-  const opts = { idPrefix: entryIdPrefix(kind, id), lang, mentions };
+  const opts = { idPrefix: entryIdPrefix(kind, id), lang, mentions, videoLinks: true };
   return kind === "topic" ? (await renderEntryOrPlain(body, { ...opts, mentions })) : (await renderMarkdownResult(body, { ...opts, mentions }));
 }
 
 // The saved render of the translation of a body (a topic body also gets the card version; a reply's translation has none). The id prefix is the one of the translation (p-<id>-<lang>-).
 export async function renderTranslationHtml(kind: "topic" | "reply", id: number, lang: string, text: string, mentions: MentionTargets, machine = false): Promise<RenderedEntry> {
-  const opts = { idPrefix: entryIdPrefix(kind, id, lang), headingIdPrefix: entryIdPrefix(kind, id), lang, mentions, translation: machine };
+  const opts = { idPrefix: entryIdPrefix(kind, id, lang), headingIdPrefix: entryIdPrefix(kind, id), lang, mentions, translation: machine, videoLinks: true };
   return kind === "topic" ? (await renderEntryOrPlain(text, { ...opts, mentions })) : (await renderMarkdownResult(text, { ...opts, mentions }));
 }
 
 // The same, but null when the translation cannot be rendered (a human fix refuses it).
 export async function tryRenderTranslationHtml(kind: "topic" | "reply", id: number, lang: string, text: string, mentions: MentionTargets, machine = false): Promise<RenderedEntry | null> {
-  const opts = { idPrefix: entryIdPrefix(kind, id, lang), headingIdPrefix: entryIdPrefix(kind, id), lang, mentions, translation: machine };
+  const opts = { idPrefix: entryIdPrefix(kind, id, lang), headingIdPrefix: entryIdPrefix(kind, id), lang, mentions, translation: machine, videoLinks: true };
   if (kind === "topic") return (await tryRenderEntry(text, { ...opts, mentions }));
   const html = (await tryRenderMarkdown(text, { ...opts, mentions }));
   return html === null ? null : { html, cardHtml: null, cardTruncated: false };
@@ -1067,8 +1072,10 @@ async function viewsWithHtml(db: Db, rows: readonly ClassifiedViewRow[], viewer:
   const stale = rows.filter(r => (r.visibility === "visible" || r.visibility === "hidden") && (r.html === null || r.htmlVersion !== RENDER_VERSION));
   const snapshots = await resolveSavedMentionsFor(db, stale);
   const views = await Promise.all(rows.map(r => viewWithHtml(db, r, viewer, snapshots.get(r.id) ?? new Map())));
-  const { images, ownedByEntry } = await motionImages(db, views);
-  return views.map(view => ({ ...view, html: decorateMotionHtml(view.html, view.html, ownedByEntry.get(view.id), images) }));
+  const [{ images, ownedByEntry }, decorateVideos] = await Promise.all([
+    motionImages(db, views), prepareVideoCardDisplay(db, views.map(view => view.html)),
+  ]);
+  return views.map(view => ({ ...view, html: decorateVideos(decorateMotionHtml(view.html, view.html, ownedByEntry.get(view.id), images), view.lang) }));
 }
 
 function toView(

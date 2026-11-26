@@ -5,6 +5,8 @@ import { readFigureTranslation } from "~/lib/figure-translation.server";
 import { parseMediaPath, parseTranslatedMediaPath } from "~/lib/media";
 import { canReadMedia } from "~/lib/media-references.server";
 import { countMotionDelivery } from "~/lib/motion-delivery.server";
+import { videoCardsEnabled } from "~/lib/video-cards-config.server";
+import { readVideoThumbnail } from "~/lib/video-cards.server";
 
 export async function loader({ request }: { request: Request }) {
   const safety = {
@@ -17,11 +19,20 @@ export async function loader({ request }: { request: Request }) {
   const path = new URL(request.url).pathname;
   const translated = parseTranslatedMediaPath(path);
   const parsed = parseMediaPath(path) ?? translated;
-  if (!parsed) return missing();
+  const youtubeId = videoCardsEnabled() ? /^\/media\/youtube-([A-Za-z0-9_-]{11})\.webp$/.exec(path)?.[1] : undefined;
+  if (!parsed && !youtubeId) return missing();
   try {
     const reader = await getMediaReader(request);
     if (!reader) return missing();
     const { db, viewer } = reader;
+    if (youtubeId) {
+      const bytes = await readVideoThumbnail(db, youtubeId);
+      if (!bytes) return missing();
+      return new Response(request.method === "HEAD" ? null : new Uint8Array(bytes), {
+        headers: { ...safety, "Cache-Control": "private, no-store", "Content-Length": String(bytes.length) },
+      });
+    }
+    if (!parsed) return missing();
     if (!await canReadMedia(db, parsed.id, viewer)) return missing();
     const image = await readMedia(db, parsed.id);
     if (!image?.bytes || image.width !== parsed.width || image.height !== parsed.height) return missing();

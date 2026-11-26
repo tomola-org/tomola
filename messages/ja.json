@@ -760,6 +760,8 @@
   "settings_export_link": "自分のデータをダウンロード（JSON）",
   "settings_export_more_label": "ファイルに入るもの",
   "md_footnotes": "脚注",
+  "md_video_youtube": "YouTube で見る",
+  "md_video_original": "動画は元の言語のままです",
   "md_footnote_back": "参照 {index} に戻る",
   "asks_stance_label": "立場を聞く",
   "asks_stance_checkbox": "問いにする（読む人に立場を聞く）",

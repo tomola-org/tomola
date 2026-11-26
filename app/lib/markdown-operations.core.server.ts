@@ -15,6 +15,7 @@ import * as draftIssues from "./draft-issues.core.server.ts";
 import * as checks from "./eval/checks.core.server.ts";
 import { markdownSpecimen } from "./markdown-specimen.ts";
 import { withoutMarkdownParseCache } from "./markdown-parser.core.server.ts";
+import { youtubeIdsInMarkdown } from "./youtube-markdown.core.server.ts";
 
 const core = {
   ...aiVisible,
@@ -35,6 +36,7 @@ const core = {
 
 export const markdownOperations = {
   ...core,
+  youtubeIdsInMarkdown,
   maskLinkTargets, maskLinkContext, protectedTitleBodyContext, restoreLinkTargets,
   renderUncachedMarkdown(...args: Parameters<typeof core.renderMarkdown>) {
     return withoutMarkdownParseCache(() => core.renderMarkdown(...args));

@@ -15,6 +15,7 @@ import { resumeBudgetWaits } from "./budget-wait.server";
 import { chatTranslationConcurrency } from "../llm/config.server";
 import { ensureCleanupScheduledThrottled } from "./maintenance-jobs.server";
 import { ensureDigestScheduledThrottled } from "./notification-jobs.server";
+import { scheduleYoutubeScan } from "./video-card-jobs.server";
 import { flushJobCompletions, runDueJobs, type JobHandlers, type RunOptions, type RunStats } from "./queue.server";
 
 export type WorkerOptions = {
@@ -113,6 +114,7 @@ export function startWorker(opts: WorkerOptions = {}): Worker | null {
       }
       if (!renderCacheChecked) {
         await queueRenderRebuildIfStale(db);
+        await scheduleYoutubeScan(db);
         renderCacheChecked = true;
       }
       await expireNushiRequests(db);

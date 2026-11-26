@@ -662,6 +662,29 @@ export const entries = pgTable(
   ],
 );
 
+export const youtubeVideos = pgTable("youtube_videos", {
+  id: text("id").primaryKey(),
+  title: text("title"),
+  channel: text("channel"),
+  width: integer("width"),
+  height: integer("height"),
+  bytes: binary("bytes"),
+  refreshAfter: timestamp("refresh_after", { withTimezone: true }).notNull(),
+}, t => [
+  check("youtube_videos_id_check", sql`${t.id} ~ '^[A-Za-z0-9_-]{11}$'`),
+  check("youtube_videos_artwork_check", sql`num_nonnulls(${t.title}, ${t.channel}, ${t.width}, ${t.height}, ${t.bytes}) in (0, 5)`),
+]);
+
+// Keep source references independent of member-uploaded media and its quotas.
+export const entryYoutubeVideos = pgTable("entry_youtube_videos", {
+  entryId: bigint("entry_id", { mode: "number" }).notNull().references(() => entries.id, { onDelete: "cascade" }),
+  videoId: text("video_id").notNull(),
+  bodyHash: text("body_hash").notNull(),
+}, t => [
+  primaryKey({ columns: [t.entryId, t.videoId] }),
+  index("entry_youtube_videos_video_idx").on(t.videoId, t.entryId),
+]);
+
 // Narrow derived rows keep mutable listing keys away from post text and caches.
 // Database triggers maintain these in the same transaction as entries, votes
 // and reaction-exclusion changes, including direct SQL writes and deletions.

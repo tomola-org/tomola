@@ -4,6 +4,7 @@ import { createNushiHandlers } from "../nushi.server";
 import { createSourceLanguageHandlers } from "./source-language-jobs.server";
 import { createPushHandlers } from "./push-jobs.server";
 import { createFigureHandlers } from "./figure-jobs.server";
+import { createVideoCardHandlers } from "./video-card-jobs.server";
 import { createAccountDeletionHandlers } from "./account-delete-jobs.server";
 import { createModerationHandlers } from "./moderation-jobs.server";
 import { createRenderCacheHandlers } from "~/lib/render-cache.server";
@@ -29,4 +30,4 @@ import type { JobHandler, JobHandlers } from "./queue.server";
 // cleanup_jobs (remove jobs finished over 30 days ago, daily UTC 03:00): jobs/maintenance-jobs.server.ts.
 // rebuild_render_cache rebuilds saved body and card HTML at the current version, newest topics first (render-cache.server.ts).
 // Handlers throw on failure for retry; throw DeferJob when temporarily unable to run, such as a budget limit.
-export const jobHandlers: JobHandlers = { ...createChatNushiHandlers(), ...createNushiHandlers(), ...createNushiTranslationHandlers(), ...createSourceLanguageHandlers(), ...createPushHandlers(), ...createFigureHandlers(), ...createAccountDeletionHandlers(), ...createModerationHandlers(), ...createTranslationHandlers(), ...createVillageTranslationHandlers(), ...createInvitationNoteHandlers(), ...createEmbeddingHandlers(), ...createNotificationHandlers(), ...createPasskeyHandlers(), ...createMaintenanceHandlers(), ...createRenderCacheHandlers(), ...createTranslationRecoveryHandlers() } satisfies Record<Exclude<JobKind, keyof typeof chatJobHandlers | typeof SEND_PUSH_JOB>, JobHandler>;
+export const jobHandlers: JobHandlers = { ...createChatNushiHandlers(), ...createNushiHandlers(), ...createNushiTranslationHandlers(), ...createSourceLanguageHandlers(), ...createPushHandlers(), ...createFigureHandlers(), ...createVideoCardHandlers(), ...createAccountDeletionHandlers(), ...createModerationHandlers(), ...createTranslationHandlers(), ...createVillageTranslationHandlers(), ...createInvitationNoteHandlers(), ...createEmbeddingHandlers(), ...createNotificationHandlers(), ...createPasskeyHandlers(), ...createMaintenanceHandlers(), ...createRenderCacheHandlers(), ...createTranslationRecoveryHandlers() } satisfies Record<Exclude<JobKind, keyof typeof chatJobHandlers | typeof SEND_PUSH_JOB>, JobHandler>;

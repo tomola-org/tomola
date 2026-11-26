@@ -1,4 +1,5 @@
 import { prepareEntryFigureDisplay } from "./figure-display.server";
+import { prepareVideoCardDisplay } from "./video-cards.server";
 import { safeErrorText } from "~/lib/error-text.server";
 import { withMarkdownRead } from "./markdown-budget.server";
 import { and, eq, getTableColumns, inArray, isNotNull, or } from "drizzle-orm";
@@ -271,6 +272,12 @@ export async function loadEntryDisplays(db: Db, inputs: readonly DisplayInput[],
       ...(wants && translation === null && availability.get(availabilityKey(entry.id, opts.displayLang)) === "unavailable" ? { unavailable: true } : {}),
       translation,
     });
+  }
+  const shown = [...out.values()].flatMap(entry => entry.translation ? [entry.translation] : []);
+  const decorateVideos = await prepareVideoCardDisplay(db, shown.flatMap(view => view.older?.html ? [view.html, view.older.html] : [view.html]));
+  for (const view of shown) {
+    view.html = decorateVideos(view.html, view.lang, true);
+    if (view.older?.html) view.older.html = decorateVideos(view.older.html, view.lang, true);
   }
   return out;
 }

@@ -890,6 +890,37 @@ form[action="/save"] button[aria-pressed="true"] svg { fill: currentColor; }
 .longread details > summary { cursor: pointer; font-weight: 600; }
 .longread details[open] > summary { margin-block-end: .75em; }
 
+.longread .video-card {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  align-items: center;
+  max-inline-size: 34rem;
+  border: 1px solid var(--border);
+  border-radius: .5rem;
+  background: var(--muted);
+  color: var(--reading-ink-strong);
+  text-decoration: none;
+  word-break: normal;
+}
+.longread .video-card:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.video-card-picture { position: relative; display: grid; place-items: center; }
+.longread .video-card-picture > img { inline-size: 100%; block-size: auto; aspect-ratio: 16 / 9; object-fit: contain; margin: 0; }
+.video-card-play {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  inline-size: 2rem;
+  block-size: 2rem;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 75%);
+  color: white;
+  font-size: .75rem;
+}
+.video-card-labels { display: grid; gap: .15rem; padding: .55rem .75rem; font-size: .8em; overflow-wrap: anywhere; }
+.video-card-title { font-size: 1.15em; font-weight: 600; }
+.video-card:hover .video-card-title { text-decoration: underline; }
+.video-card-note { color: var(--muted-foreground); }
+
 [data-rich-toolbar-slot] {
   inset-block-start: 0;
 }

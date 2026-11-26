@@ -3,8 +3,12 @@ import type { SeedMember } from "../e2e/member-fixtures";
 import { EARLY_MEMBERS } from "../e2e/early-members";
 
 export const FRENCH_DRAFT = "Nous avons une place pour les personnes qui veulent partager leurs idées avec les autres.";
+export const YOUTUBE_CARD_AUTHOR = "video_card_author@example.com";
+export const YOUTUBE_CARD_READER = "video_card_reader@example.com";
 
 export const PROD_MEMBERS: readonly SeedMember[] = [
+  { email: YOUTUBE_CARD_AUTHOR, handle: "video_card_author", homeArea: "ja", readLangs: ["ja"], uiLocale: "en" },
+  { email: YOUTUBE_CARD_READER, handle: "video_card_reader", homeArea: "en", readLangs: ["en"], uiLocale: "en" },
   { email: "motion_prod@example.com", handle: "motion_prod", homeArea: "en", uiLocale: "en" },
   { email: "motion_reduced_prod@example.com", handle: "motion_reduced_prod", homeArea: "en", uiLocale: "en" },
   { email: "motion_figure_author@example.com", handle: "motion_figure_author", homeArea: "en", uiLocale: "en" },

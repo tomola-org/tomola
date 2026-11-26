@@ -13,6 +13,7 @@ import { m } from "~/paraglide/messages.js";
 import { baseLocale, isLocale, type Locale } from "~/paraglide/runtime.js";
 import { draftExcerpt, MAX_DRAFT_ISSUES, type DraftIssue } from "~/lib/draft-issues";
 import type { MarkdownNode } from "./markdown-details";
+import { tagYoutubeParagraphs } from "./youtube-markdown.core.server";
 
 // remark-math produces code elements with class="language-math math-inline|math-display".
 // Keep those through sanitization, then render with rehype-katex; KaTeX output is outside sanitization.
@@ -28,6 +29,7 @@ const sanitizeSchema: SanitizeOptions = {
     ...defaultSchema.attributes,
     code: [["className", /^language-./, "math-inline", "math-display"]],
     span: [["lang", "en"]],
+    p: ["dataYoutubeId", "dataYoutubeHref"],
     // Preserve only the generated mention class on links, alongside the ordinary Markdown link attributes.
     a: [
       ...(defaultSchema.attributes?.a ?? []).filter((attribute) => !Array.isArray(attribute) || attribute[0] !== "className"),
@@ -52,7 +54,8 @@ const sanitizeSchema: SanitizeOptions = {
 // 13: bounded Markdown details containers and summary-only cards.
 // 14: literal rejected delimiters and non-interactive summary references.
 // 15: refresh source HTML for motion-aware display decoration.
-export const RENDER_VERSION = 15;
+// 16: mark standalone YouTube links in saved post bodies and translations.
+export const RENDER_VERSION = 16;
 
 const DEFAULT_ID_PREFIX = "user-content-";
 
@@ -215,9 +218,11 @@ function rehypeHeadingIds(options: { prefix: string }) {
   };
 }
 
-function createFrontProcessor(idPrefix: string, lang: string | undefined, headingIdPrefix: string | undefined, translation = false, diagnostics?: { before: (tree: HastNode) => void; after: (tree: HastNode) => void; image: (node: HastNode) => void }) {
+function createFrontProcessor(idPrefix: string, lang: string | undefined, headingIdPrefix: string | undefined, translation = false, diagnostics?: { before: (tree: HastNode) => void; after: (tree: HastNode) => void; image: (node: HastNode) => void }, videoLinks = false) {
   const processor = createMarkdownProcessor()
-    .use(remarkMentions)
+    .use(remarkMentions);
+  if (videoLinks) processor.use(() => tagYoutubeParagraphs);
+  processor
     .use(remarkDetails, { lang })
     .use(remarkRehype, { clobberPrefix: idPrefix, ...footnoteOptions(lang) })
     .use(rehypeMentionLinks)
@@ -287,6 +292,7 @@ export type RenderOptions = {
   lang?: string;
   // Typeset only machine-translated prose. Originals and human corrections keep their characters.
   translation?: boolean;
+  videoLinks?: boolean;
   // The saved mention bindings of the source revision. Without them, or empty, no member links are added. A translation gets the
   // targets of its source text, so that a handle that only the translation contains is not linked. Every call that renders a stored body passes them
   // (tests/mention-render-sites.test.ts); only checkRenderable, which just asks whether a body renders, does not.
@@ -295,12 +301,12 @@ export type RenderOptions = {
 
 function frontProcessorFor(opts: RenderOptions) {
   if (opts.headingIdPrefix === undefined && opts.idPrefix === undefined) {
-    const key = JSON.stringify([opts.lang ?? "", opts.translation ?? false]);
+    const key = JSON.stringify([opts.lang ?? "", opts.translation ?? false, opts.videoLinks ?? false]);
     let cached = defaultProcessors.get(key);
-    if (!cached) defaultProcessors.set(key, (cached = createFrontProcessor(DEFAULT_ID_PREFIX, opts.lang, undefined, opts.translation)));
+    if (!cached) defaultProcessors.set(key, (cached = createFrontProcessor(DEFAULT_ID_PREFIX, opts.lang, undefined, opts.translation, undefined, opts.videoLinks)));
     return cached;
   }
-  return createFrontProcessor(opts.idPrefix ?? DEFAULT_ID_PREFIX, opts.lang, opts.headingIdPrefix ?? opts.idPrefix, opts.translation);
+  return createFrontProcessor(opts.idPrefix ?? DEFAULT_ID_PREFIX, opts.lang, opts.headingIdPrefix ?? opts.idPrefix, opts.translation, undefined, opts.videoLinks);
 }
 
 function renderTree(markdown: string, opts: RenderOptions): HastNode {

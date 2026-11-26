@@ -1,5 +1,6 @@
 import { selectDisplayName, displayNameFields } from "./display-names.server";
 import { mdBlock } from "./md/frontmatter.server";
+import { videoCardHtml } from "./video-card-html.server";
 import { authorLabel } from "./deleted-member";
 import { retainedAuthorColumn } from "./deleted-member.server";
 import fs from "node:fs/promises";
@@ -234,7 +235,7 @@ export async function exportSite(db: Db, options: SiteExportOptions) {
           html.push(`<p class="status" data-status="${body.status}">${h(status)} · ${langs.includes(sourceLang) ? `<a href="${sourceHtml}" lang="${sourceLang}">${h(sourceLabel)}</a>` : h(sourceLabel)}</p>`);
           if (body.structureMismatch || title.structureMismatch) html.push(`<p class="status" role="note">${h(m.translation_structure_note({}, o))}</p>`);
           if (post.kind === "topic" && title.status !== body.status) html.push(`<p class="status" data-title-status="${title.status}">${h(m.site_export_title_status({ status: statusLabel(title.status, lang) }, o))}</p>`);
-          html.push(`<div lang="${body.lang}">${offlineHtml(body.html, linksFor(file, lang, "html"))}</div></article>`);
+          html.push(`<div lang="${body.lang}">${offlineHtml(videoCardHtml(body.html), linksFor(file, lang, "html"))}</div></article>`);
           markdown.push(`<a id="${anchor}"></a>\n\n${post.kind === "reply" ? `## ${m.reply_title({}, o)} #${post.id}\n\n` : ""}${authorLabel(post.handle)} · ${post.lang} · ${post.createdAt.toISOString()}`);
           markdown.push(mdBlock({ type: "author", author: authorLabel(post.handle), ...displayNameFields(post) }, null));
           if (post.kind === "reply") markdown.push(`${m.site_export_reply_to({}, o)}: #${parent}`);

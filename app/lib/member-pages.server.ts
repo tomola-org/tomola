@@ -1,4 +1,5 @@
 import { cursorTime, readingCondition } from "~/lib/reading-page.server";
+import { prepareVideoCardDisplay } from "./video-cards.server";
 import { readingPage, type ReadingRequest, type ReadingPage } from "~/lib/reading-page";
 import { memberAvatarUrl } from "./member-avatar.server";
 import { selectDisplayNamePresentation } from "./display-names.server";
@@ -116,6 +117,7 @@ export async function loadMemberPageContent(db: Db, member: MemberPageIdentity, 
       const { decorateMotionHtml, motionImages } = await import("./motion-display.server");
       const { images, ownedByEntry } = await motionImages(db, [{ id: row.id, html }]);
       html = decorateMotionHtml(html, html, ownedByEntry.get(row.id), images);
+      html = (await prepareVideoCardDisplay(db, [html]))(html, row.lang);
       intro = { id: row.id, lang: row.lang as Lang, title: row.title, headline: (await headlineFromBody(row.body)), html, display: displays.get(row.id)! };
     }
   }

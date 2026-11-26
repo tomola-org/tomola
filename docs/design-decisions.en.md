@@ -192,7 +192,7 @@ Machine-facing details should not clutter manual reading, while AI representatio
 
 ## 31 Align stored rendering, language and logging boundaries
 
-**Current design.** Fixed text such as footnote labels follows the body language, not the reader's UI language. External images become links; images uploaded and re-encoded by this site can be embedded. Responses use nonce-based CSP and security headers. Member HTML avoids shared caches, and logs mask query data and invitation tokens.
+**Current design.** Fixed text such as footnote labels follows the body language, not the reader's UI language. External images become links; images uploaded and re-encoded by this site can be embedded. When YouTube link cards are enabled, the worker fetches the thumbnail and re-encodes it for delivery from this site. Responses use nonce-based CSP and security headers. Member HTML avoids shared caches, and logs mask query data and invitation tokens.
 
 **Rationale and scope.** Rendering is stored per post and translation; varying fixed text by reader locale would make the stored representation unstable. Section 43 separates image processing and delivery conditions. Header presence is not proof of overall security.
 

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { LANGS } from "../languages";
+import { YOUTUBE_ID } from "../youtube-url";
 import { SEND_ACCOUNT_DELETED_JOB, SEND_DIGEST_JOB, SEND_MEMBER_DIGEST_JOB, SEND_NOTIFICATION_EMAIL_JOB, SEND_PASSKEY_NOTICE_JOB } from "./mail-kinds";
 
 const id = z.number().int().positive();
@@ -31,6 +32,9 @@ export const jobDefinitions = {
   prepare_figures: { schema: z.strictObject({ entryId: id }), priority: 4 },
   read_figure: { schema: z.strictObject({ key: figureKey }), priority: 4 },
   translate_figure: { schema: z.strictObject({ key: figureKey, mediaId: hash, lang }), priority: 4 },
+  fetch_youtube_video: { schema: z.strictObject({ id: z.string().regex(YOUTUBE_ID) }), priority: 5 },
+  scan_youtube_videos: { schema: dated.extend({ after: id.optional() }), priority: 5 },
+  render_youtube_video: { schema: z.strictObject({ id: z.string().regex(YOUTUBE_ID), after: id.optional() }), priority: 5 },
   [SEND_ACCOUNT_DELETED_JOB]: {
     // After delivery the worker keeps only the request ID.
     schema: z.object({ requestId: z.string().min(1), to: z.string().nullish(), posts: z.string().nullish(), locale: z.string().nullish() }),

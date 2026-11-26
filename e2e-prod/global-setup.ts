@@ -115,6 +115,8 @@ export default async function globalSetup(config: FullConfig) {
       TRANSLATION_SECONDARY: "none",
       DIVERGENCE_JUDGE: "none",
       EMBEDDING_ENGINE: "",
+      VIDEO_CARDS: process.env.VIDEO_CARDS ?? "1",
+      VIDEO_CARD_SOURCE: "fake",
       OPERATOR_EMAILS: `boss@example.com,${ARTICLE_OPERATOR}`,
       // The enabled languages (production needs them explicitly). The startup check refuses fr and Chinese until a native speaker has checked their interface strings,
       // so the tests run with ja,en.

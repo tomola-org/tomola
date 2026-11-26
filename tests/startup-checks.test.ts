@@ -397,7 +397,7 @@ describe("the startup module the server loads", () => {
   it("throws on import in production with a missing secret, a non-https URL or no mail configuration (this is what stops the server)", async () => {
     const env = process.env as Record<string, string | undefined>;
     const setProduction = (overrides: Record<string, string | undefined>) => {
-      Object.assign(env, good, overrides);
+      Object.assign(env, good, { VIDEO_CARD_SOURCE: "youtube" }, overrides);
       for (const [k, v] of Object.entries(overrides)) if (v === undefined) delete env[k];
     };
     for (const overrides of [{ BETTER_AUTH_SECRET: undefined }, { BETTER_AUTH_URL: "http://forum.example.org" }, { SMTP_URL: undefined }]) {
@@ -412,6 +412,9 @@ describe("the startup module the server loads", () => {
     vi.doMock("~/lib/i18n/review-counts.server", () => ({ REVIEW_COUNTS_FILE: "review-counts.generated.json", loadReviewCounts: () => CLEAN_COUNTS }));
     try {
       await expect(import("~/lib/startup.server")).resolves.toBeDefined();
+      vi.resetModules();
+      setProduction({ VIDEO_CARD_SOURCE: "fake" });
+      await expect(import("~/lib/startup.server")).rejects.toThrow("Refusing to start with a fake video card source");
     } finally {
       vi.doUnmock("~/lib/i18n/review-counts.server");
     }

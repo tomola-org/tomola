@@ -19,6 +19,7 @@ import { clearPreviousDraftView, previousDraftView } from "~/lib/draft-preview-s
 import { useDraftPreviewBackState } from "~/lib/draft-preview-position";
 import { entryErrorMessage } from "~/lib/entry-error-message";
 import { renderEntryHtml } from "~/lib/entries.server";
+import { prepareVideoCardDisplay } from "~/lib/video-cards.server";
 import type { SourceLang } from "~/lib/languages";
 import { headlineFromBody } from "~/lib/headline.server";
 import { withMarkdownPersistedRead } from "~/lib/markdown-budget.server";
@@ -53,10 +54,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const { body, version, asksStance } = row;
   const title = titleOrNull(row.title);
   const lang = row.lang as SourceLang;
-  const { html, headline } = await withMarkdownPersistedRead(async () => {
+  const { html: cached, headline } = await withMarkdownPersistedRead(async () => {
     const mentions = await resolveMentionTargets(db, body);
     return { ...(await renderEntryHtml("topic", row.id, body, lang, mentions)), headline: title ? "" : await headlineFromBody(body) };
   });
+  const html = (await prepareVideoCardDisplay(db, [cached]))(cached, lang);
   const posting = villagesEnabled() ? await postingVillages(db, user.id, await villageSlug(db, row.villageId),
     { repair: false, reader: villageReaderFor(request, profile) }) : null;
   const village = posting?.choices.find(choice => choice.slug === posting.selected) ?? null;
