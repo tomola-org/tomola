@@ -1121,6 +1121,8 @@
   "settings_export_link": "내 데이터 다운로드 (JSON)",
   "settings_export_more_label": "파일에 포함되는 내용",
   "md_footnotes": "각주",
+  "md_video_youtube": "YouTube에서 시청하기",
+  "md_video_original": "동영상은 원어 그대로 제공됩니다",
   "md_footnote_back": "참조 {index}(으)로 돌아가기",
   "asks_stance_label": "입장 묻기",
   "asks_stance_checkbox": "질문으로 만들기 (독자에게 입장 묻기)",

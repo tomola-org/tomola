@@ -1120,6 +1120,8 @@
   "settings_export_link": "Unduh data saya (JSON)",
   "settings_export_more_label": "Isi berkas",
   "md_footnotes": "Catatan kaki",
+  "md_video_youtube": "Tonton di YouTube",
+  "md_video_original": "Video ini dalam bahasa aslinya",
   "md_footnote_back": "Kembali ke rujukan {index}",
   "asks_stance_label": "Minta sikap",
   "asks_stance_checkbox": "Jadikan ini pertanyaan (tanyakan sikap pembaca)",

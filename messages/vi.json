@@ -1120,6 +1120,8 @@
   "settings_export_link": "Tải xuống dữ liệu của tôi (JSON)",
   "settings_export_more_label": "Những gì tệp chứa",
   "md_footnotes": "Chú thích",
+  "md_video_youtube": "Xem trên YouTube",
+  "md_video_original": "Video ở ngôn ngữ bản gốc",
   "md_footnote_back": "Quay lại tài liệu tham khảo {index}",
   "asks_stance_label": "Hỏi lập trường",
   "asks_stance_checkbox": "Đặt đây làm câu hỏi (hỏi người đọc về lập trường của họ)",

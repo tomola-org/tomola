@@ -1174,6 +1174,8 @@
   "settings_export_link": "Télécharger mes données (JSON)",
   "settings_export_more_label": "Contenu du fichier",
   "md_footnotes": "Notes de bas de page",
+  "md_video_youtube": "Regarder sur YouTube",
+  "md_video_original": "La vidéo est dans sa langue d’origine",
   "md_footnote_back": "Retour à la référence {index}",
   "asks_stance_label": "Demander les positions",
   "asks_stance_checkbox": "En faire une question (demander leur position aux lecteurs)",

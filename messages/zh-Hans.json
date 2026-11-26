@@ -773,6 +773,8 @@
   "settings_export_link": "下载我的数据 (JSON)",
   "settings_export_more_label": "文件包含的内容",
   "md_footnotes": "脚注",
+  "md_video_youtube": "在 YouTube 上观看",
+  "md_video_original": "视频为原始语言",
   "md_footnote_back": "返回引用 {index}",
   "asks_stance_label": "征求立场",
   "asks_stance_checkbox": "设为问题（询问读者的立场）",

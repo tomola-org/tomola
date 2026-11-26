@@ -1124,6 +1124,8 @@
   "settings_export_link": "ดาวน์โหลดข้อมูลของฉัน (JSON)",
   "settings_export_more_label": "สิ่งที่อยู่ภายในไฟล์",
   "md_footnotes": "เชิงอรรถ",
+  "md_video_youtube": "ดูบน YouTube",
+  "md_video_original": "วิดีโอเป็นภาษาต้นฉบับ",
   "md_footnote_back": "กลับไปยังการอ้างอิง {index}",
   "asks_stance_label": "ถามจุดยืน",
   "asks_stance_checkbox": "ตั้งเป็นคำถาม (ถามจุดยืนจากผู้อ่าน)",

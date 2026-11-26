@@ -773,6 +773,8 @@
   "settings_export_link": "下載我的資料 (JSON)",
   "settings_export_more_label": "檔案包含的內容",
   "md_footnotes": "註腳",
+  "md_video_youtube": "在 YouTube 上觀看",
+  "md_video_original": "影片為原始語言",
   "md_footnote_back": "返回參照 {index}",
   "asks_stance_label": "詢問立場",
   "asks_stance_checkbox": "設為問題（詢問讀者的立場）",
