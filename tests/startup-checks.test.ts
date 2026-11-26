@@ -384,6 +384,13 @@ describe("the startup check in production", () => {
     for (const NODE_ENV of ["development", "test"]) expect(() => assertStartupConfig({ TOMOLA_OPERATOR_DIR: process.env.TOMOLA_OPERATOR_DIR, NODE_ENV })).not.toThrow();
     expect(() => assertStartupConfig({ TOMOLA_OPERATOR_DIR: process.env.TOMOLA_OPERATOR_DIR, NODE_ENV: "development", TRUSTED_PROXY_HOPS: "abc" })).toThrow("TRUSTED_PROXY_HOPS");
   });
+
+  it("accepts only 1, 0 or empty for the video cards flag", () => {
+    for (const VIDEO_CARDS of [undefined, "", "0", "1"]) {
+      expect(() => assertStartupConfig({ NODE_ENV: "test", VIDEO_CARDS })).not.toThrow();
+    }
+    expect(() => assertStartupConfig({ NODE_ENV: "test", VIDEO_CARDS: "true" })).toThrow("VIDEO_CARDS must be 1, 0 or empty");
+  });
 });
 
 describe("the startup module the server loads", () => {
@@ -397,7 +404,7 @@ describe("the startup module the server loads", () => {
   it("throws on import in production with a missing secret, a non-https URL or no mail configuration (this is what stops the server)", async () => {
     const env = process.env as Record<string, string | undefined>;
     const setProduction = (overrides: Record<string, string | undefined>) => {
-      Object.assign(env, good, { VIDEO_CARD_SOURCE: "youtube" }, overrides);
+      Object.assign(env, good, { VIDEO_CARDS: "0", VIDEO_CARD_SOURCE: "youtube" }, overrides);
       for (const [k, v] of Object.entries(overrides)) if (v === undefined) delete env[k];
     };
     for (const overrides of [{ BETTER_AUTH_SECRET: undefined }, { BETTER_AUTH_URL: "http://forum.example.org" }, { SMTP_URL: undefined }]) {
@@ -415,6 +422,9 @@ describe("the startup module the server loads", () => {
       vi.resetModules();
       setProduction({ VIDEO_CARD_SOURCE: "fake" });
       await expect(import("~/lib/startup.server")).rejects.toThrow("Refusing to start with a fake video card source");
+      vi.resetModules();
+      setProduction({ VIDEO_CARDS: "true" });
+      await expect(import("~/lib/startup.server")).rejects.toThrow("VIDEO_CARDS must be 1, 0 or empty");
     } finally {
       vi.doUnmock("~/lib/i18n/review-counts.server");
     }

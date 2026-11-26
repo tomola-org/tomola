@@ -1,5 +1,10 @@
 export const videoCardsEnabled = (env: NodeJS.ProcessEnv = process.env) => env.VIDEO_CARDS === "1";
 
+export function assertVideoCardsConfig(env: NodeJS.ProcessEnv = process.env): void {
+  if (![undefined, "", "0", "1"].includes(env.VIDEO_CARDS)) throw new Error("VIDEO_CARDS must be 1, 0 or empty");
+  videoCardSource(env);
+}
+
 export function videoCardSource(env: NodeJS.ProcessEnv = process.env) {
   const source = env.VIDEO_CARD_SOURCE || "youtube";
   if (source !== "youtube" && source !== "fake") throw new Error("VIDEO_CARD_SOURCE must be youtube, fake or empty");

@@ -26,8 +26,10 @@ export function parseYoutubeUrl(value: string): { id: string; href: string } | n
   if (!embed) return { id, href: value.replace(/^http:/i, "https:") };
 
   const watch = new URL(youtubeWatchUrl(id));
+  const hasTime = url.searchParams.has("t");
   for (const [key, param] of url.searchParams) {
-    if (key === "t" || key === "start" || key === "list") watch.searchParams.append(key, param);
+    if (key === "t" || key === "list") watch.searchParams.append(key, param);
+    if (key === "start" && !hasTime && !watch.searchParams.has("t")) watch.searchParams.set("t", param);
   }
   return { id, href: watch.href };
 }

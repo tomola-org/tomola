@@ -904,7 +904,7 @@ form[action="/save"] button[aria-pressed="true"] svg { fill: currentColor; }
 }
 .longread .video-card:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 .video-card-picture { position: relative; display: grid; place-items: center; }
-.longread .video-card-picture > img { inline-size: 100%; block-size: auto; aspect-ratio: 16 / 9; object-fit: contain; margin: 0; }
+.longread .video-card-picture > img { inline-size: 100%; block-size: auto; aspect-ratio: 16 / 9; object-fit: cover; margin: 0; }
 .video-card-play {
   position: absolute;
   display: grid;

@@ -3,8 +3,7 @@ import { and, eq, gt, sql } from "drizzle-orm";
 import type { Db } from "../db/client.server";
 import { entries, youtubeVideos } from "../db/schema";
 import { MarkdownBudgetError, markdownTask, withMarkdownPersistedRead } from "../markdown-budget.server";
-import { rebuildVideoRenders } from "../render-cache.server";
-import { entriesReferencingVideo, syncYoutubeReferences } from "../video-card-references.server";
+import { hasYoutubeReference, syncYoutubeReferences } from "../video-card-references.server";
 import { videoCardSource, videoCardsEnabled } from "../video-cards-config.server";
 import { rootTopic, rootTopicOn, visibleWithTopic } from "../visibility.server";
 import { loadYoutubeArtwork } from "../youtube-fetch.server";
@@ -13,7 +12,6 @@ import { DeferJob, defineJobHandlers, enqueue, type TypedJobHandler } from "./qu
 
 const DAY = 24 * 60 * 60 * 1000;
 const SCAN_BATCH = 40;
-const RENDER_BATCH = 20;
 const REQUEST_INTERVAL_MS = 1000;
 const schedule = { kind: "scan_youtube_videos", keyPrefix: "youtube:scan", hourUtc: 4 } as const;
 
@@ -56,10 +54,6 @@ export async function scanYoutubeEntries(db: Db, after: number, now: Date): Prom
   return candidates.length === SCAN_BATCH ? candidates.at(-1)!.id : null;
 }
 
-async function queueRenders(db: Db, id: string, after?: number) {
-  return enqueue(db, "render_youtube_video", { id, after }, { dedupeKey: `youtube:render:${id}:${after ?? 0}` });
-}
-
 export function createVideoCardHandlers(options: { load?: typeof loadYoutubeArtwork; intervalMs?: number } = {}) {
   const fetchVideo: TypedJobHandler<"fetch_youtube_video"> = async ({ payload: { id } }, ctx) => {
     if (!videoCardsEnabled()) return;
@@ -72,13 +66,12 @@ export function createVideoCardHandlers(options: { load?: typeof loadYoutubeArtw
       const [cached] = await tx.select({ refreshAfter: youtubeVideos.refreshAfter }).from(youtubeVideos).where(eq(youtubeVideos.id, id));
       if (cached && cached.refreshAfter > clock()) return;
       await delay(options.intervalMs ?? REQUEST_INTERVAL_MS, undefined, { signal: ctx.signal });
-      if (!(await entriesReferencingVideo(tx, id, 0, 1)).length) return;
+      if (!(await hasYoutubeReference(tx, id))) return;
       const image = await (options.load ?? loadYoutubeArtwork)(id, videoCardSource(), ctx.signal);
       ctx.signal?.throwIfAborted();
       const refreshAfter = new Date(+clock() + (image ? 30 : 7) * DAY);
       const values = { title: null, channel: null, width: null, height: null, bytes: null, ...image, refreshAfter };
       await tx.insert(youtubeVideos).values({ id, ...values }).onConflictDoUpdate({ target: youtubeVideos.id, set: values });
-      await queueRenders(tx, id);
     });
   };
 
@@ -89,11 +82,5 @@ export function createVideoCardHandlers(options: { load?: typeof loadYoutubeArtw
     if (next !== null) await queueScan(ctx.db, payload.date, next);
   };
 
-  const render: TypedJobHandler<"render_youtube_video"> = async ({ payload: { id, after } }, ctx) => {
-    if (!videoCardsEnabled()) return;
-    const refs = await entriesReferencingVideo(ctx.db, id, after, RENDER_BATCH);
-    await rebuildVideoRenders(ctx.db, refs.map(row => row.id));
-    if (refs.length === RENDER_BATCH) await queueRenders(ctx.db, id, refs.at(-1)!.id);
-  };
-  return defineJobHandlers({ fetch_youtube_video: fetchVideo, scan_youtube_videos: scan, render_youtube_video: render });
+  return defineJobHandlers({ fetch_youtube_video: fetchVideo, scan_youtube_videos: scan });
 }

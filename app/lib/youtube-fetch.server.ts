@@ -2,7 +2,7 @@ import { processUploadedMedia } from "./media-processing.server";
 import { YOUTUBE_ID, youtubeWatchUrl } from "./youtube-url";
 
 export const VIDEO_FETCH_LIMITS = { ms: 5_000, oembed: 64 * 1024, image: 2 * 1024 * 1024 } as const;
-const unavailable = new Set([401, 403, 404]);
+const unavailable = new Set([400, 401, 403, 404, 410]);
 const thumbnailHost = "i.ytimg.com";
 const thumbnail = (id: string) => `https://${thumbnailHost}/vi/${id}/hqdefault.jpg`;
 
@@ -61,10 +61,15 @@ export async function fetchYoutubeCard(id: string, opts: FetchOptions = {}) {
   oembed.search = new URLSearchParams({ format: "json", url: youtubeWatchUrl(id) }).toString();
   const json = await get(oembed.href, VIDEO_FETCH_LIMITS.oembed);
   if (!json) return null;
-  const data = JSON.parse(json.toString("utf8")) as Record<string, unknown> | null;
+  let data: Record<string, unknown> | null;
+  try {
+    data = JSON.parse(json.toString("utf8"));
+  } catch {
+    return null;
+  }
   const title = cardText(data?.title, 300);
   const channel = cardText(data?.author_name, 100);
-  if (!title || !channel) throw new Error("YouTube did not return a title and channel");
+  if (!title || !channel) return null;
   checkThumbnail(data?.thumbnail_url, id);
   const bytes = await get(thumbnail(id), VIDEO_FETCH_LIMITS.image);
   return bytes ? { title, channel, bytes } : null;

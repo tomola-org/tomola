@@ -37,8 +37,8 @@ export async function syncYoutubeReferences(db: Tx, entryId: number, ids: readon
   await queueDueVideos(db, found, now);
 }
 
-export function entriesReferencingVideo(db: Db, id: string, after = 0, limit = 50) {
+export async function hasYoutubeReference(db: Db, id: string): Promise<boolean> {
   const refs = visibleVideoReferences(db).as("youtube_source_refs");
-  return db.select({ id: refs.entryId }).from(refs).where(and(eq(refs.videoId, id), sql`${refs.entryId} > ${after}`))
-    .orderBy(refs.entryId).limit(limit);
+  const [ref] = await db.select({ id: refs.entryId }).from(refs).where(eq(refs.videoId, id)).limit(1);
+  return ref !== undefined;
 }

@@ -1,5 +1,5 @@
 import { assertNushiConfig, nushiPlaceEnabled } from "./nushi-config.server";
-import { videoCardSource } from "./video-cards-config.server";
+import { assertVideoCardsConfig } from "./video-cards-config.server";
 import { chatNushiPlaceEnabled } from "./chat-nushi-config.server";
 import { pushConfig } from "./push/config.server";
 import { googleLoginConfig } from "./auth/google-config.server";
@@ -162,7 +162,7 @@ export function assertStartupConfig(
   deps: { reviewCounts?: ReviewCounts | null } = {},
 ): void {
   pushConfig(env);
-  videoCardSource(env);
+  assertVideoCardsConfig(env);
   googleLoginConfig(env);
   testSiteEnabled(env);
   if (figureTranslationEnabled(env)) createFigureReader(env);

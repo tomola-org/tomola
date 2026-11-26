@@ -91,7 +91,7 @@ Chat is excluded from public posts, Markdown, API, MCP and search. `/settings/ch
 
 ### 2.4 Images
 
-The reading page turns external images into links and loads its images from tomola. With `VIDEO_CARDS=1`, a standalone YouTube video URL in a post or reply can become a link card. The worker sends only the canonical video URL to YouTube for the title and channel, and requests the thumbnail by video ID. It re-encodes the thumbnail to WebP and serves it from tomola. The reader's browser contacts YouTube when the reader follows the link. Unavailable videos appear as ordinary links.
+The reading page turns external images into links and loads its images from tomola. With `VIDEO_CARDS=1`, a standalone YouTube video URL in a post or reply can become a link card. The worker sends only the canonical video URL to YouTube for the title and channel, and requests the thumbnail by video ID. It re-encodes the thumbnail to WebP and serves it from tomola. Saved post and translation HTML marks eligible links, and each page render builds cards from the current video records. The reader's browser contacts YouTube when the reader follows the link. Unavailable videos appear as ordinary links.
 
 Post attachments accept still JPEG, PNG and WebP, plus GIF and animated WebP. Profile avatars and village icons retain their still-only JPEG/PNG/WebP path. APNG and video are rejected. Every input is limited to 10 MiB; still images are limited to 40 million pixels. An isolated decoder process applies orientation, re-encodes to WebP within a 2,000-pixel longest edge and strips metadata. Only converted images are stored, stills at most 2 MiB (motion limits below); originals are not saved in the database. Processing has time and memory limits.
 

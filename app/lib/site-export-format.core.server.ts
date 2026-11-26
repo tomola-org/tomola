@@ -1,15 +1,10 @@
-import { unescapeAttribute } from "./html-attribute";
+import { escapeHtml, unescapeAttribute } from "./html-attribute";
 import { createMarkdownProcessor } from "~/lib/markdown-parser.core.server";
 import path from "node:path";
 import { defaultSchema } from "rehype-sanitize";
 import type { Lang } from "~/lib/languages";
 import { mediaImage } from "~/lib/markdown.core.server";
 import { MEDIA_LIMITS } from "~/lib/media";
-
-export function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
-
 
 export type ExportLinks = {
   page: string;

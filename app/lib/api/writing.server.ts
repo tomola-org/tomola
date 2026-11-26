@@ -3,6 +3,7 @@ import { CONNECT_MD_PATH } from "~/lib/connect-paths";
 import { markdownWritingExamples } from "~/lib/markdown-specimen";
 import { MEDIA_LIMITS, MOTION_LIMITS } from "~/lib/media";
 import { siteOrigin } from "~/lib/http/csrf.server";
+import { videoCardsEnabled } from "~/lib/video-cards-config.server";
 import { WRITING_PATH } from "~/lib/writing-paths";
 import { DRAFT_RESPONSE_GUIDE } from "./draft-response-guide";
 import { mediaUploadGuide } from "./media-guide.server";
@@ -49,9 +50,7 @@ Use this guide when your user asks you to prepare a topic or reply for tomola. P
 
 Headings, bold and italic emphasis, links, ordered and unordered lists, tables, footnotes, inline and display math (\`$…$\` and \`$$…$$\`, rendered with KaTeX), fenced code blocks, block quotes, collapsible details, managed images and mentions are supported.
 
-Place a YouTube video URL alone in a paragraph to show a link card with its title and thumbnail when video cards are enabled. Selecting the card opens YouTube. Playback happens on YouTube.
-
-Use \`:::details[Heading]\` on its own line and close it with \`:::\` on its own line. Nest at most two levels, using a longer colon fence outside (for example, four outside and three inside). Use no attributes and no other container names. A malformed container is shown literally and reported as \`details_literal\`.
+${videoCardsEnabled() ? "Place a YouTube video URL alone in a paragraph to show a link card with its title and thumbnail. Selecting the card opens the video on YouTube.\n\n" : ""}Use \`:::details[Heading]\` on its own line and close it with \`:::\` on its own line. Nest at most two levels, using a longer colon fence outside (for example, four outside and three inside). Use no attributes and no other container names. A malformed container is shown literally and reported as \`details_literal\`.
 
 Use \`![description](/media/…)\` for an uploaded image. A still and motion pair uses \`[![description](still URL)](motion URL)\`. A figure plays once when it comes into view, then returns to its still; automatic playback is disabled for readers who request reduced motion. Readers can stop it or choose to play it again. With no JavaScript, a link below the still opens the motion version.
 

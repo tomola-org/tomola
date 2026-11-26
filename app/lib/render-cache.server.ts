@@ -6,9 +6,6 @@ import { renderEntryHtml, renderTranslationHtml } from "~/lib/entries.server";
 import { DeferJob, enqueue, defineJobHandlers, type TypedJobHandler } from "~/lib/jobs/queue.server";
 import { RENDER_VERSION } from "~/lib/markdown.server";
 import { resolveSavedMentionsFor, resolveTranslationMentionsFor } from "~/lib/mentions.server";
-import { videoCardHtml, videoIdsInHtml, type VideoCard } from "./video-card-html.server";
-import { readVideoCards } from "./video-cards.server";
-import type { RenderedEntry } from "./markdown.server";
 
 // Rebuilding the saved renders: when RENDER_VERSION goes up, every saved html (the posts, and the translations that are shown) is out of date and is
 // drawn again the next time it is viewed. A list shows twenty cards at once, so without this the first reader after a deploy would wait for twenty renders. The rebuild runs first,
@@ -171,39 +168,4 @@ export function createRenderCacheHandlers() {
 
 export function rebuildRenderCache(...args: Parameters<typeof rebuildRenderCacheImplementation>): ReturnType<typeof rebuildRenderCacheImplementation> {
   return withMarkdownPersistedRead(() => rebuildRenderCacheImplementation(...args));
-}
-
-function cacheVideoCards(rendered: RenderedEntry, cards: ReadonlyMap<string, VideoCard>, lang: string, translated: boolean): RenderedEntry {
-  return {
-    ...rendered,
-    html: videoCardHtml(rendered.html, cards, lang, translated, true),
-    cardHtml: rendered.cardHtml === null ? null : videoCardHtml(rendered.cardHtml, cards, lang, translated, true),
-  };
-}
-
-// Write only the rendered derivative of each source and body translation.
-// Edits and translation saves can proceed while the batch is being rendered.
-export async function rebuildVideoRenders(db: Db, ids: readonly number[]): Promise<void> {
-  if (!ids.length) return;
-  await withMarkdownPersistedRead(async () => {
-    const posts = await db.select({ id: entries.id, kind: entries.kind, lang: entries.lang, body: entries.body, sourceHash: entries.sourceHash, mentionRevision: entries.mentionRevision })
-      .from(entries).where(and(inArray(entries.id, [...ids]), isNull(entries.deletedAt)));
-    const versions = await db.select({ id: translations.id, entryId: translations.entryId, lang: translations.lang, kind: translations.kind, text: translations.text, sourceHash: translations.sourceHash, mentionRevision: translations.mentionRevision })
-      .from(translations).where(and(eq(translations.field, "body"), inArray(translations.kind, ["primary", "human"]), inArray(translations.entryId, [...ids])));
-    const [saved, translated] = await Promise.all([resolveSavedMentionsFor(db, posts), resolveTranslationMentionsFor(db, versions)]);
-    const readCards = (rendered: RenderedEntry) => readVideoCards(db, [...new Set(videoIdsInHtml(rendered.html))]);
-    for (const post of posts) {
-      const kind = post.kind === "topic" ? "topic" : "reply";
-      const rendered = await renderEntryHtml(kind, post.id, post.body, post.lang, saved.get(post.id) ?? new Map());
-      await saveRenderedEntry(db, post.id, post.body, cacheVideoCards(rendered, await readCards(rendered), post.lang, false), post.sourceHash, post.mentionRevision);
-      for (const row of versions) {
-        if (row.entryId !== post.id) continue;
-        const rendered = await renderTranslationHtml(kind, post.id, row.lang, row.text, translated.get(row.id) ?? new Map(), row.kind !== "human");
-        await saveRenderedTranslation(db, row.id, row.text, cacheVideoCards(rendered, await readCards(rendered), row.lang, true), {
-          entryId: post.id, source: post.body, sourceHash: post.sourceHash, mentionRevision: post.mentionRevision,
-          translationSourceHash: row.sourceHash, translationMentionRevision: row.mentionRevision,
-        });
-      }
-    }
-  });
 }

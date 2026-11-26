@@ -13,6 +13,7 @@ import { m } from "~/paraglide/messages.js";
 import { baseLocale, isLocale, type Locale } from "~/paraglide/runtime.js";
 import { draftExcerpt, MAX_DRAFT_ISSUES, type DraftIssue } from "~/lib/draft-issues";
 import type { MarkdownNode } from "./markdown-details";
+import { escapeHtml } from "./html-attribute";
 import { tagYoutubeParagraphs } from "./youtube-markdown.core.server";
 
 // remark-math produces code elements with class="language-math math-inline|math-display".
@@ -55,7 +56,8 @@ const sanitizeSchema: SanitizeOptions = {
 // 14: literal rejected delimiters and non-interactive summary references.
 // 15: refresh source HTML for motion-aware display decoration.
 // 16: mark standalone YouTube links in saved post bodies and translations.
-export const RENDER_VERSION = 16;
+// 17: regenerate any saved YouTube card markup as link markers.
+export const RENDER_VERSION = 17;
 
 const DEFAULT_ID_PREFIX = "user-content-";
 
@@ -336,15 +338,6 @@ export function tryRenderMarkdown(markdown: string, opts: RenderOptions = {}): s
 // Before accepting a post, reject bodies that throw during rendering or produce excessive output.
 export function checkRenderable(markdown: string): boolean {
   return tryRenderMarkdown(markdown) !== null;
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 // Display helper: return escaped original text in pre if rendering fails, so one bad post cannot break the whole thread.

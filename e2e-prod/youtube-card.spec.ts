@@ -39,11 +39,15 @@ test("a published video link gets a local thumbnail in the original and translat
   await expect(card).toHaveAttribute("rel", "nofollow noopener noreferrer");
   await expect(card).toContainText("Example video");
   await expect(card).toContainText("Example channel");
+  await expect(card.locator('bdi[translate="no"]')).toHaveText(["Example video", "Example channel"]);
   await expect(card.locator(".video-card-note")).toHaveCount(0);
   const image = card.locator("img");
   await expect(image).toHaveAttribute("src", /^\/media\/youtube-[\w-]+\.webp$/);
+  await expect(image).toHaveCSS("object-fit", "cover");
   await image.scrollIntoViewIfNeeded();
   await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBeGreaterThan(0);
+  const thumbnail = (await image.boundingBox())!;
+  expect(thumbnail.width / thumbnail.height).toBeCloseTo(16 / 9, 2);
   const bounds = (await card.boundingBox())!;
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(page.viewportSize()!.width);
   await card.focus();

@@ -28,7 +28,9 @@ describe("standalone YouTube video links", () => {
 
   it.each(["www.youtube.com", "m.youtube.com", "www.youtube-nocookie.com"])("uses an ordinary watch page for %s embeds", host => {
     expect(parseYoutubeUrl(`https://${host}/embed/${id}?t=15&start=60&list=example&autoplay=1`))
-      .toEqual({ id, href: `${url}&t=15&start=60&list=example` });
+      .toEqual({ id, href: `${url}&t=15&list=example` });
+    expect(parseYoutubeUrl(`https://${host}/embed/${id}?start=60&list=example`))
+      .toEqual({ id, href: `${url}&t=60&list=example` });
   });
 
   it.each([
@@ -58,15 +60,14 @@ describe("standalone YouTube video links", () => {
     const rendered = renderMarkdown(authored, { videoLinks: true });
     const original = videoCardHtml(rendered, cards, "ja");
     expect(original).toContain(`src="/media/youtube-${id}.webp" alt="" width="180" height="320" loading="lazy"`);
-    expect(original).toMatch(/href="https:\/\/www\.youtube\.com\/watch\?v=A1b2C3d4_-E(?:&amp;|&#x26;)start=120(?:&amp;|&#x26;)list=example"/);
-    expect(original).toContain("&lt;img src=&quot;");
+    expect(original).toMatch(/href="https:\/\/www\.youtube\.com\/watch\?v=A1b2C3d4_-E(?:&amp;|&#x26;)t=120(?:&amp;|&#x26;)list=example"/);
+    expect(original).toContain('<bdi class="video-card-title" translate="no">&lt;img src=&quot;');
+    expect(original).toContain('<bdi translate="no">Example &amp; channel</bdi>');
     expect(original.match(/<img /g)).toHaveLength(1);
     expect(original).toContain("YouTube で見る");
     expect(original).not.toContain("video-card-note");
-    const stored = videoCardHtml(rendered, cards, "en", true, true);
-    expect(stored).toContain("The video is in its original language");
-    expect(videoCardHtml(stored)).toBe(renderMarkdown(authored));
-    expect(videoCardHtml(stored, cards, "ja")).toBe(original);
+    expect(videoCardHtml(rendered, cards, "en", true)).toContain("The video is in its original language");
+    expect(videoCardHtml(rendered)).toBe(renderMarkdown(authored));
   });
 });
 
@@ -85,10 +86,25 @@ describe("YouTube metadata acquisition", () => {
     for (const [, init] of calls) expect(init).toMatchObject({ redirect: "error", credentials: "omit" });
   });
 
-  it.each([401, 403, 404])("records HTTP %s as unavailable", async status => {
+  it.each([400, 401, 403, 404, 410])("treats HTTP %s as unavailable", async status => {
     const take = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status }));
     await expect(fetchYoutubeCard(id, { fetch: take })).resolves.toBeNull();
     expect(take).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["malformed JSON", "{"],
+    ["a blank channel", JSON.stringify({ ...metadata, author_name: " \u0000 " })],
+    ["a missing title", JSON.stringify({ ...metadata, title: undefined })],
+  ])("treats %s as unavailable without requesting the image", async (_case, json) => {
+    const take = vi.fn<typeof fetch>().mockResolvedValue(new Response(json));
+    await expect(fetchYoutubeCard(id, { fetch: take })).resolves.toBeNull();
+    expect(take).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the worker retry temporary HTTP failures", async () => {
+    const take = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 503 }));
+    await expect(fetchYoutubeCard(id, { fetch: take })).rejects.toThrow("HTTP 503");
   });
 
   it("rejects redirects and a thumbnail from another host", async () => {

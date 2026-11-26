@@ -1,6 +1,7 @@
 import type * as core from "./site-export-format.core.server";
 import { markdownTask, canFallbackMarkdown } from "./markdown-budget.server";
-export { escapeHtml, relativeFile, exportHref, offlineHtml, EXPORT_CSS, type ExportLinks } from "./site-export-format.core.server";
+export { escapeHtml } from "./html-attribute";
+export { relativeFile, exportHref, offlineHtml, EXPORT_CSS, type ExportLinks } from "./site-export-format.core.server";
 
 export async function referencedMedia(...args: Parameters<typeof core.referencedMedia>): Promise<ReturnType<typeof core.referencedMedia>> {
   try { return await markdownTask("referencedMedia", args); }

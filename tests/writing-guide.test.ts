@@ -112,6 +112,16 @@ describe("public writing instructions", () => {
     expect(writingMarkdown(BASE)).toContain("With no JavaScript, a link below the still opens the motion version.");
   });
 
+  it("describes YouTube link cards only when enabled", () => {
+    const instruction = "Place a YouTube video URL alone in a paragraph";
+    for (const value of [undefined, "", "0"]) {
+      vi.stubEnv("VIDEO_CARDS", value);
+      expect(writingMarkdown(BASE)).not.toContain(instruction);
+    }
+    vi.stubEnv("VIDEO_CARDS", "1");
+    expect(writingMarkdown(BASE)).toContain(instruction);
+  });
+
   it("discovers both guides from connection, writing and machine entry points", () => {
     vi.stubEnv("BETTER_AUTH_URL", BASE);
     for (const text of [connectMarkdown(connectPlan(BASE)), llmsTxt(), helpAiMd(), mcpConnectionGuide()]) expect(text).toContain(`${BASE}/writing.md`);

@@ -34,7 +34,6 @@ export const jobDefinitions = {
   translate_figure: { schema: z.strictObject({ key: figureKey, mediaId: hash, lang }), priority: 4 },
   fetch_youtube_video: { schema: z.strictObject({ id: z.string().regex(YOUTUBE_ID) }), priority: 5 },
   scan_youtube_videos: { schema: dated.extend({ after: id.optional() }), priority: 5 },
-  render_youtube_video: { schema: z.strictObject({ id: z.string().regex(YOUTUBE_ID), after: id.optional() }), priority: 5 },
   [SEND_ACCOUNT_DELETED_JOB]: {
     // After delivery the worker keeps only the request ID.
     schema: z.object({ requestId: z.string().min(1), to: z.string().nullish(), posts: z.string().nullish(), locale: z.string().nullish() }),
