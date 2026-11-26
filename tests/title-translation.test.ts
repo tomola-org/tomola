@@ -1,7 +1,8 @@
 import { expect, it, vi } from "vitest";
 import { isUsablePrimary } from "~/lib/display";
+import { LANGS } from "~/lib/languages";
 import { createFakeEngine } from "~/lib/llm/engines/fake.server";
-import { FLAG_LINK_MISMATCH, FLAG_STRUCTURE_MISMATCH, FLAG_UNTRANSLATED } from "~/lib/llm/flags";
+import { FLAG_LINK_MISMATCH, FLAG_QUALITY_MISMATCH, FLAG_STRUCTURE_MISMATCH, FLAG_UNTRANSLATED } from "~/lib/llm/flags";
 import { protectedTitleBodyContext } from "~/lib/llm/link-targets.core.server";
 import { buildTranslationPrompt, KEEP_LINK_MARKERS, promptVersionOf } from "~/lib/llm/prompt.server";
 import { translateChecked } from "~/lib/llm/translate.server";
@@ -38,6 +39,14 @@ it.each(["body", undefined] as const)("keeps the Markdown prompt for field %s", 
   expect(system).toContain("Markdown syntax");
 });
 
+it("reserves Markdown preservation instructions for bodies in every target language", () => {
+  for (const to of LANGS) {
+    const req = { ...title, from: to === "ja" ? "en" : "ja", to } as const;
+    expect(buildTranslationPrompt(req).system, to).not.toContain("Markdown syntax");
+    expect(buildTranslationPrompt({ ...req, field: "body" }).system, to).toContain("Markdown syntax");
+  }
+});
+
 it("keeps title body context and terminology in their own sections", () => {
   const { system, user } = buildTranslationPrompt({ ...title, titleBodyContext: "Same-post context", terminology: { author: ["Fictional Report"] } }, "abcd");
   expect(system).toMatch(/^7\. .*<title_body_context-NONCE>/m);
@@ -70,7 +79,7 @@ it("versions post prompts together and preserves dedicated prompts", () => {
 it.each([
   "Reading *Fictional Report*", "Reading _Fictional Report_", "Reading **Fictional Report**",
   "Reading ~~Fictional Report~~", "Reading `Fictional Report`", "```\nFictional Report\n```",
-  "# Fictional Report", "> Fictional Report", "- Fictional Report", "![Fictional Report](cover.png)",
+  "# Fictional Report", "![Fictional Report](cover.png)",
   "Read [Fictional Report](#report)", "Reading\nFictional Report", "Reading&NewLine;Fictional Report",
 ])("retries titles with new formatting or line breaks: %j", async output => {
   const engine = engineReturning(`[en] ${output}`, plainTitle);
@@ -79,6 +88,7 @@ it.each([
   const retry = engine.translate.mock.calls[1][0].retryNote;
   expect(retry).toContain("a single line of plain text, not Markdown");
   expect(retry).toContain("instead of Markdown italics");
+  expect(retry).toContain("such as A* and __init__");
 });
 
 it.each(["Reading *Fictional Report*", "# Fictional Report", "Reading\n\nFictional Report"])("keeps persistent title formatting visible: %j", async text => {
@@ -92,11 +102,49 @@ it.each([
   ["例は 2 * 3 = 6", "Example: 2 * 3 = 6"],
   ["識別子 foo_bar_baz", "Identifier foo_bar_baz"],
   ["5ドルと10ドルのプラン", "The $5 and $10 plans"],
+  ["__init__の書き方", "Writing __init__"],
+  ["１．はじめに", "1. Introduction"],
+  ["２０２６．振り返り", "2026. A look back"],
+  ["－ 下書き", "- Draft"],
+  ["＞＞引用の話", "> On quoting"],
   ["*架空の報告書*を読む", "Reading *Fictional Report*"],
   ["# 架空の報告書", "# Fictional Report"],
+  ["＃ 架空の報告書", "# Fictional Report"],
   ["架空の報告書を\n読む", "Reading\nFictional Report"],
+  ["`foo()` の使い方", "How to use foo()"],
 ])("keeps literal or source-authored syntax: %s", async (source, text) => {
   expect(await translateChecked(engineReturning(text), { ...title, text: source })).toMatchObject({ attempts: 1, flags: [], text });
+});
+
+it.each([
+  ["Q* and A* search compared", "Q*とA*探索の比較"],
+  ["A* vs D* Lite", "A*とD* Liteの比較"],
+])("keeps literal asterisks adjacent to Japanese text: %s", async (source, text) => {
+  expect(await translateChecked(engineReturning(text), { ...title, text: source, from: "en", to: "ja" })).toMatchObject({ attempts: 1, flags: [], text });
+});
+
+it("flags an added heading marker in a Japanese title", async () => {
+  const text = "# 見出し";
+  const out = await translateChecked(engineReturning(text), { ...title, text: "Heading", from: "en", to: "ja" });
+  expect(out).toMatchObject({ attempts: 2, flags: [FLAG_STRUCTURE_MISMATCH], text });
+});
+
+it("keeps French title currency as plain text", async () => {
+  const text = "Tarifs : 5 $ et 10 $";
+  expect(await translateChecked(engineReturning(text), { ...title, text: "5ドルと10ドルの料金", to: "fr" })).toMatchObject({ attempts: 1, flags: [], text });
+});
+
+it.each([
+  ["`foo()` の使い方", "How to use `bar()`"],
+  ["$x^2$ の意味", "The meaning of $y^2$"],
+])("retries and hides a title with changed code or math: %s", async (source, text) => {
+  const engine = engineReturning(text);
+  const out = await translateChecked(engine, { ...title, text: source });
+  expect(out).toMatchObject({ attempts: 2, flags: [FLAG_QUALITY_MISMATCH], text });
+  expect(isUsablePrimary({ ...out, sourceHash: "current" }, "current")).toBe(false);
+  const retry = engine.translate.mock.calls[1][0].retryNote;
+  expect(retry).toContain("a single line of plain text, not Markdown");
+  expect(retry).toContain("Keep the contents of code and math formulas exactly as written in the source.");
 });
 
 it("retries an extra occurrence of a Markdown node already in the source", async () => {

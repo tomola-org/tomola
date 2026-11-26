@@ -486,7 +486,13 @@ export function checkStructure(source: string, translated: string, opts: { menti
   return { ok: mismatches.length === 0, mismatches, flags };
 }
 
-const TITLE_MARKUP = new Set(["emphasis", "strong", "delete", "inlineCode", "code", "heading", "blockquote", "list", "image", "imageReference", "linkReference"]);
+const TITLE_DELIMITERS = new Map([
+  ["emphasis", /[*_]/g],
+  ["strong", /[*_]/g],
+  ["delete", /~/g],
+  ["inlineCode", /`/g],
+]);
+const TITLE_MARKUP = new Set([...TITLE_DELIMITERS.keys(), "code", "heading", "image", "imageReference", "linkReference"]);
 
 function countTitleMarkup(text: string): Map<string, number> {
   const counts = new Map<string, number>();
@@ -501,20 +507,33 @@ function countTitleMarkup(text: string): Map<string, number> {
   return counts;
 }
 
-export function checkTitleContent(source: string, translated: string, mentions: readonly string[] = []): StructureCheck {
+export function checkTitleContent(source: string, translated: string, opts: { mentions?: readonly string[]; to?: string }): StructureCheck {
   const original = countTitleMarkup(source);
+  const normalizedSource = source.normalize("NFKC");
+  if (normalizedSource !== source) {
+    const normalizedHeadings = countTitleMarkup(normalizedSource).get("heading") ?? 0;
+    original.set("heading", Math.max(original.get("heading") ?? 0, normalizedHeadings));
+  }
   const mismatches = [...countTitleMarkup(translated)]
-    .filter(([type, count]) => count > (original.get(type) ?? 0))
+    .filter(([type, count]) => {
+      if (count <= (original.get(type) ?? 0)) return false;
+      // Moving punctuation next to a word can create a node without adding delimiters.
+      const delimiters = TITLE_DELIMITERS.get(type);
+      return !delimiters || (translated.match(delimiters)?.length ?? 0) > (source.match(delimiters)?.length ?? 0);
+    })
     .map(([type]) => `added Markdown ${type}`);
   if (!/[\r\n]/.test(source) && /[\r\n]/.test(translated)) mismatches.push("added a line break");
   const flags = mismatches.length ? [FLAG_STRUCTURE_MISMATCH] : [];
-  const lost = missingMentions(mentions, translated);
-  if (lost.length) {
-    mismatches.push(...lost.map(mention => `mentions: ${mention} missing`));
-    flags.push(FLAG_QUALITY_MISMATCH);
-  }
-  // Keep the existing URL comparison, including its treatment of literal dollars.
-  checkLinks(source, normalizeTranslationDollars(source, translated), mismatches, flags);
+  // Keep dollar normalization local to inspection, since titles are displayed as plain text.
+  const normalizedTranslation = normalizeTranslationDollars(source, translated);
+  const code = checkCodeContent(source, normalizedTranslation, { skipFenced: true });
+  const changedMath = mathChanged(qualityParts(source), qualityParts(normalizedTranslation), opts.to);
+  const lost = missingMentions(opts.mentions ?? [], translated);
+  if (code.contentChanged) mismatches.push(...code.mismatches);
+  if (changedMath) mismatches.push("math content changed: copy every formula exactly");
+  if (lost.length) mismatches.push(...lost.map(mention => `mentions: ${mention} missing`));
+  if (code.contentChanged || changedMath || lost.length) flags.push(FLAG_QUALITY_MISMATCH);
+  checkLinks(source, normalizedTranslation, mismatches, flags);
   return { ok: !mismatches.length, mismatches, flags };
 }
 

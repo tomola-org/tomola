@@ -64,14 +64,14 @@ export function inspectTranslation(req: TranslationRequest, text: string, engine
   const checkedText = title ? decodePlainTextEntities(body, req.text, linkSpans) : plain ? body : normalizeTranslationDollars(req.text, body);
   const normalizedText = prefix + checkedText;
   const check = title
-    ? checkTitleContent(req.text, checkedText, req.mentions)
+    ? checkTitleContent(req.text, checkedText, { mentions: req.mentions, to: req.to })
     : (plain ? checkChatContent : checkStructure)(req.text, checkedText, { mentions: req.mentions, from: req.from, to: req.to });
   const flags = [...check.flags];
   const counts = check.mismatches.filter((m) => !m.startsWith("links:") && !m.startsWith("mentions:"));
   if ((flags.includes(FLAG_STRUCTURE_MISMATCH) || flags.includes(FLAG_QUALITY_MISMATCH)) && counts.length > 0) {
     notes.push(
       title
-        ? `your previous translation added formatting to a title (${counts.join("; ")}). Translate again as a single line of plain text, not Markdown. Remove added Markdown such as *...*, _..._ and **...**, and remove added line breaks. Use the target language's plain-text quotation marks or title brackets for names of works instead of Markdown italics.`
+        ? `your previous title translation had these issues (${counts.join("; ")}). Translate again as a single line of plain text, not Markdown. Remove added Markdown such as *...*, _..._ and **...**, and remove added line breaks. Use the target language's plain-text quotation marks or title brackets for names of works instead of Markdown italics. Preserve symbols that are part of names or identifiers, such as A* and __init__. Keep the contents of code and math formulas exactly as written in the source.`
         : `your previous translation did not preserve the structure of the source (${counts.join("; ")}). Translate again, and keep every code block, every inline code span, and every math formula and delimiter, heading, list item, table and paragraph of the source exactly as it is. Translate all prose without omissions or additions. Do not translate anything inside code, including comments, docstrings, and strings.`,
     );
   }
