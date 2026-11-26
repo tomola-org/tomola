@@ -1,5 +1,6 @@
+import { SharedInvitationUsesTable } from "~/components/shared-invitation-uses-table";
 import { SharedInvitationsTable } from "~/components/shared-invitations-table";
-import { listSharedInvitations, revokeSharedInvitation } from "~/lib/shared-invitations.server";
+import { listSharedInvitations, listSharedInvitationUses, revokeSharedInvitation } from "~/lib/shared-invitations.server";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
 import type { Route } from "./+types/admin-invitations";
 import { requireOperator } from "~/lib/auth/session.server";
@@ -20,7 +21,9 @@ export function headers() {
 export async function loader({ request }: Route.LoaderArgs) {
   const { db } = await requireOperator(request);
   const rows = await listInvitations(db, { limit: LIMIT });
-  return { rows, sharedInvitations: await listSharedInvitations(db, { limit: LIMIT }), limit: LIMIT };
+  const sharedInvitations = await listSharedInvitations(db, { limit: LIMIT });
+  const sharedInvitationUses = await listSharedInvitationUses(db, { limit: LIMIT });
+  return { rows, sharedInvitations, sharedInvitationUses, limit: LIMIT };
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -47,7 +50,7 @@ function statusLabel(status: InvitationStatus): string {
 const when = (d: Date) => d.toISOString().slice(0, 16).replace("T", " ");
 
 export default function AdminInvitations({ loaderData }: Route.ComponentProps) {
-  const { rows, sharedInvitations, limit } = loaderData;
+  const { rows, sharedInvitations, sharedInvitationUses, limit } = loaderData;
   return (
     <main className="space-y-4">
       <h1 className="text-2xl font-bold">{m.admin_invitations_title()}</h1>
@@ -104,6 +107,7 @@ export default function AdminInvitations({ loaderData }: Route.ComponentProps) {
         <h2 className="text-xl font-semibold">{m.shared_invites_title()}</h2>
         <SharedInvitationsTable rows={sharedInvitations} admin />
       </section>
+      <SharedInvitationUsesTable rows={sharedInvitationUses} limit={limit} admin />
     </main>
   );
 }

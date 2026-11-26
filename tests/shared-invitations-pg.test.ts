@@ -12,7 +12,7 @@ import { migrationsFolder, type Db } from "~/lib/db/client.server";
 import { invitations, profiles, sharedInvitations, sharedInvitationUses, user, verification, villageMembers, villages } from "~/lib/db/schema";
 import { createInvitation, findValidInvitationByToken, markInvitationUsed } from "~/lib/invitations.server";
 import { createProfile } from "~/lib/profiles.server";
-import { createSharedInvitation, findSharedInvitation } from "~/lib/shared-invitations.server";
+import { consumeSharedInvitation, createSharedInvitation, findSharedInvitation, listSharedInvitationUses } from "~/lib/shared-invitations.server";
 import { signupInvitationIdentifier } from "~/lib/signup-village.server";
 import { addMember } from "./helpers/db";
 import { acceptTrialFixture } from "./helpers/trial";
@@ -75,6 +75,43 @@ describe.skipIf(!REAL_PG_URL)("shared invitation registration on PostgreSQL", { 
     expect(uses).toHaveLength(count);
     return uses;
   }
+
+  it("lists registrations by issuer with current profiles and a stable newest-first limit", async () => {
+    const issuer = { id: "listing_issuer", email: "listing_issuer@example.com" };
+    await addMember(db, issuer.id, issuer.id);
+    const ownLink = await link(3, undefined, issuer);
+    const otherLink = await link();
+    await addMember(db, "finish_profile", "finish_profile");
+    await addMember(db, "equal_time", "equal_time");
+    await addMember(db, "other_registration", "other_registration");
+    await db.insert(user).values({ id: "await_profile", name: "", email: "await_profile@example.com" });
+    const earlier = new Date(Date.now() + 10_000);
+    const later = new Date(earlier.getTime() + 1000);
+    for (const [ref, userId, usedAt] of [
+      [ownLink, "await_profile", earlier],
+      [ownLink, "finish_profile", later],
+      [ownLink, "equal_time", later],
+      [otherLink, "other_registration", later],
+    ] as const) {
+      expect(await db.transaction(tx => consumeSharedInvitation(tx, ref.id, userId, usedAt))).toBe(true);
+    }
+    const [own, other] = await Promise.all([counts(ownLink, 3), counts(otherLink, 1)]);
+    const useId = (userId: string) => own.find(use => use.usedBy === userId)!.id;
+    const scoped = await listSharedInvitationUses(db, { createdBy: issuer.id });
+    expect(scoped.map(row => row.id)).toEqual([
+      ...[useId("finish_profile"), useId("equal_time")].sort().reverse(),
+      useId("await_profile"),
+    ]);
+    expect(scoped.find(row => row.id === useId("finish_profile"))).toEqual({
+      id: useId("finish_profile"), usedAt: later, label: expect.any(String), inviterHandle: issuer.id,
+      usedByHandle: "finish_profile", usedByExists: true,
+    });
+    expect(scoped.at(-1)).toMatchObject({ usedAt: earlier, usedByHandle: null, usedByExists: true });
+    expect(await listSharedInvitationUses(db, { createdBy: issuer.id, limit: 1 })).toEqual(scoped.slice(0, 1));
+    expect(await listSharedInvitationUses(db)).toEqual(expect.arrayContaining([
+      ...scoped, expect.objectContaining({ id: other[0].id, usedByHandle: "other_registration", inviterHandle: operator.id }),
+    ]));
+  });
 
   it.each([false, true])("serializes competing user inserts (same address: %s)", async sameEmail => {
     const ref = await link(sameEmail ? 2 : 1);
@@ -143,7 +180,10 @@ describe.skipIf(!REAL_PG_URL)("shared invitation registration on PostgreSQL", { 
     const [recipient] = await db.select().from(user).where(eq(user.email, email));
     expect(await createProfile(db, recipient.id, { handle: "leaving_recipient", homeArea: "other" })).toMatchObject({ ok: true });
     await deleteAccount(db, recipient.id, { confirmation: "leaving_recipient" });
-    expect(await counts(ref, 1)).toMatchObject([{ usedBy: null }]);
+    const uses = await counts(ref, 1);
+    expect(uses).toMatchObject([{ usedBy: null }]);
+    const departed = { id: uses[0].id, usedByHandle: null, usedByExists: false };
+    expect(await listSharedInvitationUses(db, { createdBy: issuer.id })).toMatchObject([{ ...departed, inviterHandle: issuer.id }]);
 
     const deletion = await requestAccountDeletion(db, issuer.id, { confirmation: issuer.id });
     const writing = await scratch.open("shared-issuing");
@@ -164,6 +204,8 @@ describe.skipIf(!REAL_PG_URL)("shared invitation registration on PostgreSQL", { 
     } finally { await admin.end(); }
     expect(await findSharedInvitation(db, ref)).toMatchObject({ createdBy: null, revokedAt: expect.any(Date), usedCount: 1 });
     expect(await db.select().from(sharedInvitations).where(eq(sharedInvitations.label, "Concurrent link"))).toEqual([]);
+    expect(await listSharedInvitationUses(db, { createdBy: issuer.id })).toEqual([]);
+    expect((await listSharedInvitationUses(db)).find(row => row.id === departed.id)).toMatchObject({ ...departed, inviterHandle: null });
   });
 
   it.each(["deleted", "closed", "owner removed"] as const)("completes onboarding for a %s destination", async change => {

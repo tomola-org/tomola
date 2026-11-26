@@ -1,7 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { and, desc, eq, gt, inArray, isNotNull, isNull, sql, TransactionRollbackError } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Db, Tx } from "~/lib/db/client.server";
-import { accountDeletions, profiles, sharedInvitations, sharedInvitationUses, villages } from "~/lib/db/schema";
+import { accountDeletions, profiles, sharedInvitations, sharedInvitationUses, user, villages } from "~/lib/db/schema";
 import { hashInvitationToken } from "~/lib/invitations.server";
 import { getWriter } from "~/lib/members.server";
 import { isOperatorEmail } from "~/lib/operators.server";
@@ -9,6 +10,8 @@ import { hitMemberLimit } from "~/lib/rate-limit.server";
 import { lockSignupVillage } from "~/lib/signup-village.server";
 
 type SharedInvitation = typeof sharedInvitations.$inferSelect;
+export const SHARED_INVITATION_LIST_LIMIT = 200;
+
 const details = {
   id: sharedInvitations.id,
   createdBy: sharedInvitations.createdBy,
@@ -87,11 +90,32 @@ export async function listSharedInvitations(db: Db, opts: { createdBy?: string; 
   }).from(sharedInvitations)
     .leftJoin(profiles, eq(profiles.userId, sharedInvitations.createdBy)).leftJoin(villages, eq(villages.id, sharedInvitations.villageId))
     .where(opts.createdBy === undefined ? undefined : eq(sharedInvitations.createdBy, opts.createdBy))
-    .orderBy(desc(sharedInvitations.createdAt), desc(sharedInvitations.id)).limit(opts.limit ?? 200);
+    .orderBy(desc(sharedInvitations.createdAt), desc(sharedInvitations.id)).limit(opts.limit ?? SHARED_INVITATION_LIST_LIMIT);
   const now = new Date();
   return rows.map(({ createdBy, villageId, revokedAt, ...row }) => ({
     ...row, status: sharedInvitationStatus({ ...row, createdBy, revokedAt }, now),
   }));
+}
+
+export async function listSharedInvitationUses(db: Db, opts: { createdBy?: string; limit?: number } = {}) {
+  const inviter = alias(profiles, "inviter");
+  const usedByProfile = alias(profiles, "used_by_profile");
+  const rows = await db.select({
+    id: sharedInvitationUses.id,
+    usedAt: sharedInvitationUses.usedAt,
+    label: sharedInvitations.label,
+    inviterHandle: inviter.handle,
+    usedByHandle: usedByProfile.handle,
+    usedByUserId: user.id,
+  }).from(sharedInvitationUses)
+    .innerJoin(sharedInvitations, eq(sharedInvitations.id, sharedInvitationUses.linkId))
+    .leftJoin(inviter, eq(inviter.userId, sharedInvitations.createdBy))
+    .leftJoin(user, eq(user.id, sharedInvitationUses.usedBy))
+    .leftJoin(usedByProfile, eq(usedByProfile.userId, user.id))
+    .where(opts.createdBy === undefined ? undefined : eq(sharedInvitations.createdBy, opts.createdBy))
+    .orderBy(desc(sharedInvitationUses.usedAt), desc(sharedInvitationUses.id))
+    .limit(opts.limit ?? SHARED_INVITATION_LIST_LIMIT);
+  return rows.map(({ usedByUserId, ...row }) => ({ ...row, usedByExists: usedByUserId !== null }));
 }
 
 export async function revokeSharedInvitation(db: Db, id: string, createdBy?: string, now = new Date()) {

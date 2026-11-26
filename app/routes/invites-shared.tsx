@@ -3,6 +3,7 @@ import { data, Form, useNavigation } from "react-router";
 import { InvitationLink } from "~/components/invitation-link";
 import { InvitationTabs } from "~/components/invitation-tabs";
 import { InvitationVillageSelect } from "~/components/invitation-village-select";
+import { SharedInvitationUsesTable } from "~/components/shared-invitation-uses-table";
 import { SharedInvitationsTable } from "~/components/shared-invitations-table";
 import { Button } from "~/components/ui/button";
 import { Field, FieldLabel } from "~/components/ui/field";
@@ -11,7 +12,7 @@ import { requireMember, requirePrivilegedWriteSession, requireWriter } from "~/l
 import { assertSameOrigin } from "~/lib/http/csrf.server";
 import { withMarkdownRead } from "~/lib/markdown-budget.server";
 import { isOperatorEmail } from "~/lib/operators.server";
-import { createSharedInvitation, listSharedInvitations, revokeSharedInvitation } from "~/lib/shared-invitations.server";
+import { createSharedInvitation, listSharedInvitations, listSharedInvitationUses, revokeSharedInvitation, SHARED_INVITATION_LIST_LIMIT } from "~/lib/shared-invitations.server";
 import { signupVillageChoices } from "~/lib/signup-village.server";
 import { inviteUrl } from "~/lib/site-url";
 import { m } from "~/paraglide/messages.js";
@@ -25,9 +26,11 @@ export function loader({ request }: Route.LoaderArgs) {
   return withMarkdownRead(async () => {
     const { db, user } = await requireMember(request);
     if (!isOperatorEmail(user.email)) throw data("Not found", { status: 404 });
-    const sharedInvitations = await listSharedInvitations(db, { createdBy: user.id });
+    const scope = { createdBy: user.id };
+    const sharedInvitations = await listSharedInvitations(db, scope);
+    const sharedInvitationUses = await listSharedInvitationUses(db, scope);
     const villages = await signupVillageChoices(db, user.id);
-    return { sharedInvitations, villages };
+    return { sharedInvitations, sharedInvitationUses, villages, limit: SHARED_INVITATION_LIST_LIMIT };
   });
 }
 
@@ -95,6 +98,7 @@ export default function InvitesShared({ actionData, loaderData }: Route.Componen
         <h2 className="text-xl font-semibold">{m.shared_invites_title()}</h2>
         <SharedInvitationsTable rows={loaderData.sharedInvitations} />
       </section>
+      <SharedInvitationUsesTable rows={loaderData.sharedInvitationUses} limit={loaderData.limit} />
     </main>
   );
 }

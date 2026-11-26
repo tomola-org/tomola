@@ -7,11 +7,11 @@ import { authSecret } from "~/lib/auth/secret.server";
 import { profiles, rateLimits, sharedInvitations, suspendedEmailHashes, user } from "~/lib/db/schema";
 import { addMember, createTestDb } from "./helpers/db";
 import { suspendedEmailHash } from "~/lib/suspended-email.server";
-import { createSharedInvitation } from "~/lib/shared-invitations.server";
+import { consumeSharedInvitation, createSharedInvitation } from "~/lib/shared-invitations.server";
 import { MAGIC_LINK_EMAIL_IP_LIMIT, MAGIC_LINK_IP_LIMIT } from "~/lib/rate-limit.server";
 import { action as invitesAction } from "~/routes/invites-new";
 import { action as sharedAction, headers as sharedHeaders, loader as sharedLoader } from "~/routes/invites-shared";
-import { action as adminAction } from "~/routes/admin-invitations";
+import { action as adminAction, loader as adminLoader } from "~/routes/admin-invitations";
 import { seedRateLimit } from "./helpers/fixtures";
 import { setupRouteHarness } from "./helpers/route-harness";
 import { expectModerationReauthentication, withStaleSession } from "./helpers/reauth";
@@ -60,6 +60,26 @@ it("returns 404 for member reads and shared writes under both invitation policie
       }
     }
     expect(sharedHeaders()).toEqual({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex" });
+  } finally { h.restore(); }
+});
+
+it("loads only the operator's registrations on the shared page and all registrations on the admin page", async () => {
+  const other = { id: "other_link_operator", email: "other_link_operator@example.com" };
+  vi.stubEnv("OPERATOR_EMAILS", `${issuer.email},${other.email}`);
+  const h = await setupRouteHarness();
+  try {
+    const memberId = await h.signIn("shared_recipient");
+    for (const operator of [issuer, other]) {
+      const id = await h.signIn(operator.id);
+      const link = await createSharedInvitation(h.db, { id, email: operator.email }, linkForm(operator.id));
+      if (link.error) throw new Error(link.error);
+      expect(await h.db.transaction(tx => consumeSharedInvitation(tx, link.id, memberId))).toBe(true);
+    }
+    const request = (path: string) => h.args(h.request(path, { as: issuer.id }));
+    const own = await sharedLoader(request("/invites/shared"));
+    expect(own).toMatchObject({ sharedInvitationUses: [{ label: issuer.id, usedByHandle: "shared_recipient" }] });
+    const all = await adminLoader(request("/admin/invitations"));
+    expect(all.sharedInvitationUses.map(row => row.label).sort()).toEqual([issuer.id, other.id]);
   } finally { h.restore(); }
 });
 
