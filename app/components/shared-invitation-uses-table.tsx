@@ -27,7 +27,7 @@ export function SharedInvitationUsesTable({ rows, limit, admin = false }: { rows
                   ? m.admin_invitations_used_by_no_profile()
                   : m.account_delete_member()}
               </TableCell>
-              <TableCell className="whitespace-normal wrap-anywhere">{row.label}</TableCell>
+              <TableCell className="whitespace-normal break-words"><span className="block min-w-32">{row.label}</span></TableCell>
               {admin && <TableCell>{row.inviterHandle ? `@${row.inviterHandle}` : m.admin_invitations_inviter_none()}</TableCell>}
               <TableCell><LocalTime iso={row.usedAt.toISOString()} /></TableCell>
             </TableRow>)}
