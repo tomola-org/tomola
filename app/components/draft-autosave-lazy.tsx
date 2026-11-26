@@ -11,8 +11,12 @@ export function DraftAutosave({ inline, notice, ...props }: Omit<ComponentProps<
   const label = saveStatus || notice;
   // Keep SSR free of a dehydrated autosave boundary: a delayed module must
   // not hold the departure guard's blocked-navigation effect during hydration.
+  // Only the save that brought the writer here is announced; routine autosave progress stays silent.
   return <>
-    {inline && <span role="status" className="min-w-0 flex-1 truncate ui-help text-muted-foreground" title={label}>{label}</span>}
+    {inline && <span className="min-w-0 flex-1 truncate ui-help text-muted-foreground" title={label}>
+      <span role="status">{saveStatus ? "" : notice}</span>
+      <span aria-live="off">{saveStatus}</span>
+    </span>}
     {usePageReady() && <QuietBoundary><Suspense fallback={null}><Content {...props} onSaveStatus={inline ? setSaveStatus : undefined} /></Suspense></QuietBoundary>}
   </>;
 }
