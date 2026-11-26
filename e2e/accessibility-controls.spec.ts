@@ -116,7 +116,8 @@ richEditorTest("toolbar roves with arrows and restores editor focus after link E
 });
 
 test("preview announces progress without including the rendered post", async ({ page }) => {
-  await useMember(page, "a11y_preview@example.com", "/t/new");
+  // Introductions keep the body-only preview; other new topics use the article preview.
+  await useMember(page, "a11y_preview@example.com", "/t/new?intro=1");
   await page.locator('textarea[name="body"]').fill("A preview that must not be a live region.");
   await page.getByRole("button", { name: m.preview, exact: true }).click();
   const preview = page.locator(".longread").filter({ hasText: "A preview that must not be a live region." });
