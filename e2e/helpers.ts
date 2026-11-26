@@ -162,29 +162,37 @@ export function logSize(): number {
 //   <body>
 //   [/mail]
 export type LoggedMail = { subject: string; text: string };
+export type MailBodyFilter = { body: (text: string) => boolean };
+type ReadMail = (email: string, since: number, filter: MailBodyFilter) => Promise<{ text: string }>;
 
-// Wait for and return the latest mail to this address after since whose subject matches pattern.
-export async function mailFor(email: string, since: number, pattern: RegExp = /.*/): Promise<LoggedMail> {
+// Wait for the latest mail to this address after since that matches the subject or body filter.
+export async function mailFor(email: string, since: number, pattern: RegExp | MailBodyFilter = /.*/): Promise<LoggedMail> {
   const blocks = new RegExp(`\\[mail\\] to=${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} subject=([^\\n]*)\\n([\\s\\S]*?)\\n\\[/mail\\]`, "g");
   let found: LoggedMail | undefined;
   await expect
     .poll(
       () => {
         const log = fs.readFileSync(state().logFile).subarray(since).toString("utf8");
-        found = [...log.matchAll(blocks)].map((m) => ({ subject: m[1], text: m[2] })).filter((mail) => pattern.test(mail.subject)).at(-1);
+        found = [...log.matchAll(blocks)]
+          .map((m) => ({ subject: m[1], text: m[2] }))
+          .filter((mail) => pattern instanceof RegExp ? pattern.test(mail.subject) : pattern.body(mail.text))
+          .at(-1);
         return found;
       },
-      { message: `mail for ${email} (${pattern})`, timeout: 30_000 },
+      { message: `mail for ${email} (${pattern instanceof RegExp ? pattern : "matching body"})`, timeout: 30_000 },
     )
     .toBeDefined();
   return found!;
 }
 
-// Return the first URL in the latest mail body for this address: the magic link.
-export async function magicLinkFor(email: string, since: number): Promise<string> {
-  const mail = await mailFor(email, since);
-  const url = mail.text.match(/https?:\/\/\S+/)?.[0];
-  expect(url, `a link in the mail for ${email}`).toBeDefined();
+// Login and signup verification mail put the confirmation URL and code on their own lines.
+const confirmationLink = /^https?:\/\/[^/?#\s]+\/auth\/confirm\?token=[A-Za-z0-9_-]+$/m;
+const loginCodeLine = /^(\d{3}) (\d{3})$/m;
+
+export async function magicLinkFor(email: string, since: number, read: ReadMail = mailFor): Promise<string> {
+  const mail = await read(email, since, { body: text => confirmationLink.test(text) });
+  const url = mail.text.match(confirmationLink)?.[0];
+  expect(url, `a confirmation link in the mail for ${email}`).toBeDefined();
   return url!;
 }
 
@@ -234,12 +242,13 @@ export async function loginWithMagicLink(page: Page, email: string): Promise<str
 
 export type LoginCodeInbox = {
   position: () => number;
-  read: (email: string, since: number) => Promise<{ text: string }>;
+  read: ReadMail;
 };
 
 // Read the code from the test mail transport.
 export async function loginCodeFor(email: string, since: number, read: LoginCodeInbox["read"] = mailFor): Promise<string> {
-  const code = (await read(email, since)).text.match(/\b(\d{3}) (\d{3})\b/);
+  const mail = await read(email, since, { body: text => loginCodeLine.test(text) && confirmationLink.test(text) });
+  const code = mail.text.match(loginCodeLine);
   expect(code, "six-digit code in the email").not.toBeNull();
   return `${code![1]}${code![2]}`;
 }

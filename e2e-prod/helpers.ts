@@ -1,7 +1,7 @@
 import fs from "node:fs";
 export { openUserMenu, openAdminMenu } from "../e2e/helpers";
 export { captureScreenshot, waitForClientRoute } from "../e2e/helpers";
-import { completeTrialFields, enMessages, openUserMenu, restoreMember, uiMessages, waitForClientRoute, type LoginCodeInbox } from "../e2e/helpers";
+import { completeTrialFields, enMessages, magicLinkFor, openUserMenu, restoreMember, uiMessages, waitForClientRoute, type LoginCodeInbox, type MailBodyFilter } from "../e2e/helpers";
 import { PROD_MEMBERS } from "./member-fixtures";
 import { expect, type Page } from "@playwright/test";
 import { test as base, richEditorTest as richBase } from "../e2e/editor-fixture";
@@ -33,29 +33,24 @@ export { expect };
 export const mailCount = (): number => fs.readFileSync(state().mailFile, "utf8").split("\n").filter(Boolean).length;
 
 // Wait for the latest email to this recipient received by fake SMTP after since (a mailCount value).
-export async function mailFor(email: string, since: number, subject?: string): Promise<ReceivedMail> {
+export async function mailFor(email: string, since: number, filter?: string | MailBodyFilter): Promise<ReceivedMail> {
   let found: ReceivedMail | undefined;
   await expect
     .poll(
       () => {
         const lines = fs.readFileSync(state().mailFile, "utf8").split("\n").filter(Boolean).slice(since);
-        found = lines.map((l) => JSON.parse(l) as ReceivedMail).filter((m) => m.to.includes(email) && (subject === undefined || m.subject === subject)).at(-1);
+        found = lines.map((l) => JSON.parse(l) as ReceivedMail)
+          .filter(mail => mail.to.includes(email) && (typeof filter === "object" ? filter.body(mail.text) : filter === undefined || mail.subject === filter))
+          .at(-1);
         return found;
       },
-      { message: `mail for ${email}${subject === undefined ? "" : ` with subject ${subject}`}`, timeout: 30_000 },
+      { message: `mail for ${email}${typeof filter === "object" ? " with a matching body" : filter === undefined ? "" : ` with subject ${filter}`}`, timeout: 30_000 },
     )
     .toBeDefined();
   return found!;
 }
 
 export const smtpLoginCodeInbox: LoginCodeInbox = { position: mailCount, read: mailFor };
-
-export async function magicLinkFor(email: string, since: number): Promise<string> {
-  const mail = await mailFor(email, since);
-  const url = mail.text.match(/https?:\/\/\S+/)?.[0];
-  expect(url, `a link in the mail for ${email}`).toBeDefined();
-  return url!;
-}
 
 // Collect CSP violations from console errors and securitypolicyviolation events. Events belong to each document, so
 // forward them to the console from an initialization script to keep capturing them across navigation.
@@ -87,7 +82,7 @@ export async function signUp(
   await page.getByRole("button", { name: enMessages.invite_submit, exact: true }).click();
   await expect(page.getByText(enMessages.invite_sent.replace("{email}", email), { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { level: 1, name: enMessages.login_code_heading, exact: true })).toBeVisible();
-  const link = await magicLinkFor(email, since);
+  const link = await magicLinkFor(email, since, mailFor);
   await beforeConfirm?.(link);
   await page.goto(link);
   await expect(page).toHaveURL(/\/auth\/confirm\?token=/);

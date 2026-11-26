@@ -24,9 +24,10 @@ test("an operator sends a batch and shares a single manually created invitation"
   await page.getByLabel(m.invites_bulk_emails, { exact: true }).fill("bulk_browser_a@example.com\nbulk_browser_b@example.com");
   await page.getByRole("button", { name: m.invites_bulk_submit, exact: true }).click();
   const results = page.getByRole("region", { name: m.invites_bulk_results, exact: true });
+  const invitationLink = /^https?:\/\/[^/?#\s]+\/invite\/[A-Za-z0-9_-]+\?openExternalBrowser=1$/m;
   for (const email of ["bulk_browser_a@example.com", "bulk_browser_b@example.com"]) {
     await expect(results.getByRole("listitem").filter({ hasText: email })).toContainText(m.invites_result_sent);
-    expect((await mailFor(email, beforeDelivery)).text).toContain("/invite/");
+    await mailFor(email, beforeDelivery, { body: text => invitationLink.test(text) });
   }
   await expect(results.locator("code")).toHaveCount(0);
   await expect(page.getByLabel(m.invites_bulk_emails, { exact: true })).toHaveValue("");
