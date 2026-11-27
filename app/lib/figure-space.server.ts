@@ -144,6 +144,10 @@ function measureInk(data: Buffer, width: number, height: number, box: FigureBox,
     const letters = graphics ? primary.filter(c => c.box.height >= 4 && c.box.width <= c.box.height * 3) : primary;
     const characterHeight = letters.length ? median(letters.map(c => c.box.height)) : box.height;
     const matchesColor = graphics && letters.length >= 2 ? sourceColorMatcher(data, letters.map(c => c.points), color) : undefined;
+    // OCR can enclose a colored status icon along with several same-color
+    // glyphs. Keep the label intact when its colored shape may carry meaning.
+    const distinctMark = matchesColor && letters.filter(c => matchesColor(c.points)).length >= 2 &&
+      primary.some(c => hasDistinctMark(data, c, characterHeight, matchesColor));
     const chosen = eligible.filter(c => c.touches ||
       c.box.left >= recovery.left && c.box.top >= recovery.top && c.box.left + c.box.width <= recovery.left + recovery.width && c.box.top + c.box.height <= recovery.top + recovery.height &&
       c.box.width <= characterHeight * 1.5 && c.box.height <= characterHeight * 1.5 &&
@@ -199,7 +203,8 @@ function measureInk(data: Buffer, width: number, height: number, box: FigureBox,
       }
       if (!fringe) protectedPoints.push(global);
     }
-    final = { box: tight, points, protectedPoints, graphics, lineCount: measuredLines.length, lineHeights: measuredLines, uncertain: clipped, ...(original && { original }) };
+    final = { box: tight, points, protectedPoints, graphics, lineCount: measuredLines.length, lineHeights: measuredLines,
+      uncertain: clipped, unsafe: distinctMark || original?.unsafe, ...(original && { original }) };
     if (!clipped) break;
   }
   const right = box.left + box.width, inkRight = final.box.left + final.box.width;
@@ -224,6 +229,17 @@ function sourceColorMatcher(data: Buffer, components: number[][], ground: number
     if (ground[3] <= 16) return data[q + 3] >= Math.max(40, color[3] - 64);
     return color.slice(0, 3).every((c, channel) => Math.abs(data[q + channel] - c) <= 56);
   });
+}
+
+function hasDistinctMark(data: Buffer, component: InkComponent, characterHeight: number, matchesColor: (points: number[]) => boolean): boolean {
+  const { width, height } = component.box, short = Math.min(width, height), long = Math.max(width, height);
+  if (short < Math.max(6, characterHeight * .5) || long > short * 1.65 || matchesColor(component.points)) return false;
+  let saturated = 0;
+  for (const p of component.points) {
+    const r = data[p * 4], g = data[p * 4 + 1], b = data[p * 4 + 2];
+    if (Math.max(r, g, b) - Math.min(r, g, b) >= 48 && ++saturated >= long) return true;
+  }
+  return false;
 }
 
 function boundsOf(points: readonly number[], width: number): FigureBox {
@@ -354,6 +370,38 @@ function figureSourceFringe(data: Buffer, width: number, height: number, ink: Fi
   return [...fringe];
 }
 
+// Two aligned pieces of a rule can stay visible between glyphs even when
+// the stroke search cannot follow the rule through the whole word.
+function figureInkCrossesRule(data: Buffer, width: number, height: number, ink: FigureInk): boolean {
+  const { box, graphics } = ink;
+  if (!graphics?.size) return false;
+  for (const vertical of [false, true]) {
+    const start = vertical ? box.top : box.left, length = vertical ? box.height : box.width;
+    if (length > 112) continue;
+    const end = start + length, limit = vertical ? height : width;
+    const across = vertical ? box.left : box.top, rows = vertical ? box.width : box.height;
+    const pixel = (u: number, v: number) => vertical ? u * width + v : v * width + u;
+    for (let v = across; v < across + rows; v++) {
+      let before = start - 1, after = end;
+      while (before >= Math.max(0, start - 8) && !graphics.has(pixel(before, v))) before--;
+      while (after < Math.min(limit, end + 8) && !graphics.has(pixel(after, v))) after++;
+      if (before < Math.max(0, start - 8) || after >= Math.min(limit, end + 8)) continue;
+      // Side walls of a frame can leave two dots in the same row. Each
+      // endpoint must continue in the direction of the proposed rule.
+      if (before < 5 || after + 5 >= limit || !graphics.has(pixel(before - 5, v)) || !graphics.has(pixel(after + 5, v))) continue;
+      const a = pixel(before, v), b = pixel(after, v);
+      if (figurePixelDelta(data, a, b) > 10) continue;
+      let visible = 0;
+      for (let u = start; u < end; u++) {
+        const p = pixel(u, v);
+        if (figurePixelDelta(data, p, a) <= 8 && figurePixelDelta(data, p, b) <= 8) visible++;
+      }
+      if (visible * 3 >= length && ink.points.some(p => (vertical ? p % width : Math.floor(p / width)) === v)) return true;
+    }
+  }
+  return false;
+}
+
 export function measureFigureInk(data: Buffer, width: number, height: number, box: FigureBox, others: FigureBox[], graphics = figureGraphics(data, width, height, [box, ...others])): FigureInk {
   const ink = measureInk(data, width, height, box, others, FIGURE_SPACE.contrast, undefined, graphics);
   if (!ink.points.length) {
@@ -369,7 +417,7 @@ export function measureFigureInk(data: Buffer, width: number, height: number, bo
     return { ...ink, keepOut: box, unsafe };
   }
   const recovered = recoverFigureRows(data, width, height, box, others, ink);
-  let unsafe = recovered.unsafe || recovered.uncertain;
+  let unsafe = ink.unsafe || recovered.unsafe || recovered.uncertain || figureInkCrossesRule(data, width, height, recovered);
   // A solid connection at the cut between source ink and a path cannot be
   // erased as text alone. Check both color and adjacency on the original raster.
   for (const p of recovered.points) {
@@ -743,7 +791,7 @@ function allowFaintFigureLines(data: Buffer, width: number, height: number, near
   for (let p = 0; p < allowed.length; p++) if (allowed[p]) nearBackground[p] = 1;
 }
 
-export function figureSpace(data: Buffer, width: number, height: number, index: number, measured: FigureInk[], occupied: FigureBox[] = [], context = prepareFigureSpace(width, height, measured), guard: number = FIGURE_SPACE.guard, surface?: FigureBackground): { anchor: FigureBox; erase: FigureBox; window: FigureBox; mask: Uint8Array; rectangles: FigureBox[]; seed: number; surface?: FigureBackground; bounds?: FigureBox } {
+export function figureSpace(data: Buffer, width: number, height: number, index: number, measured: FigureInk[], occupied: FigureBox[] = [], context = prepareFigureSpace(width, height, measured), guard: number = FIGURE_SPACE.guard, surface?: FigureBackground): { anchor: FigureBox; erase: FigureBox; window: FigureBox; mask: Uint8Array; rectangles: FigureBox[]; seed: number; surface?: FigureBackground; eraseBounds?: FigureBox } {
   const anchor = measured[index].box, erase = figureErasureBox(anchor, width, height);
   const window = figureSpaceWindow(anchor, width, height), w = window.width, h = window.height, count = w * h;
   const localAnchor = { ...anchor, left: anchor.left - window.left, top: anchor.top - window.top };
@@ -751,7 +799,10 @@ export function figureSpace(data: Buffer, width: number, height: number, index: 
   const virtual = Buffer.alloc(count * 4);
   for (let y = 0; y < h; y++) data.copy(virtual, y * w * 4, ((window.top + y) * width + window.left) * 4, ((window.top + y) * width + window.left + w) * 4);
   const bounds = context.bounds?.[index] ?? surface?.bounds;
-  const removable = figureEraseMask(width, height, index, measured, window, bounds, FIGURE_SPACE.guard, occupied);
+  // An uncertain backing can limit placement to the source box, but its
+  // measured glyph box is no evidence of a physical edge at that pixel.
+  const eraseBounds = context.surfaces?.[index]?.backing?.box ?? surface?.backing?.box;
+  const removable = figureEraseMask(width, height, index, measured, window, eraseBounds, FIGURE_SPACE.guard, occupied);
   const restored = surface ? Buffer.alloc(boxArea(erase) * 4) : figureBackgroundPatch(data, width, height, erase, measured[index]);
   if (surface) for (let y = 0; y < erase.height; y++) for (let x = 0; x < erase.width; x++) restored.set(surfaceColor(surface, erase.left + x, erase.top + y), (y * erase.width + x) * 4);
   for (let y = 0; y < erase.height; y++) for (let x = 0; x < erase.width; x++) {
@@ -831,7 +882,7 @@ export function figureSpace(data: Buffer, width: number, height: number, index: 
   // complete source box fits only a shallow strip. fitLabel still checks all ink.
   if (surface) candidates = [...candidates, ...figureRectangles(safe, w, h, centre)].sort((a, b) => boxArea(b) - boxArea(a));
   const rectangles = candidates.map(b => ({ ...b, left: b.left + window.left, top: b.top + window.top }));
-  return { anchor, erase, window, mask: safe, rectangles, seed, surface, bounds };
+  return { anchor, erase, window, mask: safe, rectangles, seed, surface, eraseBounds };
 }
 
 export function figureSurfaceSpace(data: Buffer, width: number, height: number, index: number, measured: FigureInk[], occupied: FigureBox[], context: FigureSpaceContext) {
@@ -886,6 +937,40 @@ export function figureInkIsRemovable(ink: FigureInk, width: number, mask: Uint8A
     return inside(window, x, y) && mask[(y - window.top) * window.width + x - window.left] !== 0;
   };
   return !ink.unsafe && ink.points.every(erased) && (ink.fringe?.every(erased) ?? true);
+}
+
+// A glyph-shaped mask over an uneven fill can cut the fill into strips.
+// Reject long seams introduced across previously smooth neighboring pixels.
+export function figureErasureBreaksBackground(data: Buffer, patch: Buffer, width: number, height: number, box: FigureBox, mask: Uint8Array): boolean {
+  for (const vertical of [false, true]) {
+    const along = vertical ? box.height : box.width, across = vertical ? box.width : box.height;
+    const step = vertical ? 1 : width, localStep = vertical ? 1 : box.width;
+    const start = vertical ? box.left : box.top, limit = vertical ? width : height;
+    let seams = 0;
+    for (let v = Math.max(0, 1 - start); v <= across && start + v < limit; v++) {
+      let run = 0;
+      for (let u = 0; u < along; u++) {
+        const x = box.left + (vertical ? v : u), y = box.top + (vertical ? u : v);
+        const p = y * width + x, q = (y - box.top) * box.width + x - box.left;
+        const before = v > 0 && mask[q - localStep], after = v < across && mask[q];
+        if (Boolean(before) === Boolean(after) || figurePixelDelta(data, p - step, p) > FIGURE_SPACE.adjacentDelta) {
+          run = 0;
+          continue;
+        }
+        const painted = before ? q - localStep : q, unchanged = before ? p : p - step;
+        let delta = Math.abs(patch[painted * 4 + 3] - data[unchanged * 4 + 3]);
+        if (patch[painted * 4 + 3] > 16 || data[unchanged * 4 + 3] > 16) {
+          for (let c = 0; c < 3; c++) delta = Math.max(delta, Math.abs(patch[painted * 4 + c] - data[unchanged * 4 + c]));
+        }
+        run = delta >= FIGURE_SPACE.backgroundNoise ? run + 1 : 0;
+        if (run >= 12) {
+          if (++seams >= 3) return true;
+          break;
+        }
+      }
+    }
+  }
+  return false;
 }
 
 // Verify the patch at the source itself, before translated text can cover it.

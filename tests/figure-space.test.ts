@@ -1,7 +1,7 @@
 import sharp from "sharp";
 import { expect, it } from "vitest";
 import type { FigureReading, FigureRegion } from "~/lib/figure";
-import { FIGURE_SPACE, figureBox, figureEraseMask, figureErasureHasResidue, figureGraphics, figureSpaceWindow, figureRectangles, figureSpace, measureFigure, restoreFigureBackground } from "~/lib/figure-space.server";
+import { FIGURE_SPACE, figureBox, figureEraseMask, figureErasureHasResidue, figureGraphics, figureSpaceWindow, figureRectangles, figureSpace, measureFigure, measureFigureInk, restoreFigureBackground } from "~/lib/figure-space.server";
 import { figureFontSize, renderFigureLabels } from "~/lib/figure-render.server";
 
 const label: FigureRegion = { text: "HHH", lang: "en", confidence: 1, x: .1, y: .2, width: .2, height: .2, orientation: "horizontal" };
@@ -44,6 +44,19 @@ it("tolerates compression noise but stops at a darker rule", () => {
   expect(space.rectangles[0].width).toBeGreaterThan(40);
   expect(space.mask[25 * width + 25]).toBe(1);
   expect(space.mask[25 * width + 65]).toBe(0);
+});
+
+it("rejects erasure when visible pieces of a pale rule continue through lettering", () => {
+  const width = 340, height = 150, data = Buffer.alloc(width * height * 4, 255);
+  const y = 72, box = { left: 120, top: 62, width: 80, height: 21 };
+  for (let x = 30; x < 300; x++) data.set([230, 230, 230], (y * width + x) * 4);
+  for (let left = box.left; left < box.left + box.width; left += 20) {
+    for (let dy = -6; dy <= 6; dy++) for (let x = left; x < left + 11; x++) data.set([35, 35, 35], ((y + dy) * width + x) * 4);
+  }
+  const graphics = new Set([114, 119, 191, 196].map(x => y * width + x));
+  expect(measureFigureInk(data, width, height, box, [], graphics).unsafe).toBe(true);
+  graphics.delete(y * width + 196);
+  expect(measureFigureInk(data, width, height, box, [], graphics).unsafe).toBe(false);
 });
 
 it.each([true, false])("crosses faint straight rules while respecting dark marks and label keep-outs (vertical: %s)", vertical => {

@@ -14,7 +14,7 @@ export function usableFigure(reading: FigureReading): boolean {
 
 const isRenderableFigureRegion = (region: FigureRegion) => region.orientation === "horizontal";
 
-import { FIGURE_SPACE, background, figureBackgroundPatch, figureBackgroundPatchAgrees, figureBox, figureEraseMask, figureErasureBox, figureErasureHasResidue, figureGraphics, figureGraphicsInBox, figureInkIsRemovable, figureSpace, figureSpaceWindow, figureSurfaceSpace, inside, measureFigureInk, measureGlyphInk, prepareFigureSpace, type FigureBox as Box, type FigureInk } from "./figure-space.server";
+import { FIGURE_SPACE, background, figureBackgroundPatch, figureBackgroundPatchAgrees, figureBox, figureEraseMask, figureErasureBox, figureErasureBreaksBackground, figureErasureHasResidue, figureGraphics, figureGraphicsInBox, figureInkIsRemovable, figureSpace, figureSpaceWindow, figureSurfaceSpace, inside, measureFigureInk, measureGlyphInk, prepareFigureSpace, type FigureBox as Box, type FigureInk } from "./figure-space.server";
 import type { FigureLabelResult } from "./figure";
 export const FIGURE_MIN_FONT_SCALE = 0.75;
 type Alignment = "left" | "centre" | "right";
@@ -305,7 +305,7 @@ export async function createFigureRenderer(bytes: Buffer, reading: FigureReading
     // Reject only when even the final overlap pass cannot erase the source.
     const layout = ink.original ? expandedContext : context;
     const window = figureErasureBox(box, info.width, info.height);
-    const mask = figureEraseMask(info.width, info.height, index, ink.original ? recovered : measured, window, layout.bounds?.[index], eraseGuards[i]);
+    const mask = figureEraseMask(info.width, info.height, index, ink.original ? recovered : measured, window, layout.surfaces?.[index]?.backing?.box, eraseGuards[i]);
     return figureInkIsRemovable(ink, info.width, mask, window);
   });
   // Failed source analysis must not set the common font-size floor for
@@ -343,6 +343,7 @@ export async function createFigureRenderer(bytes: Buffer, reading: FigureReading
     const images: LabelImageCache = new Map();
     const fallbackSurfaces: (Pick<NonNullable<ReturnType<typeof figureSurfaceSpace>>, "surface" | "erase"> | undefined)[] = [];
     const overlays: OverlayOptions[] = [], occupied: Box[] = [];
+    const brokenBackgrounds = new Set<number>();
     const expandedSizes: number[] = [];
     const overlaps = (box: Box) => occupied.some(b => box.left < b.left + b.width + 2 && b.left - 2 < box.left + box.width && box.top < b.top + b.height + 2 && b.top - 2 < box.top + box.height);
     const rejectInk = (i: number) => {
@@ -362,10 +363,14 @@ export async function createFigureRenderer(bytes: Buffer, reading: FigureReading
       const restored = figureBackgroundPatch(data, info.width, info.height, space.erase, ink, space.surface, true);
       if (space.surface && !figureBackgroundPatchAgrees(restored, space.erase, info.width, ink, space.surface)) return false;
       // Do not leave source glyph fragments where a protected mark prevents erasure.
-      const removable = figureEraseMask(info.width, info.height, index, layout, space.erase, space.bounds, FIGURE_SPACE.guard, occupied);
+      const removable = figureEraseMask(info.width, info.height, index, layout, space.erase, space.eraseBounds, FIGURE_SPACE.guard, occupied);
       if (!figureInkIsRemovable(ink, info.width, removable, space.erase) ||
           figureErasureHasResidue(data, restored, info.width, info.height, space.erase, ink, space.surface) ||
           await coversGraphics(fitted.text.data, fitted.position)) return false;
+      if (figureErasureBreaksBackground(painted, restored, info.width, info.height, space.erase, removable)) {
+        brokenBackgrounds.add(i);
+        return false;
+      }
       for (let y = 0; y < space.erase.height; y++) for (let x = 0; x < space.erase.width; x++) {
         const p = y * space.erase.width + x;
         if (removable[p]) restored.copy(painted, ((space.erase.top + y) * info.width + space.erase.left + x) * 4, p * 4, p * 4 + 4);
@@ -495,7 +500,7 @@ export async function createFigureRenderer(bytes: Buffer, reading: FigureReading
       const forbidden = obstacles.map(b => ({ left: b.left - 2, top: b.top - 2, width: b.width + 4, height: b.height + 4 }));
       const fallback = expanded ? undefined : fallbackSurfaces[i];
       const surface = fallback?.surface ?? layoutContext.surfaces?.[index];
-      const bounds = layoutContext.bounds?.[index] ?? surface?.bounds;
+      const bounds = surface?.backing?.box;
       const erase = fallback?.erase ?? figureErasureBox(ink.box, info.width, info.height);
       const removable = figureEraseMask(info.width, info.height, index, layout, erase, bounds, eraseGuards[i], obstacles);
       if (!figureInkIsRemovable(ink, info.width, removable, erase) ||
@@ -509,8 +514,16 @@ export async function createFigureRenderer(bytes: Buffer, reading: FigureReading
       const fitted = await fitOverlap(labels[i]!, regions[i], lang, colors[i], floor, space, alignment(i, window));
       if (!fitted) continue;
       const eraseObstacles = obstacles.filter(b => b.left < erase.left + erase.width && erase.left < b.left + b.width && b.top < erase.top + erase.height && erase.top < b.top + b.height);
-      const restored = figureOverlapBackground(figureBackgroundPatch(data, info.width, info.height, erase, ink, surface), erase, removable, surface, eraseObstacles);
-      if (figureErasureHasResidue(data, restored, info.width, info.height, erase, ink, surface)) { rejectInk(i); continue; }
+      const safeBackground = (patch: Buffer) => !figureErasureHasResidue(data, patch, info.width, info.height, erase, ink, surface) &&
+        !figureErasureBreaksBackground(painted, patch, info.width, info.height, erase, removable);
+      let restored = figureOverlapBackground(figureBackgroundPatch(data, info.width, info.height, erase, ink, surface), erase, removable, surface, eraseObstacles);
+      if (!safeBackground(restored)) {
+        // An approximate surface can fit the translation while its estimated
+        // colors do not cleanly erase the source. Try the edge samples too.
+        if (!surface || surface.backing) { rejectInk(i); continue; }
+        restored = figureBackgroundPatch(data, info.width, info.height, erase, ink);
+        if (!safeBackground(restored)) { rejectInk(i); continue; }
+      }
       const glyphs = figureOverlapTreatment(fitted.text, fitted.position.width, fitted.position.height, fitted.position, space.color, surface);
       const input = await sharp(glyphs, { raw: { width: fitted.position.width, height: fitted.position.height, channels: 4 } }).png().toBuffer();
       if (await coversGraphics(input, fitted.position)) continue;
@@ -522,6 +535,7 @@ export async function createFigureRenderer(bytes: Buffer, reading: FigureReading
       overlays.push({ input, left: fitted.position.left, top: fitted.position.top });
       results[i].status = "rendered"; results[i].reason = null;
     }
+    for (const i of brokenBackgrounds) if (results[i].reason === "does_not_fit") rejectInk(i);
     if (!overlays.length) return { bytes: null, results };
     const out = await sharp(painted, { raw: { width: info.width, height: info.height, channels: 4 } }).composite(overlays).webp({ lossless: true }).toBuffer();
     if (out.length > MEDIA_LIMITS.storedBytes) {

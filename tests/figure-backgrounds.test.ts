@@ -89,6 +89,37 @@ it("keeps short text inside a shaded dark backing over patterned artwork and ret
   expect(longer.bytes).toBeNull();
 });
 
+it("leaves a paragraph intact when erasing it would break a broad diagonal band", async () => {
+  const width = 520, height = 230, text = "The original paragraph has three lines.\nIts lettering crosses a background band.\nThe band continues below the paragraph.";
+  const pixels = Buffer.alloc(width * height * 4, 255);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const distance = Math.min(x - (290 - y * .53), 375 - y * .53 - x);
+    const band = Math.max(0, Math.min(1, distance / 8));
+    pixels.set([Math.round(28 + x * .025 + 44 * band), 24, 26], (y * width + x) * 4);
+  }
+  const glyph = await sharp({ text: { text: `<span foreground="white">${text}</span>`, font: "Noto Sans 16", rgba: true } }).png().toBuffer({ resolveWithObject: true });
+  const source = await sharp(pixels, { raw: { width, height, channels: 4 } }).composite([{ input: glyph.data, left: 36, top: 66 }]).png().toBuffer();
+  const input = reading(text, { left: 36, top: 66, width: glyph.info.width, height: glyph.info.height }, width, height);
+  const out = await renderFigureLabels(source, input, ["A shorter paragraph"], "en");
+  expect(out.results[0].status).toBe("external");
+  expect(out.bytes).toBeNull();
+});
+
+it("retains a colored status mark enclosed by the text reading", async () => {
+  const width = 440, height = 170, text = "Incomplete";
+  const glyph = await sharp({ text: { text, font: "Noto Sans 24", rgba: true } }).png().toBuffer({ resolveWithObject: true });
+  const mark = Buffer.from(`<svg width="${width}" height="${height}">
+    <g fill="none" stroke="#d52020" stroke-width="2.5">
+      <circle cx="128" cy="82" r="10"/><path d="M 124 78 L 132 86 M 132 78 L 124 86"/>
+    </g></svg>`);
+  const source = await sharp({ create: { width, height, channels: 4, background: "white" } })
+    .composite([{ input: mark }, { input: glyph.data, left: 146, top: 71 }]).png().toBuffer();
+  const input = reading(text, { left: 115, top: 68, width: glyph.info.width + 32, height: 27 }, width, height);
+  const out = await renderFigureLabels(source, input, ["Pending"], "en");
+  expect(out.results[0]).toMatchObject({ status: "external", reason: "unusable_reading" });
+  expect(out.bytes).toBeNull();
+});
+
 it.each(["ja", "fr"] as const)("fits %s glyphs inside a shallow backing without changing its edges or artwork", async lang => {
   const width = 280, height = 120, text = "H".repeat(9), pixels = Buffer.alloc(width * height * 4, 255);
   const glyph = await sharp({ text: { text: `<span foreground="white">${text}</span>`, font: "Noto Sans 16", rgba: true } }).png().toBuffer({ resolveWithObject: true });
