@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import type { Db, Tx } from "~/lib/db/client.server";
 import { profiles } from "~/lib/db/schema";
 import { safeLocalPath } from "~/lib/display-lang.server";
+import { REAUTH_RETURN_PARAM } from "~/lib/notice-params";
 import { bindAuthToDatabase, getAuth, type Auth } from "./auth.server";
 import { collectSessionCookies } from "./session-cookies.server";
 import { reauthenticationPath, type Reauthentication } from "~/lib/reauth";
@@ -10,6 +11,15 @@ import { reauthenticationPath, type Reauthentication } from "~/lib/reauth";
 export const CREDENTIAL_FRESH_MS = 24 * 3600_000;
 export function reauthenticationUrl(returnTo: string, reauth?: Reauthentication): string {
   return reauthenticationPath(safeLocalPath(returnTo), reauth);
+}
+
+export function reauthenticationCancelPath(next: string, mode: Reauthentication): string {
+  if (mode === "open-page") return "/";
+  const local = safeLocalPath(next);
+  const url = new URL(local, "https://return.invalid");
+  if (!url.searchParams.has(REAUTH_RETURN_PARAM)) return local;
+  url.searchParams.delete(REAUTH_RETURN_PARAM);
+  return url.pathname + url.search + url.hash;
 }
 
 // Whether a session was created (by a login) recently enough to add or confirm

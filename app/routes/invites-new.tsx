@@ -61,7 +61,8 @@ export async function action({ request }: Route.ActionArgs) {
     return data({ url: null, error: "invalid_operator_request" as const }, { status: 400 });
   }
   if (!canCreateInvitations(operator)) throw data("Not found", { status: 404 });
-  if (form.get("intent") === "revoke") {
+  if (intent === "revoke") {
+    if (operator) await requirePrivilegedWriteSession(request);
     if (!await revokeInvitation(db, user.id, String(form.get("id") ?? ""))) throw data("Not found", { status: 404 });
     return { url: null, error: null };
   }

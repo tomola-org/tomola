@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createAppAuth } from "~/lib/auth/auth.server";
+import { reauthenticationCancelPath } from "~/lib/auth/credential-session.server";
 import { requirePrivilegedWriteSession, requireUser } from "~/lib/auth/session.server";
 import { settleMagicLinkMail } from "~/lib/auth/magic-link.server";
 import { createMailer } from "~/lib/mail/mail.server";
@@ -27,6 +28,11 @@ beforeAll(async () => {
 afterAll(() => h.restore());
 
 describe("login return destination", () => {
+  it("validates the cancellation destination independently", () => {
+    expect(reauthenticationCancelPath("https://outside.example/?reverified=1", "moderation")).toBe("/");
+    expect(reauthenticationCancelPath("/mod?reverified=1&tab=handled#reports", "moderation")).toBe("/mod?tab=handled#reports");
+  });
+
   it.each(["GET", "HEAD"])("preserves the path and query for a logged-out %s", async (method) => {
     const request = new Request(`${BASE}/t/123?page=1`, { method });
     expect(await h.outcome(() => requireUser(request))).toMatchObject({ status: 302, location: "/login?next=%2Ft%2F123%3Fpage%3D1" });

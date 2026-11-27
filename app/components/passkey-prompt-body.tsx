@@ -1,3 +1,4 @@
+import { pathWithoutNoticeParams } from "~/lib/notice-params";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { useLocation, useRevalidator } from "react-router";
 import { Button, buttonVariants } from "~/components/ui/button";
@@ -11,7 +12,7 @@ const LINK_CLASS = "h-auto p-0 ui-meta font-normal text-muted-foreground underli
 export default function PasskeyPromptBody({ eligible, preference, fresh }: { eligible: boolean; preference: { cookieName: string; deferred: boolean }; fresh: boolean }) {
   const location = useLocation();
   // An older session cannot add a credential: registering first re-verifies by email, then returns here.
-  const reauth = reauthenticationPath(withPasskeyReturn(`${location.pathname}${location.search}`, "prompt"));
+  const reauth = reauthenticationPath(withPasskeyReturn(pathWithoutNoticeParams(location.pathname, location.search), "prompt"));
   const [dismissed, setDismissed] = useState(false);
   const [state, setState] = useState<"idle" | "busy" | "added" | "failed" | "ready">("idle");
   const revalidator = useRevalidator();

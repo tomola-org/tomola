@@ -5,6 +5,7 @@ import { createInvitation, findValidInvitationByToken } from "~/lib/invitations.
 import { loader as memberLoader } from "~/routes/member-layout";
 import { action, loader } from "~/routes/invites-new";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
+import { expectModerationReauthentication, withStaleSession } from "./helpers/reauth";
 
 let h: RouteHarness;
 beforeAll(async () => {
@@ -39,7 +40,12 @@ it("allows operators to load, create and revoke invitations while restricted", a
   expect(created).toMatchObject({ error: null, results: [{ email: "operator_recipient@example.com", status: "created", url: expect.stringContaining("/invite/") }] });
   const [row] = await h.db.select().from(invitations).where(eq(invitations.email, "operator_recipient@example.com"));
   expect(row.createdBy).toBe(h.ids[as]);
-  expect(await action(h.args(h.request("/invites/new", { as, form: { intent: "revoke", id: row.id } })))).toEqual({ url: null, error: null });
+  const revoke = () => action(h.args(h.request("/invites/new", { as, form: { intent: "revoke", id: row.id } })));
+  await withStaleSession(h, as, async () => {
+    expectModerationReauthentication(await h.outcome(revoke), "/invites/new");
+    expect((await h.db.select().from(invitations).where(eq(invitations.id, row.id)))[0].revokedAt).toBeNull();
+  });
+  expect(await revoke()).toEqual({ url: null, error: null });
   expect((await h.db.select().from(invitations).where(eq(invitations.id, row.id)))[0].revokedAt).not.toBeNull();
   expect(await memberLoader(h.args(h.request("/", { as })))).toMatchObject({ canInvite: true, isOperator: true });
 });
@@ -53,6 +59,8 @@ it.each([undefined, ""])("keeps member invitation creation and revocation availa
   expect(await action(h.args(h.request("/invites/new", { as, form: { email } })))).toMatchObject({ error: null, url: expect.stringContaining("/invite/") });
   const [row] = await h.db.select().from(invitations).where(eq(invitations.email, email));
   expect(row.createdBy).toBe(h.ids[as]);
-  expect(await action(h.args(h.request("/invites/new", { as, form: { intent: "revoke", id: row.id } })))).toEqual({ url: null, error: null });
+  await withStaleSession(h, as, async () => {
+    expect(await action(h.args(h.request("/invites/new", { as, form: { intent: "revoke", id: row.id } })))).toEqual({ url: null, error: null });
+  });
   expect(await memberLoader(h.args(h.request("/", { as })))).toMatchObject({ canInvite: true, isOperator: false });
 });

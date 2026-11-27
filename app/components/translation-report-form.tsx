@@ -1,3 +1,4 @@
+import { pathWithoutNoticeParams } from "~/lib/notice-params";
 import { Fragment, useId, useState } from "react";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "~/components/ui/select";
 import { Field, FieldLabel } from "~/components/ui/field";
@@ -38,7 +39,7 @@ export function TranslationReportForm({ entryId, lang, kind, hasTitle = true, re
   const busy = reporting.state !== "idle" || amending.state !== "idle";
   const sending = reporting.formData?.get("field");
   const anchor = `#${kind === "topic" ? "p" : "c"}-${entryId}`;
-  const action = `${location.pathname}${location.search}${anchor}`;
+  const action = pathWithoutNoticeParams(location.pathname, location.search, anchor);
   const guard = (event: { preventDefault(): void }) => { if (busy) event.preventDefault(); };
   const result = last === "details" ? mine(amending.data) : mine(reporting.data);
   const shownResult = result && (result.reported || result.error) ? result : undefined;

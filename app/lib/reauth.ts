@@ -1,5 +1,3 @@
-import { REAUTH_RETURN_PARAM } from "~/lib/notice-params";
-
 export type Reauthentication = "1" | "moderation" | "open-page";
 
 export function isReauthentication(value: unknown): value is Reauthentication {
@@ -9,15 +7,6 @@ export function isReauthentication(value: unknown): value is Reauthentication {
 // Re-verify a signed-in member and return to a local path, which the login route validates.
 export function reauthenticationPath(next: string, reauth: Reauthentication = "1"): string {
   return `/login?${new URLSearchParams({ reauth, next })}`;
-}
-
-// The login loader has already validated next as a local path.
-export function reauthenticationCancelPath(next: string, mode: Reauthentication): string {
-  if (mode === "open-page") return "/";
-  const url = new URL(next, "https://return.invalid");
-  if (!url.searchParams.has(REAUTH_RETURN_PARAM)) return next;
-  url.searchParams.delete(REAUTH_RETURN_PARAM);
-  return url.pathname + url.search + url.hash;
 }
 
 const loginMethodPurposes = ["add-passkey", "remove-passkey", "enable-passkey-only", "disable-passkey-only", "revoke-all", "connect-google", "disconnect-google"] as const;

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { POST_NOTICE_PARAMS } from "~/lib/notice-params";
 
 // Clean the address a few seconds after the notice appears so copied links omit it.
-export function useDropNoticeParams(active: boolean, params: readonly string[] = POST_NOTICE_PARAMS) {
+export function useDropNoticeParams(active: boolean, params: readonly string[] = POST_NOTICE_PARAMS, locationKey?: string) {
   useEffect(() => {
     if (!active) return;
     const timer = setTimeout(() => {
@@ -12,5 +12,5 @@ export function useDropNoticeParams(active: boolean, params: readonly string[] =
       window.history.replaceState(window.history.state, "", url);
     }, 6000);
     return () => clearTimeout(timer);
-  }, [active, params]);
+  }, [active, params, locationKey]);
 }

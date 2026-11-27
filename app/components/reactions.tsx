@@ -1,3 +1,4 @@
+import { pathWithoutNoticeParams } from "~/lib/notice-params";
 import { reviewHrefFor, type StanceResponse } from "~/lib/stance-ui";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "~/components/ui/tooltip";
@@ -43,7 +44,7 @@ export function EntryReactions({
   const stance = useFetcher<StanceResponse>({ key: `stance-${questionId}` }).data;
   const currentStance = stance && "version" in stance && String(stance.questionId) === questionId && (!loadedAt || stance.at >= loadedAt) ? stance : null;
   const shownReviewHref = currentStance ? currentStance.position === null ? null : reviewHrefFor(location.pathname, location.search, entryId) : reviewHref;
-  const returnTo = `${location.pathname}${location.search}${anchor}`;
+  const returnTo = pathWithoutNoticeParams(location.pathname, location.search, anchor);
   const data = fetcher.data;
   const [accepted, setAccepted] = useState<Extract<VoteResponse, { ok: true }> | null>(null);
   useEffect(() => { if (data?.ok && data.entryId === entryId) setAccepted(data); }, [data, entryId]);

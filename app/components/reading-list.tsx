@@ -1,3 +1,4 @@
+import { pathWithoutNoticeParams } from "~/lib/notice-params";
 import { useContext, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { UNSAFE_DataRouterContext, useLocation, useNavigate } from "react-router";
 import { appendReadingItems, readingHref, readingLatestHref, READING_BATCH, READING_CHUNK_PARAM, READING_RESTORE_MAX, type ReadingChunk, type ReadingPage } from "~/lib/reading-page";
@@ -44,7 +45,7 @@ function ReadingListView<T extends { id: number }>({ topics, list, anchor = "", 
     if (view.focusId !== null) container.current?.querySelector<HTMLAnchorElement>(`#q-${view.focusId} a, [data-reading-id="${view.focusId}"] a`)?.focus({ preventScroll: true });
   }, [view.focusId]);
 
-  const next = `${location.pathname}${readingHref(location.search, view.list, true, companion)}`;
+  const next = pathWithoutNoticeParams(location.pathname, readingHref(location.search, view.list, true, companion));
   const atLimit = view.topics.length + READING_BATCH > READING_RESTORE_MAX;
 
   async function loadMore() {
@@ -92,7 +93,7 @@ function ReadingListView<T extends { id: number }>({ topics, list, anchor = "", 
   }
 
   return <div ref={container} className="space-y-3" data-reading-list={list.param}>
-    {(view.list.older || view.list.restored) && <a href={`${location.pathname}${readingLatestHref(location.search, view.list, companion)}${anchor}`} className="link-ui">{m.list_back_latest()}</a>}
+    {(view.list.older || view.list.restored) && <a href={pathWithoutNoticeParams(location.pathname, readingLatestHref(location.search, view.list, companion), anchor)} className="link-ui">{m.list_back_latest()}</a>}
     {children(view.topics)}
     <p role="status" aria-live="polite" aria-atomic="true" className={view.failed ? "ui-help text-destructive" : "sr-only"}>{view.failed ? m.list_load_failed() : view.announcement}</p>
     {view.list.next && <a data-load-more href={next + anchor} rel="next" role={live && !atLimit ? "button" : undefined} className={buttonVariants({ variant: "outline" })}

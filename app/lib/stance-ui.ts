@@ -1,5 +1,6 @@
 import type { Distribution } from "~/lib/distribution.server";
 import type { Position } from "~/lib/stances";
+import { pathWithoutNoticeParams } from "~/lib/notice-params";
 
 // Browser-safe, DB-free helpers for StancePanel and hosting screens, also used by home cards.
 
@@ -70,7 +71,7 @@ export function stanceReturnTo(pathname: string, search: string, anchor: string)
   params.delete("peek");
   params.delete("review");
   const query = params.toString();
-  return `${pathname}${query ? `?${query}` : ""}#${anchor}`;
+  return pathWithoutNoticeParams(pathname, query ? `?${query}` : "", `#${anchor}`);
 }
 
 // 「先に結果を見る」 link preserves filters ?asks=/page=/lang= and adds ?peek=<id>.

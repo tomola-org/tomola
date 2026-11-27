@@ -72,10 +72,47 @@ test("an operator returns to member search and to a post after re-verifying", as
     expect(await sessionCookie()).not.toBe(beforeLink);
     await panel.click();
     await expect(hide).toBeVisible();
-    await expect(page.getByLabel(m.mod_note, { exact: true })).toHaveValue("");
+    const hideNote = page.getByLabel(m.mod_note, { exact: true });
+    await expect(hideNote).toHaveValue("");
+    await hideNote.fill("Review the wording of this post.");
+    await hide.click();
+    await expect(page.getByRole("note").filter({ hasText: m.entry_hidden_mark })).toBeVisible();
+    await expect(page).toHaveURL(`${post}#p-${topic.id}`);
+    await expect(page.getByRole("status").filter({ hasText: m.reauth_action_pending })).toHaveCount(0);
   } finally {
     fs.writeFileSync(clock, previous);
     await otherTab.close();
+  }
+});
+
+test("retrying shared invite creation clears the re-verification notice", async ({ page }) => {
+  const email = "reauth_invite_retry@example.com";
+  const destination = "/invites/shared";
+  const clock = path.join(state().dir, "server-clock.txt");
+  const previous = fs.readFileSync(clock, "utf8");
+  const label = page.getByLabel(m.shared_invites_label, { exact: true });
+  const create = page.getByRole("button", { name: m.shared_invites_create, exact: true });
+  const notice = page.getByRole("status").filter({ hasText: m.reauth_action_pending });
+  const copy = page.getByRole("button", { name: m.invites_copy, exact: true });
+  try {
+    await useMember(page, email, destination);
+    await waitForClientRoute(page);
+    await label.fill("River cleanup");
+    fs.writeFileSync(clock, String(25 * 3_600_000));
+    await create.click();
+    await expect(page).toHaveURL(url => url.pathname === "/login" && url.searchParams.get("reauth") === "moderation" && url.searchParams.get("next") === `${destination}?reverified=1`);
+    await verifyIdentity(page, email, "code");
+    await expect(page).toHaveURL(`${destination}?reverified=1`);
+    await expect(notice).toBeVisible();
+    await expect(copy).toHaveCount(0);
+    await expect(label).toHaveValue("");
+    await waitForClientRoute(page);
+    await label.fill("River cleanup");
+    await create.click();
+    await expect(copy).toBeVisible();
+    await expect(notice).toHaveCount(0);
+  } finally {
+    fs.writeFileSync(clock, previous);
   }
 });
 

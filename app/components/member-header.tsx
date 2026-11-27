@@ -1,3 +1,4 @@
+import { pathWithoutNoticeParams } from "~/lib/notice-params";
 import { useShellLabels } from "~/lib/use-shell-labels";
 import { Form, Link, useLocation, useRouteLoaderData } from "react-router";
 import { Button, buttonVariants } from "./ui/button";
@@ -25,7 +26,7 @@ export function MemberHeader({ data, sideNavigation = false, whyLink = false }: 
   const location = useLocation();
   const settingsReturnTo = location.pathname === "/settings"
     ? new URLSearchParams(location.search).get("returnTo")
-    : `${location.pathname}${location.search}${location.hash}`;
+    : pathWithoutNoticeParams(location.pathname, location.search, location.hash);
   const newTopic = useRouteLoaderData<typeof topicNewLoader>("routes/topic-new");
   const prefill = location.pathname.startsWith("/t/new") ? newTopic?.prefill : null;
   const current = navigationSection(location.pathname);

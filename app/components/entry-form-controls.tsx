@@ -1,4 +1,5 @@
 import { UnsavedFormGuard } from "~/components/unsaved-form-guard";
+import { pathWithoutNoticeParams } from "~/lib/notice-params";
 import { useContext, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { FormLanguageChangeContext, FormVillageReviewContext } from "~/components/form-contexts";
 import type { FormSubmitHandler, EntryFormControlsProps } from "~/components/entry-form-frame";
@@ -36,7 +37,7 @@ function confirmationFailureMessage(error: unknown, draftConflictMessage?: strin
   return m.draft_review_failed();
 }
 function ConfirmationFailure({ message }: { message: string }) {
-  return <><p role="alert" className="text-destructive">{message}</p>{message === m.signing_login_required() && <a className="underline" href={readerLoginHref(`${window.location.pathname}${window.location.search}${window.location.hash}`, "")} target="_blank" rel="noreferrer noopener">{m.login_title()}</a>}</>;
+  return <><p role="alert" className="text-destructive">{message}</p>{message === m.signing_login_required() && <a className="underline" href={readerLoginHref(pathWithoutNoticeParams(window.location.pathname, window.location.search, window.location.hash), "")} target="_blank" rel="noreferrer noopener">{m.login_title()}</a>}</>;
 }
 const pairsOf = (form: FormData) => [...form.entries()].map(([name, value]) => [name, String(value)] as [string, string]);
 

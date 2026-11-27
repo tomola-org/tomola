@@ -1,3 +1,4 @@
+import { pathWithoutNoticeParams } from "~/lib/notice-params";
 import { ReportReasonSelect } from "~/components/report-reason-select";
 import { FieldLabel } from "~/components/ui/field";
 import { Textarea } from "~/components/ui/textarea";
@@ -17,7 +18,7 @@ export function EntryReportForm({ entryId, anchor, reported }: { entryId: number
       className="min-w-0 ui-meta open:basis-full"
       summaryClassName="touch-action h-auto px-1 ui-meta"
     >
-      <Form method="post" action={`${location.pathname}${location.search}${anchor}`} className="space-y-2 rounded border p-3">
+      <Form method="post" action={pathWithoutNoticeParams(location.pathname, location.search, anchor)} className="space-y-2 rounded border p-3">
         <input type="hidden" name="intent" value="flag" />
         <input type="hidden" name="entryId" value={entryId} />
         <ReportReasonSelect label={m.flag_reason()} defaultValue="spam" />

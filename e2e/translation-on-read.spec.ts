@@ -49,7 +49,7 @@ async function advanceClockUntil(page: Page, ready: Promise<unknown>) {
     expect.poll(async () => {
       if (!finished) await page.clock.runFor(32);
       return finished;
-    }, { intervals: [25, 50, 100] }).toBe(true),
+    }).toBe(true),
   ]);
 }
 

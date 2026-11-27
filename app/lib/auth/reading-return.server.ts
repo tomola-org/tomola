@@ -1,3 +1,4 @@
+import { pathWithoutNoticeParams } from "~/lib/notice-params";
 import type { MiddlewareFunction } from "react-router";
 import { safeLocalPath } from "~/lib/display-lang.server";
 import { clearToggleSearch } from "~/lib/display";
@@ -10,7 +11,7 @@ export function readingReturnCookieName(request: Request): string {
 
 function topicPath(raw: string): string | null {
   const url = new URL(safeLocalPath(raw), "http://tomola.invalid");
-  return /^\/t\/\d+$/.test(url.pathname) ? `${url.pathname}${clearToggleSearch(url.search)}` : null;
+  return /^\/t\/\d+$/.test(url.pathname) ? pathWithoutNoticeParams(url.pathname, clearToggleSearch(url.search)) : null;
 }
 
 function cookie(request: Request, value: string, maxAge: number): string {

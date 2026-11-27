@@ -1,3 +1,4 @@
+import { pathWithoutNoticeParams } from "~/lib/notice-params";
 import { clearToggleSearch } from "~/lib/display";
 
 // Root data makes the site setting available to metadata on server and client.
@@ -7,5 +8,5 @@ export function readingRobotsMeta(matches: readonly ({ id: string; loaderData: u
 }
 
 export function readerLoginHref(pathname: string, search: string): string {
-  return `/login?next=${encodeURIComponent(`${pathname}${clearToggleSearch(search)}`)}`;
+  return `/login?next=${encodeURIComponent(pathWithoutNoticeParams(pathname, clearToggleSearch(search)))}`;
 }

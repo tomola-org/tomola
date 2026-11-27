@@ -1,3 +1,4 @@
+import { pathWithoutNoticeParams } from "~/lib/notice-params";
 import { hasPostAiMaterial, hasPostAiMaterialInstructionWarning } from "~/lib/post-ai-materials.server";
 import { renderNushiThread } from "~/lib/nushi-html.server";
 import { readNushiAnswer, threadNushi, canRefreshNushi } from "~/lib/nushi.server";
@@ -631,7 +632,7 @@ export default function Topic({ loaderData, actionData }: Route.ComponentProps) 
   const { topic, replies, defaultLang, page, hasNextPage, aiOpen, operator, question, stanceTag, writeTag, langParam, loadedAt, follow, canReply } = loaderData;
   const location = useLocation();
   const motionHistory = useMemo(() => ({ topicId: topic.id, entries: new Map<number, Set<string>>() }), [topic.id]);
-  const returnTo = `${location.pathname}${location.search}`;
+  const returnTo = pathWithoutNoticeParams(location.pathname, location.search);
   const [replyTarget, setReplyTarget] = useState(loaderData.replyTarget);
   // The author's language menu: languages whose translation has arrived since the page was read (TranslationWatch) are no longer muted.
   const [settled, setSettled] = useState<{ id: number; langs: Lang[] }>({ id: topic.placeholder === null ? topic.id : 0, langs: [] });

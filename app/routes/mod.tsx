@@ -1,3 +1,4 @@
+import { pathWithoutNoticeParams } from "~/lib/notice-params";
 import { nushiReportsAvailable, pendingNushiReports } from "~/lib/nushi-reports.server";
 import { DisplayNameEvidence } from "~/components/display-name-evidence";
 import { AvatarModerationCard } from "~/components/avatar-moderation-card";
@@ -184,7 +185,7 @@ export async function action({ request }: Pick<Route.ActionArgs, "request">) {
 export default function Mod({ loaderData, actionData }: Route.ComponentProps) {
   const { tab, cards, page, hasNext, maxDays, operator, review, nushi } = loaderData;
   const location = useLocation();
-  const returnTo = `${location.pathname}${location.search}`;
+  const returnTo = pathWithoutNoticeParams(location.pathname, location.search);
   return (
     <main className="space-y-6">
       {nushi && <section aria-label={m.nushi_reports()} className="space-y-2">

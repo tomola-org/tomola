@@ -119,7 +119,7 @@ export default function MemberLayout({ loaderData }: Route.ComponentProps) {
       {loaderData.welcome && <WelcomeNotice welcome={loaderData.welcome} handle={loaderData.handle} passkeyOffer={!loaderData.hasPasskey && location.pathname !== "/" && location.pathname !== "/settings"} villages={"villages" in loaderData} />}
       {Prompt && <Prompt key={location.pathname} eligible={!loaderData.hasPasskey && loaderData.passkeyEnrollmentAllowed} preference={loaderData.passkeyPrompt} fresh={loaderData.passkeyEnrollmentFresh} />}
       <MemberHeader data={navigation as Exclude<typeof navigation, { reader: true }>} sideNavigation={sideNavigation} />
-      <ReauthReturnNotice key={location.key} />
+      <ReauthReturnNotice key={location.pathname} />
       {sideNavigation ? <SiteNavigation><Outlet /></SiteNavigation> : <Outlet />}
     </TooltipProvider></NavigationDataContext.Provider></NavigationUnreadContext.Provider>
   );

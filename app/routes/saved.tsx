@@ -1,3 +1,4 @@
+import { pathWithoutNoticeParams } from "~/lib/notice-params";
 import { useLayoutEffect, useRef } from "react";
 import { data, redirect, useLocation } from "react-router";
 import type { Route } from "./+types/saved";
@@ -57,6 +58,6 @@ export default function Saved({ loaderData }: Route.ComponentProps) {
   }}>
     <PageHeader title={m.saved_title()} />
     <ReadingList topics={loaderData.topics} list={loaderData.list}>{items => <TopicList compactMeta topics={items} langParam={loaderData.langParam} empty={m.saved_empty()} stanceMessage={loaderData.stanceMessage}
-      actions={topic => <SaveButton topicId={topic.id} saved returnTo={`${location.pathname}${location.search}`} />} />}</ReadingList>
+      actions={topic => <SaveButton topicId={topic.id} saved returnTo={pathWithoutNoticeParams(location.pathname, location.search)} />} />}</ReadingList>
   </main>;
 }
