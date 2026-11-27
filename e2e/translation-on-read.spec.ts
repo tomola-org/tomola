@@ -1,10 +1,38 @@
 import fs from "node:fs";
 import path from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
 import { BODY_TRANSLATION_WAIT_MS } from "../app/lib/body-translation-poll";
 import { localizedLanguageLabel } from "../app/lib/language-label";
 import { captureScreenshot, formatMessage, state, uiMessages, useMember, waitForClientRoute } from "./helpers";
 const fixtures = () => JSON.parse(fs.readFileSync(path.join(state().dir, "translation-on-read.json"), "utf8")) as Record<string, { id: number; body: string }>;
+
+function isBodyPoll(request: Request) {
+  if (request.method() !== "POST" || !new URL(request.url()).pathname.endsWith("/translations")) return false;
+  const intent = request.postDataJSON()?.intent;
+  return intent === "request" || intent === "status";
+}
+
+function waitForBodyPoll(page: Page, id: number, matches: (url: URL) => boolean = () => true) {
+  return page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === `/t/${id}/translations` && isBodyPoll(response.request()) && matches(url);
+  }, { timeout: 10_000 });
+}
+
+async function openWaitingBody(page: Page, name: string, id: number, url: string) {
+  const [first] = await Promise.all([
+    waitForBodyPoll(page, id),
+    useMember(page, `ondemand_${name}@example.com`, url),
+  ]);
+  expect(first.ok()).toBe(true);
+  await expect(page.locator("[data-article-translation-waiting]")).toBeVisible();
+  return first;
+}
+
+async function waitForFakeBody(page: Page, url: string, body: string) {
+  const translatedFirstParagraph = `[fr] ${body.split("\n")[0]}`;
+  await expect.poll(async () => (await page.request.get(url)).text(), { timeout: 20_000 }).toContain(translatedFirstParagraph);
+}
 
 test("the author's language watch keeps its polling limit through loader revalidation", async ({ page }) => {
   const { id, body } = fixtures().watch;
@@ -63,11 +91,109 @@ test("the author's notice finishes after source confirmation without polling for
     await expect(french).not.toHaveAttribute("data-translation-pending", "true");
     await page.clock.fastForward(12_000);
     expect(statusCalls).toBe(0);
+    await expect(french).not.toHaveAttribute("href", /[?&]posted=/);
     await french.click();
+    await expect(page).not.toHaveURL(/[?&]posted=/);
     await expect(page.locator("[data-article-translation-waiting]")).toBeVisible();
     fs.unlinkSync(hold);
     await expect(page.locator(`#p-${id} .longread`)).toHaveAttribute("lang", "fr", { timeout: 45_000 });
   } finally { if (fs.existsSync(hold)) fs.unlinkSync(hold); }
+});
+
+test("body polling continues after the edit notice clears from the address", async ({ page }) => {
+  const { id, body } = fixtures().edited;
+  const hold = path.join(state().dir, "fake-body-translation-hold");
+  const clean = `/t/${id}?lang=fr&rl=1`;
+  fs.writeFileSync(hold, body);
+  try {
+    await page.clock.install();
+    const first = await openWaitingBody(page, "edited", id, `/t/${id}?edited=${id}&lang=fr&rl=1`);
+    expect(new URL(first.url()).searchParams.get("edited")).toBe(String(id));
+    await Promise.all([waitForBodyPoll(page, id), page.clock.fastForward(6_100)]);
+    await expect(page).toHaveURL(clean);
+    const [afterCleanup] = await Promise.all([
+      waitForBodyPoll(page, id, url => !url.searchParams.has("edited")),
+      page.clock.fastForward(7_000),
+    ]);
+    expect(afterCleanup.status()).toBe(200);
+    await expect(page.locator("[data-article-translation-waiting]")).toBeVisible();
+
+    fs.unlinkSync(hold);
+    await waitForFakeBody(page, clean, body);
+    await page.clock.fastForward(13_000);
+    await expect(page.locator(`#p-${id} [data-reading-body]`)).toHaveAttribute("lang", "fr");
+    await expect(page).toHaveURL(clean);
+  } finally { fs.rmSync(hold, { force: true }); }
+});
+
+test("body polling continues when a share-language hint is added and removed", async ({ page }) => {
+  const { id, body } = fixtures().share;
+  const hold = path.join(state().dir, "fake-body-translation-hold");
+  const address = `/t/${id}?lang=fr&rl=1`;
+  fs.writeFileSync(hold, body);
+  try {
+    await page.clock.install();
+    await openWaitingBody(page, "share", id, address);
+    // Rewrite the address as the share card does, with no router navigation.
+    await page.evaluate(url => history.replaceState(history.state, "", url), `${address}&sl=ja`);
+    const [added] = await Promise.all([
+      waitForBodyPoll(page, id, url => url.searchParams.get("sl") === "ja"),
+      page.clock.fastForward(3_500),
+    ]);
+    expect(added.status()).toBe(200);
+    await page.evaluate(url => history.replaceState(history.state, "", url), address);
+    fs.unlinkSync(hold);
+    await waitForFakeBody(page, address, body);
+    const [removed] = await Promise.all([
+      waitForBodyPoll(page, id, url => !url.searchParams.has("sl")),
+      page.clock.fastForward(6_500),
+    ]);
+    expect(removed.status()).toBe(200);
+    await expect(page.locator(`#p-${id} [data-reading-body]`)).toHaveAttribute("lang", "fr");
+  } finally { fs.rmSync(hold, { force: true }); }
+});
+
+test("body polling skips a pending history destination and resumes on return", async ({ page }) => {
+  const { id, body } = fixtures().navigate;
+  const hold = path.join(state().dir, "fake-body-translation-hold");
+  const address = `/t/${id}?lang=fr&rl=1`;
+  fs.writeFileSync(hold, body);
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const polled: string[] = [];
+  page.on("request", request => { if (isBodyPoll(request)) polled.push(new URL(request.url()).pathname); });
+  try {
+    await page.clock.install();
+    await useMember(page, "ondemand_navigate@example.com", "/latest");
+    await waitForClientRoute(page);
+    const [first] = await Promise.all([
+      waitForBodyPoll(page, id),
+      page.evaluate(url => (window as unknown as { __reactRouterDataRouter: { navigate(url: string): Promise<void> } }).__reactRouterDataRouter.navigate(url), address),
+    ]);
+    expect(first.ok()).toBe(true);
+    const waiting = page.locator("[data-article-translation-waiting]");
+    await expect(waiting).toBeVisible();
+    const m = await uiMessages(page);
+
+    await page.route("**/latest.data*", async route => { await held; await route.continue().catch(() => {}); });
+    await Promise.all([page.waitForRequest("**/latest.data*"), page.evaluate(() => history.back())]);
+    await expect(page).toHaveURL("/latest");
+    const before = polled.length;
+    await page.clock.fastForward(4_000);
+    await expect(waiting).toBeVisible();
+    await expect(page.getByText(m.label_no_translation, { exact: true })).toHaveCount(0);
+    expect(polled).toHaveLength(before);
+
+    await page.evaluate(() => history.forward());
+    await expect(page).toHaveURL(address);
+    await waitForClientRoute(page);
+    fs.unlinkSync(hold);
+    await waitForFakeBody(page, address, body);
+    const [resumed] = await Promise.all([waitForBodyPoll(page, id), page.clock.fastForward(4_000)]);
+    expect(resumed.status()).toBe(200);
+    expect(polled.every(pathname => pathname === `/t/${id}/translations`)).toBe(true);
+    await expect(page.locator(`#p-${id} [data-reading-body]`)).toHaveAttribute("lang", "fr");
+  } finally { release(); fs.rmSync(hold, { force: true }); }
 });
 
 test("the author's notice polls for source confirmation alone and stops when it finishes", async ({ page }) => {

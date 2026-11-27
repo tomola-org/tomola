@@ -1,6 +1,7 @@
 import type { SourceLang } from "./languages";
 import { documentKey } from "./reading-document";
 import { SHARE_LANG_PARAM } from "./share-language";
+import { topicPageKey } from "./topic-page";
 
 // Read the small reply to the end: an unread, compressed body can keep the request
 // open in the browser, so the page never settles.
@@ -72,17 +73,9 @@ export function markTopicRead(page: string, lang: SourceLang, isTranslated: bool
   const url = new URL(page, location.href);
   const key = `${url.pathname}:${lang}:${isTranslated ? "tr" : "orig"}`;
   const shared = url.searchParams.has(SHARE_LANG_PARAM);
-  const search = (value: string) => {
-    const params = new URLSearchParams(value);
-    params.delete(SHARE_LANG_PARAM);
-    params.delete("posted");
-    params.delete("edited");
-    params.delete("followed");
-    return params.toString();
-  };
-  const displayedSearch = search(url.search);
+  const displayedPage = topicPageKey(url.pathname, url.search);
   const report = () => {
-    if (location.pathname !== url.pathname || search(location.search) !== displayedSearch ||
+    if (topicPageKey(location.pathname, location.search) !== displayedPage ||
       inFlightReads.has(key) || rememberRead(key, Date.now())) return;
     const internal = reportedRead || (window.history.state?.key ?? "default") !== documentKey;
     inFlightReads.add(key);

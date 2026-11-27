@@ -19,6 +19,9 @@ export function readingLangSearch(search: string, target: Lang, usual: Lang | nu
   const params = new URLSearchParams(search);
   params.delete("page");
   params.delete("manage");
+  params.delete("posted");
+  params.delete("edited");
+  params.delete("followed");
   if (ui) {
     params.set("lang", target);
     params.set(READING_ONLY_PARAM, ui);

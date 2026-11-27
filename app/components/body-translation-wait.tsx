@@ -1,9 +1,10 @@
 import { useEffect, useEffectEvent, useState } from "react";
-import { useRevalidator } from "react-router";
+import { useLocation, useRevalidator } from "react-router";
 import { PendingText } from "~/components/pending-text";
 import { BODY_TRANSLATION_WAIT_MS, bodyTranslationPollDelay } from "~/lib/body-translation-poll";
 import { languageLabel } from "~/lib/language-label";
 import type { Lang, SourceLang } from "~/lib/languages";
+import { topicPageKey } from "~/lib/topic-page";
 import { useTranslationWait } from "~/lib/translation-wait";
 import { m } from "~/paraglide/messages.js";
 
@@ -23,7 +24,8 @@ type Batch = {
 
 // One coordinator per mounted topic page. Replies and the topic share each request.
 let batch: Batch | undefined;
-const pageAddress = () => location.pathname + location.search;
+const pageAddress = () => topicPageKey(location.pathname, location.search);
+const isCurrent = (current: Batch) => batch === current && !current.controller.signal.aborted;
 
 function stop(current: Batch) {
   clearTimeout(current.timer);
@@ -82,56 +84,59 @@ async function refresh(current: Batch, result: Status) {
   }
 }
 
-async function poll(current: Batch) {
+async function requestTranslations(current: Batch) {
   const { signal } = current.controller;
-  if (signal.aborted || !current.listeners.size) return;
-  if (Date.now() >= current.until) { finish(current); return; }
-  if (pageAddress() !== current.page) { stop(current); return; }
-
-  if (document.visibilityState === "visible") {
-    if (current.until === Number.POSITIVE_INFINITY) {
-      current.until = Date.now() + BODY_TRANSLATION_WAIT_MS;
-      current.deadline = setTimeout(() => finish(current), BODY_TRANSLATION_WAIT_MS);
+  const ids = [...current.listeners.keys()];
+  const fresh = ids.filter(id => !current.requested.has(id));
+  current.round++;
+  try {
+    const response = await fetch(`${location.pathname}/translations${location.search}`, {
+      method: "POST", credentials: "same-origin", redirect: "error", signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ intent: fresh.length ? "request" : "status", ids: fresh.length ? fresh : ids }),
+    });
+    if (!isCurrent(current) || pageAddress() !== current.page) return;
+    if (!response.ok) { finish(current); return; }
+    const result = await response.json() as Status;
+    if (!isCurrent(current) || pageAddress() !== current.page) return;
+    for (const id of result.paused ?? []) {
+      current.listeners.get(id)?.state("stopped");
+      current.listeners.delete(id);
     }
-    const ids = [...current.listeners.keys()];
-    const fresh = ids.filter(id => !current.requested.has(id));
-    try {
-      const response = await fetch(`${location.pathname}/translations${location.search}`, {
-        method: "POST", credentials: "same-origin", redirect: "error", signal,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent: fresh.length ? "request" : "status", ids: fresh.length ? fresh : ids }),
-      });
-      if (!response.ok) { finish(current); return; }
-      const result = await response.json() as Status;
-      if (signal.aborted) return;
-      for (const id of result.paused ?? []) {
-        current.listeners.get(id)?.state("stopped");
-        current.listeners.delete(id);
-      }
-      const update = refresh(current, result);
-      if (result.stopped) finish(current);
-      else for (const id of fresh) {
-        current.requested.add(id);
-        current.listeners.get(id)?.state("working");
-      }
-      await update;
-    } catch {
-      // Retry an interrupted request on the same bounded schedule.
+    const update = refresh(current, result);
+    if (result.stopped) finish(current);
+    else for (const id of fresh) {
+      current.requested.add(id);
+      current.listeners.get(id)?.state("working");
     }
+    await update;
+  } catch {
+    // Retry an interrupted request on the same bounded schedule.
   }
-
-  if (signal.aborted) return;
-  if (!current.listeners.size) { stop(current); return; }
-  current.timer = setTimeout(() => { void poll(current); }, bodyTranslationPollDelay(current.round, current.until - Date.now()));
-  if (document.visibilityState === "visible") current.round++;
 }
 
-function join(entryId: number, listener: Listener): () => void {
-  const page = pageAddress();
+async function poll(current: Batch) {
+  if (!isCurrent(current) || !current.listeners.size) return;
+  const now = Date.now();
+  if (now >= current.until) { finish(current); return; }
+  if (document.visibilityState === "visible") {
+    if (current.until === Number.POSITIVE_INFINITY) {
+      current.until = now + BODY_TRANSLATION_WAIT_MS;
+      current.deadline = setTimeout(() => finish(current), BODY_TRANSLATION_WAIT_MS);
+    }
+    // A history traversal can change the address before the loader commits.
+    if (pageAddress() === current.page) await requestTranslations(current);
+  }
+
+  if (!isCurrent(current)) return;
+  if (!current.listeners.size) { stop(current); return; }
+  const round = Math.max(0, current.round - 1);
+  current.timer = setTimeout(() => { void poll(current); }, bodyTranslationPollDelay(round, current.until - Date.now()));
+}
+
+function join(page: string, entryId: number, listener: Listener): () => void {
   if (batch?.page !== page) {
-    if (batch) stop(batch);
-    // The wait starts with the first request, made only while the page is visible:
-    // a page opened in a background tab has not asked for anything yet.
+    // A background tab has not begun its wait until the first visible check.
     const current: Batch = { page, listeners: new Map(), requested: new Set(), controller: new AbortController(), until: Number.POSITIVE_INFINITY, round: 0 };
     current.timer = setTimeout(() => { void poll(current); }, 0);
     batch = current;
@@ -149,14 +154,16 @@ type OriginalNotice = { source: SourceLang; sourceCode?: string | null; target: 
 export default function BodyTranslationWait({ entryId, original }: { entryId: number; original?: OriginalNotice }) {
   const wait = useTranslationWait("posts");
   const [state, setState] = useState<State>("idle");
+  const { pathname, search } = useLocation();
+  const page = topicPageKey(pathname, search);
   const revalidator = useRevalidator();
   const refresh = useEffectEvent(async () => { await revalidator.revalidate(); });
   const target = original?.target;
   useEffect(() => {
     if (wait.kind === "stopped") return;
     setState("idle");
-    return join(entryId, { state: setState, refresh, target });
-  }, [entryId, wait.kind, target]);
+    return join(page, entryId, { state: setState, refresh, target });
+  }, [page, entryId, wait.kind, target]);
 
   const shownState = wait.kind === "stopped" && state !== "unavailable" ? "stopped" : state;
   if (shownState === "finished") return null;

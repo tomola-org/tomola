@@ -29,6 +29,7 @@ it.each([
   ["?orig=7&tag=objection&lang=en&page=2", "ja", "en", "?orig=7&tag=objection&lang=ja&rl=1"],
   ["?lang=ja&lang=en&page=2", "fr", "en", "?lang=fr&rl=1"],
   ["?manage=1&order=activity&asks=1&page=3&membersPage=2", "ja", "en", "?order=activity&asks=1&membersPage=2&lang=ja&rl=1"],
+  ["?posted=7&edited=7&followed=1&tag=objection", "fr", "en", "?tag=objection&lang=fr&rl=1"],
   ["", "en", null, "?lang=en&rl=1"],
   ["?lang=fr&rl=1&page=2", "en", null, "?lang=en&rl=1"],
 ] as const)("language link keeps unrelated state and returns to page one: %s", (search, target, usual, expected) => {
