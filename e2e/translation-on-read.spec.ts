@@ -6,6 +6,11 @@ import { localizedLanguageLabel } from "../app/lib/language-label";
 import { captureScreenshot, formatMessage, state, uiMessages, useMember, waitForClientRoute } from "./helpers";
 const fixtures = () => JSON.parse(fs.readFileSync(path.join(state().dir, "translation-on-read.json"), "utf8")) as Record<string, { id: number; body: string }>;
 
+function repeatedFixture(name: string) {
+  const index = test.info().repeatEachIndex;
+  return fixtures()[index ? `${name}_${index}` : name];
+}
+
 function isBodyPoll(request: Request) {
   if (request.method() !== "POST" || !new URL(request.url()).pathname.endsWith("/translations")) return false;
   const intent = request.postDataJSON()?.intent;
@@ -22,11 +27,30 @@ function waitForBodyPoll(page: Page, id: number, matches: (url: URL) => boolean 
 async function openWaitingBody(page: Page, name: string, id: number, url: string) {
   const [first] = await Promise.all([
     waitForBodyPoll(page, id),
-    useMember(page, `ondemand_${name}@example.com`, url),
+    (async () => {
+      await useMember(page, `ondemand_${name}@example.com`, url);
+      await advanceClockUntil(page, expect(page.locator("[data-article-translation-waiting]")).toBeVisible());
+    })(),
   ]);
   expect(first.ok()).toBe(true);
-  await expect(page.locator("[data-article-translation-waiting]")).toBeVisible();
   return first;
+}
+
+async function pauseBrowserClock(page: Page) {
+  const now = Date.now();
+  await page.clock.install({ time: now - 60_000 });
+  await page.clock.pauseAt(now);
+}
+
+async function advanceClockUntil(page: Page, ready: Promise<unknown>) {
+  let finished = false;
+  await Promise.all([
+    ready.finally(() => { finished = true; }),
+    expect.poll(async () => {
+      if (!finished) await page.clock.runFor(32);
+      return finished;
+    }).toBe(true),
+  ]);
 }
 
 async function waitForFakeBody(page: Page, url: string, body: string) {
@@ -121,16 +145,17 @@ test("the author's notice finishes after source confirmation without polling for
 });
 
 test("body polling continues after the edit notice clears from the address", async ({ page }) => {
-  const { id, body } = fixtures().edited;
+  const { id, body } = repeatedFixture("edited");
   const hold = path.join(state().dir, "fake-body-translation-hold");
   const clean = `/t/${id}?lang=fr&rl=1`;
   fs.writeFileSync(hold, body);
   try {
-    await page.clock.install();
+    await pauseBrowserClock(page);
     const first = await openWaitingBody(page, "edited", id, `/t/${id}?edited=${id}&lang=fr&rl=1`);
     expect(new URL(first.url()).searchParams.get("edited")).toBe(String(id));
     await Promise.all([waitForBodyPoll(page, id), page.clock.fastForward(6_100)]);
     await expect(page).toHaveURL(clean);
+    await advanceClockUntil(page, waitForClientRoute(page));
     const [afterCleanup] = await Promise.all([
       waitForBodyPoll(page, id, url => !url.searchParams.has("edited")),
       page.clock.fastForward(7_000),
@@ -147,12 +172,12 @@ test("body polling continues after the edit notice clears from the address", asy
 });
 
 test("body polling continues when a share-language hint is added and removed", async ({ page }) => {
-  const { id, body } = fixtures().share;
+  const { id, body } = repeatedFixture("share");
   const hold = path.join(state().dir, "fake-body-translation-hold");
   const address = `/t/${id}?lang=fr&rl=1`;
   fs.writeFileSync(hold, body);
   try {
-    await page.clock.install();
+    await pauseBrowserClock(page);
     await openWaitingBody(page, "share", id, address);
     // Rewrite the address as the share card does, with no router navigation.
     await page.evaluate(url => history.replaceState(history.state, "", url), `${address}&sl=ja`);
@@ -161,6 +186,7 @@ test("body polling continues when a share-language hint is added and removed", a
       page.clock.fastForward(3_500),
     ]);
     expect(added.status()).toBe(200);
+    await advanceClockUntil(page, waitForClientRoute(page));
     await page.evaluate(url => history.replaceState(history.state, "", url), address);
     fs.unlinkSync(hold);
     await waitForFakeBody(page, address, body);
@@ -174,7 +200,7 @@ test("body polling continues when a share-language hint is added and removed", a
 });
 
 test("body polling skips a pending history destination and resumes on return", async ({ page }) => {
-  const { id, body } = fixtures().navigate;
+  const { id, body } = repeatedFixture("navigate");
   const hold = path.join(state().dir, "fake-body-translation-hold");
   const address = `/t/${id}?lang=fr&rl=1`;
   fs.writeFileSync(hold, body);
@@ -183,16 +209,18 @@ test("body polling skips a pending history destination and resumes on return", a
   const polled: string[] = [];
   page.on("request", request => { if (isBodyPoll(request)) polled.push(new URL(request.url()).pathname); });
   try {
-    await page.clock.install();
     await useMember(page, "ondemand_navigate@example.com", "/latest");
     await waitForClientRoute(page);
+    await pauseBrowserClock(page);
+    const waiting = page.locator("[data-article-translation-waiting]");
     const [first] = await Promise.all([
       waitForBodyPoll(page, id),
-      page.evaluate(url => (window as unknown as { __reactRouterDataRouter: { navigate(url: string): Promise<void> } }).__reactRouterDataRouter.navigate(url), address),
+      advanceClockUntil(page, (async () => {
+        await page.evaluate(url => (window as unknown as { __reactRouterDataRouter: { navigate(url: string): Promise<void> } }).__reactRouterDataRouter.navigate(url), address);
+        await expect(waiting).toBeVisible();
+      })()),
     ]);
     expect(first.ok()).toBe(true);
-    const waiting = page.locator("[data-article-translation-waiting]");
-    await expect(waiting).toBeVisible();
     const m = await uiMessages(page);
 
     await page.route("**/latest.data*", async route => { await held; await route.continue().catch(() => {}); });
@@ -206,7 +234,7 @@ test("body polling skips a pending history destination and resumes on return", a
 
     await page.evaluate(() => history.forward());
     await expect(page).toHaveURL(address);
-    await waitForClientRoute(page);
+    await advanceClockUntil(page, waitForClientRoute(page));
     fs.unlinkSync(hold);
     await waitForFakeBody(page, address, body);
     const [resumed] = await Promise.all([waitForBodyPoll(page, id), page.clock.fastForward(4_000)]);
@@ -385,23 +413,26 @@ test("waiting continues after two minutes, skips hidden pages and shows an unava
 });
 
 test("returning to the tab checks for a ready translation during a long polling interval", async ({ page }) => {
-  const { id, body } = fixtures().return;
+  const { id, body } = repeatedFixture("return");
   const hold = path.join(state().dir, "fake-body-translation-hold");
   const address = `/t/${id}?lang=fr&rl=1`;
   fs.writeFileSync(hold, body);
   try {
-    await page.clock.install();
+    await pauseBrowserClock(page);
     await openWaitingBody(page, "return", id, address);
     for (const delay of [3_500, 6_500, 12_500, 24_500]) {
       const [response] = await Promise.all([waitForBodyPoll(page, id), page.clock.fastForward(delay)]);
       expect(response.ok()).toBe(true);
-      await waitForClientRoute(page);
+      await advanceClockUntil(page, waitForClientRoute(page));
     }
     await setVisibility(page, "hidden");
     await page.clock.fastForward(3_500);
     fs.unlinkSync(hold);
     await waitForFakeBody(page, address, body);
-    const [returned] = await Promise.all([waitForBodyPoll(page, id), setVisibility(page, "visible")]);
+    const [returned] = await Promise.all([
+      waitForBodyPoll(page, id),
+      (async () => { await setVisibility(page, "visible"); await page.clock.runFor(1); })(),
+    ]);
     expect(returned.status()).toBe(200);
     await expect(page.locator(`#p-${id} [data-reading-body]`)).toHaveAttribute("lang", "fr");
   } finally { fs.rmSync(hold, { force: true }); }
@@ -413,7 +444,7 @@ test("returning to the tab respects the minimum interval and an in-flight poll",
   const held = new Promise<void>(resolve => { release = resolve; });
   const intents = await mockPendingBody(page, id, async intent => { if (intent === "status") await held; });
   try {
-    await page.clock.install();
+    await pauseBrowserClock(page);
     await openWaitingBody(page, "inflight", id, `/t/${id}?lang=fr&rl=1`);
     await setVisibility(page, "hidden");
     await setVisibility(page, "visible");
@@ -437,7 +468,7 @@ test("returning to the tab respects the minimum interval and an in-flight poll",
 test("returning after the deadline ends the wait before a throttled timer fires", async ({ page }) => {
   const { id } = fixtures().expired;
   const intents = await mockPendingBody(page, id);
-  await page.clock.install();
+  await pauseBrowserClock(page);
   await openWaitingBody(page, "expired", id, `/t/${id}?lang=fr&rl=1`);
   const m = await uiMessages(page);
   await setVisibility(page, "hidden");
