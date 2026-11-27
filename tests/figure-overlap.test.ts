@@ -123,6 +123,25 @@ it("rescues a label on clean background after a wider fallback meets artwork", a
   expect(position.mock.results).toContainEqual(expect.objectContaining({ value: expect.objectContaining({ pixels: 0 }) }));
 });
 
+it("tries another fallback position when the preferred glyph footprint hits a rule", async () => {
+  const line = { left: 195, top: 20, width: 1, height: 110 };
+  const { source, reading } = await fallbackFigure((x, y) => x === line.left && y >= line.top && y < line.top + line.height);
+  forceFirstLabelToFallback();
+  const findPosition = overlap.figureOverlapPosition;
+  const position = vi.spyOn(overlap, "figureOverlapPosition");
+  const result = await renderFigureLabels(source, reading, ["New data label", "Plot"], "en");
+  expect(result.results.map(r => r.status)).toEqual(["rendered", "rendered"]);
+
+  const [prepared, w, h, ratio, align, hitsGraphics] = position.mock.calls[0];
+  const preferred = findPosition(prepared, w, h, ratio, align, () => false)!;
+  expect(hitsGraphics?.(preferred.position)).toBe(true);
+  const alternate = position.mock.results[0].value;
+  expect(alternate.position).not.toEqual(preferred.position);
+  expect(hitsGraphics?.(alternate.position)).toBe(false);
+  const decode = (input: Buffer) => sharp(input).extract(line).ensureAlpha().raw().toBuffer();
+  expect(await decode(result.bytes!)).toEqual(await decode(source));
+});
+
 it("retains the original artwork when all fallback placements meet it", async () => {
   const { source, reading } = await fallbackFigure((x, y, glyphWidth, glyphHeight) => {
     const nearGlyph = x >= 112 && x < 128 + glyphWidth && y >= 67 && y < 83 + glyphHeight;

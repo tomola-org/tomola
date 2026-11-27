@@ -1,5 +1,5 @@
 import type { FigureReading, FigureRegion } from "./figure";
-import { figurePixelDelta, findFigureGraphics } from "./figure-graphics.server";
+import { FIGURE_GRAPHICS, figurePixelDelta, findFigureGraphics } from "./figure-graphics.server";
 
 export type FigureBox = { left: number; top: number; width: number; height: number };
 export const FIGURE_SPACE = { adjacentDelta: 6, backgroundNoise: 16, faintLineContrast: 32, faintLineWidth: 3, faintLineLength: 24, contrast: 40, glyphFringe: 4, guard: 2, maxSpeckPixels: 9, maxSpeckDiameter: 3, maxWindowWidth: 2048, maxWindowHeight: 512, maxWindowPixels: 1048576, horizontalMargin: 192, verticalMargin: 96 } as const;
@@ -17,6 +17,7 @@ export function background(data: Buffer, width: number, height: number, box: Fig
     const p = y * width + x;
     if (!inside(box, x, y) && !graphics?.has(p)) for (let c = 0; c < 4; c++) samples[c].push(data[p * 4 + c]);
   }
+  if (!samples[0].length && graphics?.size) return background(data, width, height, box);
   return samples.map((values, c) => values.length ? median(values) : data[c]);
 }
 const padded = (box: FigureBox, amount: number, width: number, height: number): FigureBox => ({
@@ -24,7 +25,7 @@ const padded = (box: FigureBox, amount: number, width: number, height: number): 
   width: Math.min(width, box.left + box.width + amount) - Math.max(0, box.left - amount),
   height: Math.min(height, box.top + box.height + amount) - Math.max(0, box.top - amount),
 });
-export type FigureInk = { box: FigureBox; points: number[]; protectedPoints?: number[]; graphics?: ReadonlySet<number>; fringe?: number[]; keepOut?: FigureBox; unsafe?: boolean; lineCount: number; lineHeights: number[]; uncertain: boolean; original?: FigureInk };
+export type FigureInk = { box: FigureBox; points: number[]; protectedPoints?: number[]; graphics?: ReadonlySet<number>; graphicsWindow?: FigureBox; fringe?: number[]; keepOut?: FigureBox; unsafe?: boolean; lineCount: number; lineHeights: number[]; uncertain: boolean; original?: FigureInk };
 type InkComponent = { box: FigureBox; points: number[]; touches: boolean };
 const maxInkPadding = 64, maxLetterGap = 6;
 
@@ -97,7 +98,7 @@ function measureInk(data: Buffer, width: number, height: number, box: FigureBox,
     const local = padded(box, padding, width, height);
     const wide = original ? padded(box, maxInkPadding, width, height) : local;
     const search = { ...local, left: wide.left, width: wide.width };
-    if (search.width > FIGURE_SPACE.maxWindowWidth || search.height > FIGURE_SPACE.maxWindowHeight) return { ...final, uncertain: true };
+    if (graphics && (search.width > FIGURE_SPACE.maxWindowWidth || search.height > FIGURE_SPACE.maxWindowHeight)) return { ...final, uncertain: true };
     const { components: found, tinyPoints, mask } = inkComponents(data, width, box, search, others, color, threshold, graphics);
     const components = found.filter(({ box: b }) => {
       const narrowUpright = b.height > box.height * .8 && b.width <= 2;
@@ -227,17 +228,18 @@ function sourceColorMatcher(data: Buffer, components: number[][], ground: number
   return (points: number[]) => points.some(p => {
     const q = p * 4;
     if (ground[3] <= 16) return data[q + 3] >= Math.max(40, color[3] - 64);
-    return color.slice(0, 3).every((c, channel) => Math.abs(data[q + channel] - c) <= 56);
+    return color.slice(0, 3).every((c, channel) => Math.abs(data[q + channel] - c) <= FIGURE_GRAPHICS.sourceColorDelta);
   });
 }
 
 function hasDistinctMark(data: Buffer, component: InkComponent, characterHeight: number, matchesColor: (points: number[]) => boolean): boolean {
   const { width, height } = component.box, short = Math.min(width, height), long = Math.max(width, height);
-  if (short < Math.max(6, characterHeight * .5) || long > short * 1.65 || matchesColor(component.points)) return false;
+  const { minSize, maxAspectRatio, minSaturation } = FIGURE_GRAPHICS.mark;
+  if (short < Math.max(minSize, characterHeight * .5) || long > short * maxAspectRatio || matchesColor(component.points)) return false;
   let saturated = 0;
   for (const p of component.points) {
     const r = data[p * 4], g = data[p * 4 + 1], b = data[p * 4 + 2];
-    if (Math.max(r, g, b) - Math.min(r, g, b) >= 48 && ++saturated >= long) return true;
+    if (Math.max(r, g, b) - Math.min(r, g, b) >= minSaturation && ++saturated >= long) return true;
   }
   return false;
 }
@@ -337,16 +339,17 @@ function recoverFigureRows(data: Buffer, width: number, height: number, box: Fig
 
 function figureSourceFringe(data: Buffer, width: number, height: number, ink: FigureInk, others: FigureBox[], source: FigureBox): number[] {
   const { points, graphics, protectedPoints } = ink;
+  const radius = FIGURE_SPACE.glyphFringe - 1;
   const ground = background(data, width, height, source, graphics);
   const excluded = new Set(protectedPoints), core = new Set(points), fringe = new Set<number>();
   for (const p of points) {
     const x = p % width, y = Math.floor(p / width);
     if (x > 0 && x + 1 < width && core.has(p - 1) && core.has(p + 1) && core.has(p - width) && core.has(p + width)) continue;
-    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+    for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) {
       const sx = x + dx, sy = y + dy, q = sy * width + sx;
       if (sx < 0 || sx >= width || sy < 0 || sy >= height || core.has(q) || fringe.has(q) ||
           graphics?.has(q) || excluded.has(q) || others.some(b => inside(b, sx, sy))) continue;
-      const rx = sx + Math.sign(dx) * 3, ry = sy + Math.sign(dy) * 3;
+      const rx = sx + Math.sign(dx) * radius, ry = sy + Math.sign(dy) * radius;
       if (rx >= 0 && rx < width && ry >= 0 && ry < height && figurePixelDelta(data, q, ry * width + rx) < 4) continue;
       const ref = [];
       for (const offset of [-1, 0, 1]) {
@@ -375,26 +378,29 @@ function figureSourceFringe(data: Buffer, width: number, height: number, ink: Fi
 function figureInkCrossesRule(data: Buffer, width: number, height: number, ink: FigureInk): boolean {
   const { box, graphics } = ink;
   if (!graphics?.size) return false;
+  const { maxSpan, endpointSearch, continuation, endpointColorDelta, visibleColorDelta } = FIGURE_GRAPHICS.crossing;
   for (const vertical of [false, true]) {
     const start = vertical ? box.top : box.left, length = vertical ? box.height : box.width;
-    if (length > 112) continue;
+    if (length > maxSpan) continue;
     const end = start + length, limit = vertical ? height : width;
+    const first = Math.max(0, start - endpointSearch), last = Math.min(limit, end + endpointSearch);
     const across = vertical ? box.left : box.top, rows = vertical ? box.width : box.height;
     const pixel = (u: number, v: number) => vertical ? u * width + v : v * width + u;
     for (let v = across; v < across + rows; v++) {
       let before = start - 1, after = end;
-      while (before >= Math.max(0, start - 8) && !graphics.has(pixel(before, v))) before--;
-      while (after < Math.min(limit, end + 8) && !graphics.has(pixel(after, v))) after++;
-      if (before < Math.max(0, start - 8) || after >= Math.min(limit, end + 8)) continue;
+      while (before >= first && !graphics.has(pixel(before, v))) before--;
+      while (after < last && !graphics.has(pixel(after, v))) after++;
+      if (before < first || after >= last) continue;
       // Side walls of a frame can leave two dots in the same row. Each
       // endpoint must continue in the direction of the proposed rule.
-      if (before < 5 || after + 5 >= limit || !graphics.has(pixel(before - 5, v)) || !graphics.has(pixel(after + 5, v))) continue;
+      if (before < continuation || after + continuation >= limit ||
+          !graphics.has(pixel(before - continuation, v)) || !graphics.has(pixel(after + continuation, v))) continue;
       const a = pixel(before, v), b = pixel(after, v);
-      if (figurePixelDelta(data, a, b) > 10) continue;
+      if (figurePixelDelta(data, a, b) > endpointColorDelta) continue;
       let visible = 0;
       for (let u = start; u < end; u++) {
         const p = pixel(u, v);
-        if (figurePixelDelta(data, p, a) <= 8 && figurePixelDelta(data, p, b) <= 8) visible++;
+        if (figurePixelDelta(data, p, a) <= visibleColorDelta && figurePixelDelta(data, p, b) <= visibleColorDelta) visible++;
       }
       if (visible * 3 >= length && ink.points.some(p => (vertical ? p % width : Math.floor(p / width)) === v)) return true;
     }
@@ -404,6 +410,7 @@ function figureInkCrossesRule(data: Buffer, width: number, height: number, ink: 
 
 export function measureFigureInk(data: Buffer, width: number, height: number, box: FigureBox, others: FigureBox[], graphics = figureGraphics(data, width, height, [box, ...others])): FigureInk {
   const ink = measureInk(data, width, height, box, others, FIGURE_SPACE.contrast, undefined, graphics);
+  const graphicsWindow = figureSpaceWindow(box, width, height);
   if (!ink.points.length) {
     // A clear OCR box still supplies an anchor. If the raster contains
     // unclassified foreground there, keep the source for an external note.
@@ -414,7 +421,7 @@ export function measureFigureInk(data: Buffer, width: number, height: number, bo
       if (graphics.has(p) || Math.abs(data[q + 3] - ground[3]) > 8 ||
           ground[3] > 16 && ground.slice(0, 3).some((value, c) => Math.abs(value - data[q + c]) > 12)) { unsafe = true; break; }
     }
-    return { ...ink, keepOut: box, unsafe };
+    return { ...ink, graphicsWindow, keepOut: box, unsafe };
   }
   const recovered = recoverFigureRows(data, width, height, box, others, ink);
   let unsafe = ink.unsafe || recovered.unsafe || recovered.uncertain || figureInkCrossesRule(data, width, height, recovered);
@@ -424,7 +431,7 @@ export function measureFigureInk(data: Buffer, width: number, height: number, bo
     if (unsafe || !graphics.size) break;
     const x = p % width;
     for (const q of [p - width, p + width, ...(x ? [p - 1] : []), ...(x + 1 < width ? [p + 1] : [])]) {
-      if (graphics.has(q) && figurePixelDelta(data, p, q) <= 56) { unsafe = true; break; }
+      if (graphics.has(q) && figurePixelDelta(data, p, q) <= FIGURE_GRAPHICS.joinedStrokeColorDelta) { unsafe = true; break; }
     }
   }
   const fringe = figureSourceFringe(data, width, height, recovered, others, box);
@@ -432,8 +439,8 @@ export function measureFigureInk(data: Buffer, width: number, height: number, bo
   // The layout can still use the unexpanded measurement. Both layouts carry
   // the safety decision and the complete source extent for neighbouring labels.
   const keepOut = unsafe ? enclosingBox(tight, box) : tight;
-  return { ...recovered, unsafe, fringe, keepOut, ...(recovered.original && {
-    original: { ...recovered.original, unsafe, keepOut },
+  return { ...recovered, graphicsWindow, unsafe, fringe, keepOut, ...(recovered.original && {
+    original: { ...recovered.original, graphicsWindow, unsafe, keepOut },
   }) };
 }
 
@@ -636,8 +643,10 @@ function figureBacking(data: Buffer, width: number, height: number, ink: FigureI
   const bounds = { left: Math.max(0, box.left - 4), top: edges[0], width: Math.min(width, box.left + box.width + 4) - Math.max(0, box.left - 4), height: edges[1] - edges[0] + 1 };
   if (bounds.top > box.top || bounds.top + bounds.height < box.top + box.height) return;
   const colors = (y: number) => Array.from({ length: bounds.width }, (_, dx) => {
-    const xs = [-2, -1, 0, 1, 2].map(d => Math.max(0, Math.min(width - 1, bounds.left + dx + d)));
-    const clear = xs.filter(x => !ink.graphics?.has(y * width + x));
+    const at = (d: number) => Math.max(0, Math.min(width - 1, bounds.left + dx + d));
+    const xs = [-1, 0, 1].map(at);
+    const unobstructed = (x: number) => !ink.graphics?.has(y * width + x);
+    const clear = xs.every(unobstructed) ? xs : [-2, -1, 0, 1, 2].map(at).filter(unobstructed);
     return clear.length ? [0, 1, 2, 3].map(c => median(clear.map(x => sample(x, y)[c]))) : [];
   });
   // Preserve established small-backing models. Wide banners sample inside the
@@ -748,6 +757,15 @@ export function figureSpaceWindow(anchor: FigureBox, width: number, height: numb
     top: Math.max(0, Math.min(height - h, anchor.top - Math.floor((h - anchor.height) / 2))), width: w, height: h };
 }
 
+// Recovered text can move the layout window. Keep placement inside the artwork search.
+export function figurePlacementWindow(ink: FigureInk, width: number, height: number): FigureBox {
+  const window = figureSpaceWindow(ink.box, width, height), searched = ink.graphicsWindow;
+  if (!searched) return window;
+  const left = Math.max(window.left, searched.left), top = Math.max(window.top, searched.top);
+  return { left, top, width: Math.max(0, Math.min(window.left + window.width, searched.left + searched.width) - left),
+    height: Math.max(0, Math.min(window.top + window.height, searched.top + searched.height) - top) };
+}
+
 // Only narrow, straight, low-contrast rules may join the background. Check
 // matching background on both sides so edges of broad fills remain obstacles.
 function allowFaintFigureLines(data: Buffer, width: number, height: number, nearBackground: Uint8Array, blocked: Uint8Array, color: number[]): void {
@@ -793,9 +811,11 @@ function allowFaintFigureLines(data: Buffer, width: number, height: number, near
 
 export function figureSpace(data: Buffer, width: number, height: number, index: number, measured: FigureInk[], occupied: FigureBox[] = [], context = prepareFigureSpace(width, height, measured), guard: number = FIGURE_SPACE.guard, surface?: FigureBackground): { anchor: FigureBox; erase: FigureBox; window: FigureBox; mask: Uint8Array; rectangles: FigureBox[]; seed: number; surface?: FigureBackground; eraseBounds?: FigureBox } {
   const anchor = measured[index].box, erase = figureErasureBox(anchor, width, height);
-  const window = figureSpaceWindow(anchor, width, height), w = window.width, h = window.height, count = w * h;
+  const window = figurePlacementWindow(measured[index], width, height), w = window.width, h = window.height, count = w * h;
   const localAnchor = { ...anchor, left: anchor.left - window.left, top: anchor.top - window.top };
-  if (anchor.width > w || anchor.height > h) return { anchor, erase, window, mask: new Uint8Array(count), rectangles: [] as FigureBox[], seed: -1 };
+  if (!inside(window, anchor.left, anchor.top) || !inside(window, anchor.left + anchor.width - 1, anchor.top + anchor.height - 1)) {
+    return { anchor, erase, window, mask: new Uint8Array(count), rectangles: [] as FigureBox[], seed: -1 };
+  }
   const virtual = Buffer.alloc(count * 4);
   for (let y = 0; y < h; y++) data.copy(virtual, y * w * 4, ((window.top + y) * width + window.left) * 4, ((window.top + y) * width + window.left + w) * 4);
   const bounds = context.bounds?.[index] ?? surface?.bounds;
@@ -963,8 +983,8 @@ export function figureErasureBreaksBackground(data: Buffer, patch: Buffer, width
           for (let c = 0; c < 3; c++) delta = Math.max(delta, Math.abs(patch[painted * 4 + c] - data[unchanged * 4 + c]));
         }
         run = delta >= FIGURE_SPACE.backgroundNoise ? run + 1 : 0;
-        if (run >= 12) {
-          if (++seams >= 3) return true;
+        if (run >= FIGURE_GRAPHICS.seam.minLength) {
+          if (++seams >= FIGURE_GRAPHICS.seam.minCount) return true;
           break;
         }
       }

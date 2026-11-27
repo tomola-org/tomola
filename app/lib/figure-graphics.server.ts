@@ -1,5 +1,14 @@
 import type { FigureBox } from "./figure-space.server";
 
+export const FIGURE_GRAPHICS = {
+  stroke: { colorDelta: 44, maxThickness: 6 },
+  sourceColorDelta: 56,
+  joinedStrokeColorDelta: 56,
+  mark: { minSize: 6, maxAspectRatio: 1.65, minSaturation: 48 },
+  crossing: { maxSpan: 112, endpointSearch: 8, continuation: 5, endpointColorDelta: 10, visibleColorDelta: 8 },
+  seam: { minLength: 12, minCount: 3 },
+} as const;
+
 export function figurePixelDelta(data: Buffer, a: number, b: number): number {
   let delta = Math.abs(data[a * 4 + 3] - data[b * 4 + 3]);
   if (data[a * 4 + 3] > 16 || data[b * 4 + 3] > 16) {
@@ -35,7 +44,9 @@ function ridge(data: Buffer, p: number, step: number): number {
   return contrast;
 }
 
+// Protect thin strokes, dashes and dots that follow a coherent path beyond the source lettering.
 export function findFigureGraphics(data: Buffer, width: number, window: FigureBox, characterHeight: number, boxes: FigureBox[], graphics: Set<number>): void {
+  const { colorDelta, maxThickness } = FIGURE_GRAPHICS.stroke;
   const minLength = Math.max(18, Math.min(36, Math.ceil(characterHeight * 1.25)));
   const extension = Math.max(5, Math.min(12, Math.ceil(characterHeight * .4)));
   const relevant = boxes.filter(b => b.left < window.left + window.width && b.left + b.width > window.left &&
@@ -58,20 +69,20 @@ export function findFigureGraphics(data: Buffer, width: number, window: FigureBo
           v++;
         }
         if (v === low) { v++; continue; }
-        if (v - low > 6) continue;
+        if (v - low > maxThickness) continue;
         const high = v - 1;
         let start = low, end = high;
         const tolerance = Math.max(3, Math.min(24, strongest / 2));
-        while (start > 0 && low - start < 7 && figurePixelDelta(data, at(u, start - 1), peak) <= tolerance) start--;
-        while (end + 1 < across && end - high < 7 && figurePixelDelta(data, at(u, end + 1), peak) <= tolerance) end++;
-        if (end - start + 1 > 6) continue;
+        while (start > 0 && low - start <= maxThickness && figurePixelDelta(data, at(u, start - 1), peak) <= tolerance) start--;
+        while (end + 1 < across && end - high <= maxThickness && figurePixelDelta(data, at(u, end + 1), peak) <= tolerance) end++;
+        if (end - start + 1 > maxThickness) continue;
         const center = (low + high) / 2, key = Math.round(center);
         const slice = { along: u, low, high, center, peak };
         let track: Slice[] | undefined;
         for (const offset of [0, -1, 1, -2, 2]) {
           const candidate = previous[key + offset], last = candidate?.at(-1);
           if (last && last.along === u - 1 && Math.abs(last.high - last.low - (high - low)) <= 2 &&
-              figurePixelDelta(data, last.peak, peak) <= 44) { track = candidate; break; }
+              figurePixelDelta(data, last.peak, peak) <= colorDelta) { track = candidate; break; }
         }
         if (!track) { track = []; tracks.push(track); starts[u].push(track); }
         track.push(slice); current[key] = track;
@@ -148,7 +159,7 @@ export function findFigureGraphics(data: Buffer, width: number, window: FigureBo
           const low = Math.floor(a.low * (1 - f) + b.low * f), high = Math.ceil(a.high * (1 - f) + b.high * f);
           for (let v = low; v <= high; v++) {
             const p = at(u, v);
-            if (figurePixelDelta(data, p, a.peak) <= 44 || figurePixelDelta(data, p, b.peak) <= 44) graphics.add(p);
+            if (figurePixelDelta(data, p, a.peak) <= colorDelta || figurePixelDelta(data, p, b.peak) <= colorDelta) graphics.add(p);
           }
         }
       }

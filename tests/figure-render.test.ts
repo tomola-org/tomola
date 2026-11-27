@@ -2,11 +2,12 @@ import sharp, { type Sharp } from "sharp";
 import { expect, it, vi } from "vitest";
 import { normalizeFigureReading, type FigureReading, type FigureRegion } from "~/lib/figure";
 import { renderFigure } from "./helpers/figure-render";
-import { createFigureRenderer, figureCapacity, figureFontSize, figureTextColor, renderFigureLabels } from "~/lib/figure-render.server";
+import { createFigureRenderer, figureCapacity, figureFontSize, figureTextColor, measureText, renderFigureLabels } from "~/lib/figure-render.server";
 import { figureFontDescription } from "~/lib/figure-fonts.server";
 import * as figureFonts from "~/lib/figure-fonts.server";
 import { parseFigureReading } from "~/lib/figure-reading.server";
-import { measureFigure } from "~/lib/figure-space.server";
+import { figureBox, figureSpace, figureSpaceWindow, measureFigure } from "~/lib/figure-space.server";
+import { prepareFigureOverlap } from "~/lib/figure-overlap.server";
 
 const width = 400, height = 240;
 const region: FigureRegion = { text: "HHH", lang: "en", confidence: 1, x: 0.1, y: 0.1, width: 0.25, height: 1 / 6, orientation: "horizontal" };
@@ -14,6 +15,16 @@ const reading = (regions: FigureRegion[] = [region]): FigureReading => ({ lang: 
 const blank = () => sharp({ create: { width, height, channels: 4, background: "white" } });
 const mark = (left: number, top: number, width: number, height: number) => ({ input: { create: { width, height, channels: 4 as const, background: "black" } }, left, top });
 const bounded = () => blank().composite([mark(144, 0, 1, height)]);
+
+it("measures full-width Japanese glyphs across the 128-character chunk boundary", async () => {
+  const [one, shorter, full, next] = await Promise.all(
+    [1, 127, 128, 129].map(length => measureText("漢".repeat(length), "ja", "normal")),
+  );
+  expect(full.inkWidth).toBe(shorter.inkWidth + full.width - shorter.width);
+  expect(next.inkWidth).toBe(full.inkWidth + one.inkWidth);
+  expect(full.inkLineHeight).toBeGreaterThan(0);
+  expect([full.inkLineHeight, next.inkLineHeight]).toEqual([shorter.inkLineHeight, shorter.inkLineHeight]);
+});
 
 it("preserves dropped label pixels beside the retained glyphs and blocks translation placement over them", async () => {
   const glyph = await sharp({ text: { text: "HHH", font: figureFontDescription("en", 28), rgba: true } }).png().toBuffer({ resolveWithObject: true });
@@ -583,7 +594,7 @@ it("retains shared diagram and source pixels while translating a second label", 
 
 it("erases a detached lower row and preserves the chart rule beyond it", async () => {
   const glyph = await sharp({ text: { text: "HHH", font: figureFontDescription("en", 24), rgba: true } }).png().toBuffer({ resolveWithObject: true });
-  const left = 125, top = 63, lower = top + glyph.info.height + 11, line = lower + glyph.info.height + 9;
+  const left = 125, top = 63, lower = top + glyph.info.height + 11, line = lower + glyph.info.height + 4;
   const bytes = await blank().composite([
     { input: glyph.data, left, top }, { input: glyph.data, left, top: lower }, mark(62, line, 265, 2),
   ]).png().toBuffer();
@@ -591,6 +602,10 @@ it("erases a detached lower row and preserves the chart rule beyond it", async (
   const original = await raw(bytes), ink = measureFigure(original, width, height, source)[0];
   expect(ink.original?.box.height).toBeLessThan(ink.box.height);
   expect(Math.min(...ink.points.filter(p => p >= lower * width).map(p => Math.floor(p / width)))).toBe(lower);
+  const searched = figureSpaceWindow(figureBox(source.regions[0], width, height), width, height);
+  expect(figureSpaceWindow(ink.box, width, height).height).toBeGreaterThan(searched.height);
+  expect(figureSpace(original, width, height, 0, [ink]).window).toEqual(searched);
+  expect(prepareFigureOverlap(original, width, height, 0, [ink], [])?.window).toEqual(searched);
   const result = await (await createFigureRenderer(bytes, source, "en"))(["Data"], { final: false });
   expect(result.results[0].status).toBe("rendered");
   const after = await raw(result.bytes!);

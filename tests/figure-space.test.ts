@@ -1,12 +1,24 @@
 import sharp from "sharp";
 import { expect, it } from "vitest";
 import type { FigureReading, FigureRegion } from "~/lib/figure";
-import { FIGURE_SPACE, figureBox, figureEraseMask, figureErasureHasResidue, figureGraphics, figureSpaceWindow, figureRectangles, figureSpace, measureFigure, measureFigureInk, restoreFigureBackground } from "~/lib/figure-space.server";
+import { FIGURE_SPACE, background, figureBox, figureEraseMask, figureErasureHasResidue, figureGraphics, figureSpaceWindow, figureRectangles, figureSpace, measureFigure, measureFigureInk, restoreFigureBackground } from "~/lib/figure-space.server";
 import { figureFontSize, renderFigureLabels } from "~/lib/figure-render.server";
 
 const label: FigureRegion = { text: "HHH", lang: "en", confidence: 1, x: .1, y: .2, width: .2, height: .2, orientation: "horizontal" };
 const reading = (regions = [label]): FigureReading => ({ lang: "en", confidence: 1, regions });
 const image = (width = 400, height = 200) => sharp({ create: { width, height, channels: 4, background: "white" } });
+
+it("uses the local ring when graphics occupy every background sample", () => {
+  const width = 16, height = 16, data = Buffer.alloc(width * height * 4, 255);
+  const box = { left: 6, top: 6, width: 4, height: 4 };
+  const graphics = new Set<number>();
+  for (let y = 4; y < 12; y++) for (let x = 4; x < 12; x++) {
+    const p = y * width + x;
+    graphics.add(p);
+    data.set([80, 90, 100, 255], p * 4);
+  }
+  expect(background(data, width, height, box, graphics)).toEqual([80, 90, 100, 255]);
+});
 
 it.each([
   { left: 10, top: 20, width: 10, height: 20 }, { left: 40, top: 20, width: 10, height: 20 },
@@ -94,7 +106,7 @@ it.each([1, 2, 3])("draws beside %ipx grid rules and preserves their pixels", as
   const text = "HHHHH";
   const glyph = await sharp({ text: { text, font: "Noto Sans 28", rgba: true } }).png().toBuffer({ resolveWithObject: true });
   const rules = [103, 235, 275, 315];
-  const marks = Buffer.from(`<svg width="${width}" height="${height}">${rules.map(x => `<rect x="${x}" width="${thickness}" height="240" fill="#e4e4e4"/>`).join("")}</svg>`);
+  const marks = Buffer.from(`<svg width="${width}" height="${height}">${rules.map(x => `<rect x="${x}" width="${thickness}" height="240" fill="#e4e4e4"/>`).join("")}<rect x="380" width="6" height="240"/><rect x="40" y="145" width="500" height="25"/></svg>`);
   const bytes = await image(width, height).composite([{ input: marks }, { input: glyph.data, left, top }]).png().toBuffer();
   const source = reading([{ ...label, text, x: left / width, y: top / height, width: glyph.info.width / width, height: glyph.info.height / height }]);
   const result = await renderFigureLabels(bytes, source, ["New data"], "en");
@@ -103,6 +115,10 @@ it.each([1, 2, 3])("draws beside %ipx grid rules and preserves their pixels", as
   for (let y = 0; y < height; y++) for (const x of rules) {
     const p = (y * width + x) * 4;
     expect(output.subarray(p, p + thickness * 4)).toEqual(original.subarray(p, p + thickness * 4));
+  }
+  for (const area of [{ left: 380, top: 0, width: 6, height }, { left: 40, top: 145, width: 500, height: 25 }]) {
+    const decode = (input: Buffer) => sharp(input).extract(area).ensureAlpha().raw().toBuffer();
+    expect(await decode(result.bytes!)).toEqual(await decode(bytes));
   }
 });
 

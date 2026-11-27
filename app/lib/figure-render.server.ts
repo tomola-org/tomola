@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import sharp, { type OverlayOptions } from "sharp";
 import { FIGURE_CONFIDENCE, figureTranslationRegions, normalizeFigureReading, normalizeFigureNewlines, preservesFigureMath, sameFigureLabel, type FigureReading, type FigureRegion } from "./figure";
@@ -14,7 +15,7 @@ export function usableFigure(reading: FigureReading): boolean {
 
 const isRenderableFigureRegion = (region: FigureRegion) => region.orientation === "horizontal";
 
-import { FIGURE_SPACE, background, figureBackgroundPatch, figureBackgroundPatchAgrees, figureBox, figureEraseMask, figureErasureBox, figureErasureBreaksBackground, figureErasureHasResidue, figureGraphics, figureGraphicsInBox, figureInkIsRemovable, figureSpace, figureSpaceWindow, figureSurfaceSpace, inside, measureFigureInk, measureGlyphInk, prepareFigureSpace, type FigureBox as Box, type FigureInk } from "./figure-space.server";
+import { FIGURE_SPACE, background, figureBackgroundPatch, figureBackgroundPatchAgrees, figureBox, figureEraseMask, figureErasureBox, figureErasureBreaksBackground, figureErasureHasResidue, figureGraphics, figureGraphicsInBox, figureInkIsRemovable, figurePlacementWindow, figureSpace, figureSurfaceSpace, inside, measureFigureInk, measureGlyphInk, prepareFigureSpace, type FigureBox as Box, type FigureInk } from "./figure-space.server";
 import type { FigureLabelResult } from "./figure";
 export const FIGURE_MIN_FONT_SCALE = 0.75;
 type Alignment = "left" | "centre" | "right";
@@ -145,7 +146,7 @@ async function textMetrics(text: string, lang: Lang, size: number, weight: Figur
   const reference = await pending;
   return Object.fromEntries(Object.entries(reference).map(([key, value]) => [key, Math.ceil(value * size / 16)])) as TextMeasurement;
 }
-async function measureText(text: string, lang: Lang, weight: FigureFontWeight): Promise<TextMeasurement> {
+export async function measureText(text: string, lang: Lang, weight: FigureFontWeight): Promise<TextMeasurement> {
   let width = 0, height = 0, maxLineHeight = 0, inkWidth = 0, inkHeight = 0, inkLineHeight = 0;
   for (const line of text.split(/\r\n|[\n\r]/)) {
     let lineWidth = 0, lineHeight = 0, lineInkWidth = 0, lineInkHeight = 0;
@@ -267,6 +268,9 @@ export async function renderFigureLabels(bytes: Buffer, reading: FigureReading, 
   return (await createFigureRenderer(bytes, reading, lang))(labels);
 }
 
+// Keep only the last image's detected graphics across language jobs.
+let recentGraphics: { key: string; points: Set<number> } | undefined;
+
 // Reuse decoded pixels, ink measurements and font sizes for a shortening pass.
 export async function createFigureRenderer(bytes: Buffer, reading: FigureReading, lang: Lang): Promise<(labels: readonly (string | null)[], options?: { final?: boolean }) => Promise<FigureRenderResult>> {
   reading = normalizeFigureReading(reading);
@@ -281,7 +285,10 @@ export async function createFigureRenderer(bytes: Buffer, reading: FigureReading
   const renderable = regions.flatMap((region, i) => isRenderableFigureRegion(region) ? [i] : []);
   const protectedBoxes = (reading.protectedBoxes ?? []).map(r => figureBox(r, info.width, info.height));
   const boxes = reading.regions.map(r => figureBox(r, info.width, info.height)), recovered: FigureInk[] = [];
-  const graphics = figureGraphics(data, info.width, info.height, [...boxes, ...protectedBoxes]);
+  const sourceBoxes = [...boxes, ...protectedBoxes];
+  const key = createHash("sha256").update(bytes).update(JSON.stringify(sourceBoxes)).digest("hex");
+  if (recentGraphics?.key !== key) recentGraphics = { key, points: figureGraphics(data, info.width, info.height, sourceBoxes) };
+  const graphics = recentGraphics.points;
   for (const [i, box] of boxes.entries()) {
     await setImmediate();
     recovered.push(measureFigureInk(data, info.width, info.height, box, [...boxes.filter((_, j) => i !== j), ...protectedBoxes], graphics));
@@ -493,7 +500,7 @@ export async function createFigureRenderer(bytes: Buffer, reading: FigureReading
         if (!final) continue;
       }
       if (!ink.points.length) continue;
-      const window = figureSpaceWindow(ink.box, info.width, info.height);
+      const window = figurePlacementWindow(ink, info.width, info.height);
       if (ink.box.width > window.width || ink.box.height > window.height) continue;
       const otherText = [...boxes.filter((_, j) => j !== index), ...layout.filter((_, j) => j !== index).map(m => m.keepOut ?? m.box)];
       const obstacles = [...otherText, ...occupied];

@@ -1,4 +1,4 @@
-import { FIGURE_SPACE, background, figureEraseMask, figureGraphicsInBox, figureInkIsRemovable, figureSpaceWindow, inside, surfaceColor, type FigureBackground, type FigureBox, type FigureInk } from "./figure-space.server";
+import { FIGURE_SPACE, background, figureEraseMask, figureGraphicsInBox, figureInkIsRemovable, figurePlacementWindow, inside, surfaceColor, type FigureBackground, type FigureBox, type FigureInk } from "./figure-space.server";
 
 export const FIGURE_OVERLAP = { maxRatio: 0, maxErasureDeviationRatio: .1, treatment: "halo" as "halo" | "backing" };
 
@@ -30,7 +30,7 @@ export function figureOverlapBackground(patch: Buffer, box: FigureBox, mask: Uin
 // Integral counts keep every placement query constant-time. Only failed labels
 // allocate a bounded local window; no full-image mask is retained per label.
 export function prepareFigureOverlap(data: Buffer, width: number, height: number, index: number, measured: FigureInk[], forbidden: FigureBox[], surface?: FigureBackground, bounds?: FigureBox) {
-  const anchor = measured[index].box, window = figureSpaceWindow(anchor, width, height);
+  const anchor = measured[index].box, window = figurePlacementWindow(measured[index], width, height);
   const stride = window.width + 1;
   const graphics = measured[index].graphics;
   const color = background(data, width, height, anchor, graphics);
