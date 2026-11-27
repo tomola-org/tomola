@@ -21,7 +21,7 @@ export type FigureLabelResult = {
 export const sameFigureLabel = (source: string, translated: string) => source.trim().toLowerCase() === translated.trim().toLowerCase();
 
 export function figureTranslationRegions(reading: FigureReading): FigureRegion[] {
-  return reading.regions.filter(region => region.lang === reading.lang);
+  return reading.regions.filter(region => region.lang === reading.lang && region.confidence >= FIGURE_CONFIDENCE);
 }
 
 export function figurePath(id: string, width: number, height: number, lang: Lang, version = FIGURE_VERSION): string {

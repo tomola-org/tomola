@@ -184,14 +184,17 @@ describe("figure translation pipeline", () => {
     expect((await db.select().from(figureTranslations))[0].labels).toHaveLength(2);
   });
 
-  it.each(["horizontal", "vertical", "curved"] as const)("translates only the primary-language labels and preserves an uncertain %s foreign label", async orientation => {
+  it.each([
+    { orientation: "horizontal", lang: "en" }, { orientation: "vertical", lang: "en" },
+    { orientation: "curved", lang: "en" }, { orientation: "horizontal", lang: "ja" },
+  ] as const)("keeps an uncertain $orientation $lang label out of translation and painting", async ({ orientation, lang }) => {
     const marker = await sharp({ create: { width: 64, height: 36, channels: 3, background: "#123456" } }).png().toBuffer();
     const bytes = await sharp({ create: { width: 320, height: 180, channels: 3, background: "#d5e5f5" } })
       .composite([{ input: marker, left: 128, top: 18 }]).webp({ lossless: true }).toBuffer();
     const w = await world(bytes);
     const reading: FigureReading = { lang: "ja", confidence: 1, regions: [
       { ...sourceReading.regions[0], lang: "ja", text: "最初の文字", x: 0.05, y: 0.1, width: 0.25, height: 0.3 },
-      { ...sourceReading.regions[0], text: "AI", x: 0.4, y: 0.1, width: 0.2, height: 0.2, confidence: 0.1, orientation },
+      { ...sourceReading.regions[0], text: "AI", x: 0.4, y: 0.1, width: 0.2, height: 0.2, confidence: 0.1, orientation, lang },
       { ...sourceReading.regions[0], lang: "ja", text: "次の文字", x: 0.7, y: 0.5, width: 0.25, height: 0.3 },
     ] };
     await db.insert(glossaryEntries).values([
@@ -208,8 +211,14 @@ describe("figure translation pipeline", () => {
     const [saved] = await db.select().from(figureTranslations);
     expect(saved).toMatchObject({ lang: "en", state: "ready" });
     expect(saved.labels).toHaveLength(2);
+    expect(saved.labelResults?.map(result => result.status)).toEqual(["rendered", "rendered"]);
     const original = await sharp(w.bytes).ensureAlpha().raw().toBuffer();
     const rendered = await sharp(saved.bytes!).ensureAlpha().raw().toBuffer();
+    const protectedBox = figureBox(reading.regions[1], 320, 180);
+    for (let y = protectedBox.top; y < protectedBox.top + protectedBox.height; y++) {
+      const left = (y * 320 + protectedBox.left) * 4, right = left + protectedBox.width * 4;
+      expect(rendered.subarray(left, right)).toEqual(original.subarray(left, right));
+    }
     const boxes = [reading.regions[0], reading.regions[2]].map(region => figureBox(region, 320, 180));
     let changed = 0;
     for (let y = 0; y < 180; y++) for (let x = 0; x < 320; x++) {
@@ -217,7 +226,7 @@ describe("figure translation pipeline", () => {
       const same = rendered.subarray(offset, offset + 4).equals(original.subarray(offset, offset + 4));
       if (boxes.some(box => x >= box.left && x < box.left + box.width && y >= box.top && y < box.top + box.height)) changed += Number(!same);
       else if (!same) {
-        // Widened text may use verified background, but the preserved foreign
+        // Widened text may use verified background, but the preserved
         // label and every diagram pixel must retain their original RGBA.
         expect([...original.subarray(offset, offset + 4)]).toEqual([0xd5, 0xe5, 0xf5, 255]);
       }
@@ -226,6 +235,56 @@ describe("figure translation pipeline", () => {
     expect((await get(figurePath(w.id, 320, 180, "en"))).status).toBe(200);
     expect((await get(w.path)).status).toBe(404);
     expect(await db.select().from(figureTranslations)).toHaveLength(1);
+  });
+
+  it("renders horizontal labels and shows only changed vertical or curved labels below the image", async () => {
+    const regions: FigureReading["regions"] = [
+      { ...sourceReading.regions[0], text: "Vertical title", orientation: "vertical", x: .05, y: .15, width: .1, height: .55 },
+      { ...sourceReading.regions[0], text: "Top label", x: .25, y: .1, width: .45, height: .2 },
+      { ...sourceReading.regions[0], text: "Curved title", orientation: "curved", x: .75, y: .1, width: .2, height: .25 },
+      { ...sourceReading.regions[0], text: "Bottom label", x: .25, y: .7, width: .45, height: .2 },
+      { ...sourceReading.regions[0], text: "42", orientation: "vertical", x: .8, y: .6, width: .05, height: .15 },
+    ];
+    const marks = regions.filter(region => region.orientation !== "horizontal").map(region => {
+      const { left, top, width, height } = figureBox(region, 320, 180);
+      return { left, top, input: { create: { width, height, channels: 3 as const, background: "#123456" } } };
+    });
+    const w = await world(await sharp({ create: { width: 320, height: 180, channels: 3, background: "#d5e5f5" } })
+      .composite(marks).webp({ lossless: true }).toBuffer());
+    const translated = ["縦軸", "上段", "曲線", "下段", "42"];
+    vi.mocked(w.reader.read).mockResolvedValue({ text: readingResponse({ ...sourceReading, regions }), model: w.reader.model, promptVersion: "test", inputTokens: 10, outputTokens: 50 });
+    vi.mocked(w.engine.translate).mockResolvedValue({ text: JSON.stringify(translated), model: w.engine.model, promptVersion: "test", inputTokens: 10, outputTokens: 50 });
+    expect(await w.run()).toMatchObject({ done: 2, failed: 0 });
+    expect(w.engine.translate).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(w.engine.translate).mock.calls[0][0].text).toBe(JSON.stringify(regions.map(region => region.text)));
+    expect((await db.select().from(figureReadings))[0].state).toBe("ready");
+    const [saved] = await db.select().from(figureTranslations);
+    expect(saved.state).toBe("ready");
+    expect(saved.labelResults).toMatchObject([
+      { source: "Vertical title", translation: "縦軸", status: "external", reason: "unusable_reading" },
+      { source: "Top label", translation: "上段", status: "rendered", reason: null },
+      { source: "Curved title", translation: "曲線", status: "external", reason: "unusable_reading" },
+      { source: "Bottom label", translation: "下段", status: "rendered", reason: null },
+      { source: "42", translation: "42", status: "unchanged", reason: null },
+    ]);
+    const original = await sharp(w.bytes).ensureAlpha().raw().toBuffer();
+    const rendered = await sharp(saved.bytes!).ensureAlpha().raw().toBuffer();
+    for (const region of regions) {
+      const { left, top, width, height } = figureBox(region, 320, 180);
+      const unchanged = Array.from({ length: height }, (_, row) => {
+        const start = ((top + row) * 320 + left) * 4, end = start + width * 4;
+        return rendered.subarray(start, end).equals(original.subarray(start, end));
+      }).every(Boolean);
+      expect(unchanged, region.text).toBe(region.orientation !== "horizontal");
+    }
+    const decorate = await prepareEntryFigureDisplay(db, [w.entry.id], "ja");
+    const html = decorate(w.entry.id, w.entry.html!);
+    expect(html).toContain(`src="${w.path}"`);
+    expect(html).toContain("data-figure-toggle");
+    expect(html).toContain("data-figure-fallback");
+    expect(html).toContain("縦軸");
+    expect(html).toContain("曲線");
+    expect(html.match(/role="listitem"/g)).toHaveLength(2);
   });
 
   it("rejects overlap between primary and preserved foreign labels", async () => {
@@ -348,15 +407,14 @@ describe("figure translation pipeline", () => {
     expect(await readFigureSource(db, reading.key)).toBeUndefined();
   });
 
-  it.each(["uncertain", "uncertain_language", "empty", "vertical", "curved", "no_primary_labels"])("keeps the original for %s readings and does not reread it", async mode => {
+  it.each(["uncertain", "uncertain_language", "empty", "no_primary_labels"])("keeps the original for %s readings and does not reread it", async mode => {
     const w = await world();
     const reading = structuredClone(sourceReading);
     if (mode === "uncertain") reading.regions[0].confidence = 0.2;
     if (mode === "uncertain_language") reading.confidence = 0.2;
     if (mode === "empty") { reading.lang = null; reading.regions = []; }
-    if (mode === "vertical" || mode === "curved") reading.regions[0].orientation = mode;
     if (mode === "no_primary_labels") reading.regions[0].lang = "ja";
-    if (["uncertain", "vertical", "curved"].includes(mode)) reading.regions.push({
+    if (mode === "uncertain") reading.regions.push({
       ...sourceReading.regions[0], text: "保存", lang: "ja", x: 0, y: 0, width: 0.05, height: 0.05,
     });
     vi.mocked(w.reader.read).mockResolvedValue({ text: readingResponse(reading), model: w.reader.model, promptVersion: "test", inputTokens: 100, outputTokens: 100 });
@@ -366,6 +424,30 @@ describe("figure translation pipeline", () => {
     expect((await db.select().from(figureReadings))[0].state).toBe("skipped");
     expect(await db.select().from(figureTranslations)).toEqual([]);
     expect((await get(w.path)).status).toBe(404); expect((await get(w.url)).status).toBe(200);
+  });
+
+  it.each([
+    { orientation: "vertical", withNumber: false }, { orientation: "curved", withNumber: false }, { orientation: "vertical", withNumber: true },
+  ] as const)("adds a $orientation note without a translated raster (number: $withNumber)", async ({ orientation, withNumber }) => {
+    const w = await world();
+    const regions: FigureReading["regions"] = [{ ...sourceReading.regions[0], text: "Axis title", orientation }];
+    if (withNumber) regions.push({ ...sourceReading.regions[0], text: "12", x: .1, y: .8, width: .15, height: .1 });
+    vi.mocked(w.reader.read).mockResolvedValue({ text: readingResponse({ ...sourceReading, regions }), model: w.reader.model, promptVersion: "test", inputTokens: 10, outputTokens: 50 });
+    vi.mocked(w.engine.translate).mockResolvedValue({ text: JSON.stringify(withNumber ? ["軸の題名", "12"] : ["軸の題名"]), model: w.engine.model, promptVersion: "test", inputTokens: 10, outputTokens: 50 });
+    expect(await w.run()).toMatchObject({ done: 2, failed: 0 });
+    expect(w.engine.translate).toHaveBeenCalledTimes(1);
+    expect((await db.select().from(figureReadings))[0].state).toBe("ready");
+    const labelResults = [{ source: "Axis title", translation: "軸の題名", status: "external", reason: "unusable_reading" },
+      ...(withNumber ? [{ source: "12", translation: "12", status: "unchanged", reason: null }] : [])];
+    expect(await db.select().from(figureTranslations)).toEqual([expect.objectContaining({ state: "skipped", bytes: null, labelResults })]);
+    const decorate = await prepareEntryFigureDisplay(db, [w.entry.id], "ja");
+    const html = decorate(w.entry.id, w.entry.html!);
+    expect(html).toContain(`src="${w.url}"`);
+    expect(html).not.toContain("data-figure-toggle");
+    expect(html).toContain("data-figure-fallback");
+    expect(html).toContain("軸の題名");
+    expect(html.match(/role="listitem"/g)).toHaveLength(1);
+    expect((await get(w.path)).status).toBe(404);
   });
 
   it("does not enqueue, call engines or expose stored variants while disabled", async () => {
@@ -660,9 +742,11 @@ describe("figure translation pipeline", () => {
 
   it("shortens only failed labels in one checked call with per-label capacity hints", async () => {
     const w = await world();
-    const sources = ["First", "Second", "Third"];
-    vi.mocked(w.reader.read).mockResolvedValue({ text: readingResponse({ ...sourceReading, regions: sources.map((text, i) => ({ ...sourceReading.regions[0], text, x: .05, y: .05 + i * .3, width: .2, height: .2 })) }), model: w.reader.model, promptVersion: "test", inputTokens: 10, outputTokens: 50 });
-    vi.mocked(w.engine.translate).mockImplementation(async req => ({ text: JSON.stringify(req.figureCharacterBudgets ? ["短い", "短い"] : ["訳", "W".repeat(500), "V".repeat(500)]), model: w.engine.model, promptVersion: "test", inputTokens: 10, outputTokens: 50 }));
+    const regions = ["First", "Second", "Third"].map((text, i) => ({ ...sourceReading.regions[0], text, x: .05, y: .05 + i * .3, width: .2, height: .2 }));
+    regions.splice(1, 0, { ...sourceReading.regions[0], text: "Axis title", orientation: "vertical", x: .85, y: .2, width: .08, height: .5 });
+    const axis = "縦軸の題名";
+    vi.mocked(w.reader.read).mockResolvedValue({ text: readingResponse({ ...sourceReading, regions }), model: w.reader.model, promptVersion: "test", inputTokens: 10, outputTokens: 50 });
+    vi.mocked(w.engine.translate).mockImplementation(async req => ({ text: JSON.stringify(req.figureCharacterBudgets ? ["短い", "短い"] : ["訳", axis, "W".repeat(500), "V".repeat(500)]), model: w.engine.model, promptVersion: "test", inputTokens: 10, outputTokens: 50 }));
     expect(await w.run()).toMatchObject({ failed: 0 });
     expect(w.engine.translate).toHaveBeenCalledTimes(2);
     const short = vi.mocked(w.engine.translate).mock.calls[1][0];
@@ -670,8 +754,9 @@ describe("figure translation pipeline", () => {
     expect(short.figureCharacterBudgets).toEqual([expect.any(Number), expect.any(Number)]);
     expect(short.figureCharacterBudgets!.every(n => n > 0)).toBe(true);
     const [saved] = await db.select().from(figureTranslations);
-    expect(saved.labels).toEqual(["訳", "短い", "短い"]);
-    expect(saved.labelResults!.every(r => r.status === "rendered")).toBe(true);
+    expect(saved.labels).toEqual(["訳", axis, "短い", "短い"]);
+    expect(saved.labelResults?.map(result => result.status)).toEqual(["rendered", "external", "rendered", "rendered"]);
+    expect(saved.labelResults?.[1]).toEqual({ source: "Axis title", translation: axis, status: "external", reason: "unusable_reading" });
     await backfillFigures(db, { enqueue: true }); await w.run();
     expect(w.engine.translate).toHaveBeenCalledTimes(2);
   });

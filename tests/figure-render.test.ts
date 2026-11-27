@@ -2,8 +2,9 @@ import sharp, { type Sharp } from "sharp";
 import { expect, it, vi } from "vitest";
 import { normalizeFigureReading, type FigureReading, type FigureRegion } from "~/lib/figure";
 import { renderFigure } from "./helpers/figure-render";
-import { figureCapacity, figureFontSize, figureTextColor, renderFigureLabels } from "~/lib/figure-render.server";
+import { createFigureRenderer, figureCapacity, figureFontSize, figureTextColor, renderFigureLabels } from "~/lib/figure-render.server";
 import { figureFontDescription } from "~/lib/figure-fonts.server";
+import * as figureFonts from "~/lib/figure-fonts.server";
 import { parseFigureReading } from "~/lib/figure-reading.server";
 import { measureFigure } from "~/lib/figure-space.server";
 
@@ -443,6 +444,44 @@ it.each([[255, 255, 255, 255], [0, 0, 0, 255]].map(bg => ({ bg })))("uses black 
 it.each(["HHH", " hhh "])("records an unchanged label without repainting it: %s", async text => {
   const result = await renderFigureLabels(await blank().png().toBuffer(), reading(), [text], "en");
   expect(result).toEqual({ bytes: null, results: [{ source: "HHH", translation: text, status: "unchanged", reason: null }] });
+});
+
+it("validates vertical and curved labels before reporting notes without checking their glyphs", async () => {
+  const source = reading([
+    { ...region, text: "Axis ε", orientation: "vertical" },
+    { ...region, text: "Curve ε", orientation: "curved", y: .4 },
+  ]);
+  const glyphs = vi.spyOn(figureFonts, "canRenderFigureText").mockResolvedValue(false);
+  try {
+    const bytes = await blank().png().toBuffer();
+    const render = await createFigureRenderer(bytes, source, "en");
+    for (const final of [false, true]) {
+      expect(await render(["   ", "Curve"], { final })).toEqual({ bytes: null, results: [
+        { source: "Axis ε", translation: "   ", status: "external", reason: "invalid_translation" },
+        { source: "Curve ε", translation: "Curve", status: "external", reason: "math_mismatch" },
+      ] });
+      expect(await render(["Axis ε", "Bend ε"], { final })).toEqual({ bytes: null, results: [
+        { source: "Axis ε", translation: "Axis ε", status: "unchanged", reason: null },
+        { source: "Curve ε", translation: "Bend ε", status: "external", reason: "unusable_reading" },
+      ] });
+    }
+    expect(glyphs).not.toHaveBeenCalled();
+  } finally { glyphs.mockRestore(); }
+});
+
+it.each(["vertical", "curved", "uncertain"] as const)("protects the full %s OCR box when an adjacent translation widens", async mode => {
+  const bytes = await blank().composite([mark(240, 75, 10, 10)]).png().toBuffer();
+  const left = 145, top = 14, boxWidth = 130, boxHeight = 85;
+  const retained: FigureRegion = { ...region, text: "Side", confidence: mode === "uncertain" ? .2 : 1,
+    orientation: mode === "uncertain" ? "horizontal" : mode, x: left / width, y: top / height, width: boxWidth / width, height: boxHeight / height };
+  const labels = mode === "uncertain" ? ["HHH HHH HHH"] : ["HHH HHH HHH", "Edge"];
+  const rendered = await renderFigureLabels(bytes, reading([region, retained]), labels, "en");
+  expect(rendered.results[0].status).toBe("rendered");
+  const original = await raw(bytes), changed = await raw(rendered.bytes!);
+  for (let y = top; y < top + boxHeight; y++) {
+    const start = (y * width + left) * 4, end = start + boxWidth * 4;
+    expect(changed.subarray(start, end)).toEqual(original.subarray(start, end));
+  }
 });
 
 it("compares normalized cached labels and never paints a translated TeX command", async () => {

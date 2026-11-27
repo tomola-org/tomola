@@ -133,6 +133,53 @@ it.each(["skipped", "ready"] as const)("reuses a current-version %s mixed-langua
   expect(translate).toHaveBeenCalledTimes(1);
 });
 
+it("promotes a current skipped reading with a vertical label and preserves saved variants", async () => {
+  const { db, image, post } = await fixture();
+  const upload = await image(), id = upload.url.slice(7, 71);
+  await post(upload.url);
+  const [stored] = await db.select({ bytes: media.bytes }).from(media).where(eq(media.id, id));
+  const key = readingKeyOf(stored.bytes!);
+  const reading: FigureReading = { lang: "ja", confidence: 1, regions: [
+    { text: "目盛\\nの高さ", lang: "ja", confidence: 1, orientation: "vertical", x: .02, y: .1, width: .08, height: .65 },
+    { text: "観測値", lang: "ja", confidence: 1, orientation: "horizontal", x: .2, y: .2, width: .65, height: .4 },
+    { text: "読取".repeat(400), lang: "ja", confidence: .2, orientation: "horizontal", x: .3, y: .8, width: .2, height: .1 },
+  ] };
+  await db.insert(figureReadings).values({ key, version: FIGURE_VERSION, state: "skipped", reading, engine: "fake", model: "cached-reader", promptVersion: "test" });
+  await db.insert(figureMedia).values({ mediaId: id, readingKey: key });
+  const [savedFrench] = await db.insert(figureTranslations).values({ mediaId: id, readingKey: key, lang: "fr", state: "skipped", model: "cached", engine: "fake", promptVersion: "test" }).returning();
+  const [before] = await db.select().from(figureReadings);
+  const previewEnv = { ...env, ENABLED_LANGS: "ja,en,fr", TRANSLATION_PRIMARY: "gemini" };
+  const labels = ["目盛\nの高さ", "観測値"];
+  const cost = estimateFigureTranslation(figureCostProfile(previewEnv), "ja", "en", previewEnv, labels, []).estimatedUsdMicro;
+  expect(await backfillFigures(db, { env: previewEnv })).toMatchObject({ selection: "all", readingsNeeded: 0, cachedSkippedImages: 0, translationCallsEstimated: 1, translationUsdMicro: cost });
+  expect(await backfillFigures(db, { rerenderLiteralNewlines: true, env: previewEnv })).toMatchObject({ selection: "literal-newlines", eligibleImages: 1, readingsNeeded: 0, translationCallsEstimated: 2 });
+  expect(await db.select().from(figureReadings)).toEqual([before]);
+  expect(await db.select().from(jobs).where(eq(jobs.kind, "translate_figure"))).toEqual([]);
+
+  const enabled = { ...env, FIGURE_TRANSLATION: "1", ENABLED_LANGS: "ja,en,fr" };
+  expect(await backfillFigures(db, { enqueue: true, env: enabled })).toMatchObject({ readingsNeeded: 0, registeredImages: 1, translationCallsEstimated: 1 });
+  expect(await db.select().from(figureReadings)).toEqual([{ ...before, state: "ready" }]);
+  expect(await db.select().from(jobs).where(eq(jobs.kind, "read_figure"))).toEqual([]);
+  const [queued] = await db.select().from(jobs).where(eq(jobs.kind, "translate_figure"));
+  expect(queued.payload).toEqual({ mediaId: id, key, lang: "en" });
+  const reader = createFigureReader(enabled), read = vi.spyOn(reader, "read");
+  const engine = createFakeEngine(), translate = vi.spyOn(engine, "translate").mockResolvedValue({
+    text: JSON.stringify(["Height", "Observation"]), model: engine.model, promptVersion: "test", inputTokens: 10, outputTokens: 10,
+  });
+  const handlers = createFigureHandlers({ reader, llm: { env: enabled, engines: { primary: engine, secondary: null, judge: null } } });
+  expect(await runDueJobs(db, handlers, { now: jobNow, logger: quietLogger })).toMatchObject({ done: 1, failed: 0 });
+  expect(read).not.toHaveBeenCalled();
+  expect(translate).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(translate.mock.calls[0][0].text)).toEqual(labels);
+  const variants = await db.select().from(figureTranslations).orderBy(figureTranslations.lang);
+  expect(variants).toEqual([expect.objectContaining({ lang: "en", state: "ready" }), savedFrench]);
+  const finishedJobs = await db.select().from(jobs).where(eq(jobs.kind, "translate_figure"));
+  expect(finishedJobs).toHaveLength(1);
+  expect(await backfillFigures(db, { enqueue: true, env: enabled })).toMatchObject({ readingsNeeded: 0, translationCallsEstimated: 0 });
+  expect(await db.select().from(jobs).where(eq(jobs.kind, "translate_figure"))).toEqual(finishedJobs);
+  expect(await db.select().from(figureTranslations).orderBy(figureTranslations.lang)).toEqual(variants);
+});
+
 it.each([1, 2, 3].flatMap(version => (["skipped", "ready"] as const).map(state => ({ version, state }))))("requeues a v$version $state reading, serves the original while pending and removes both versions on withdrawal", async ({ version, state }) => {
   const { db, image, post } = await fixture();
   const upload = await image(), id = upload.url.slice(7, 71), entryId = await post(upload.url);
