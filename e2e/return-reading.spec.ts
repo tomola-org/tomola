@@ -59,7 +59,7 @@ test("an invitation signup returns to the last public topic, preserving its quer
     expect(decodeURIComponent((await readingCookie(context))!.value)).toBe("/t/1?lang=ja");
     await visitListRow(page, "/?lang=en", page.locator("li#q-2"));
     await waitForClientRoute(page);
-    await page.locator("li#q-2 > a").click();
+    await page.locator("li#q-2 a.topic-title").click();
     await expect(page).toHaveURL(/\/t\/2\?lang=en$/);
     await expect.poll(async () => decodeURIComponent((await readingCookie(context))?.value ?? "")).toBe("/t/2?lang=en");
     const cookie = (await readingCookie(context))!;

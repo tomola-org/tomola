@@ -105,7 +105,7 @@ test("8: translated rows omit bodies, keep their order until reload and link to 
   const topic = card(ben, topicId);
   await expect(async () => {
     await ben.goto("/");
-    await expect(topic.locator(":scope > a")).toContainText("[en]", { timeout: 3_000 });
+    await expect(topic.locator("a.topic-title")).toContainText("[en]", { timeout: 3_000 });
     await expect(topic.getByText(messagePattern(en.label_from_lang_machine, { lang: /\S+/ }))).toBeVisible({ timeout: 3_000 });
     await expect(topic.getByText(formatMessage(en.label_machine, { engine: en.engine_fake }), { exact: true })).toHaveCount(0);
   }).toPass({ timeout: 60_000 });
@@ -129,7 +129,7 @@ test("12: without JavaScript a title row opens the thread and its original", asy
   try {
     const page = await context.newPage();
     await visitListRow(page, "/", card(page, topicId));
-    await card(page, topicId).locator(":scope > a").click();
+    await card(page, topicId).locator("a.topic-title").click();
     await expect(page).toHaveURL(new RegExp(`/t/${topicId}(?:\\?sl=[\\w-]+)?$`));
     await page.locator("article").first().getByRole("link", { name: en.show_original, exact: true }).click();
     await expect(page.locator("article").first().locator(".longread")).toContainText(BODY);

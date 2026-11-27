@@ -53,7 +53,7 @@ test("primary navigation controls work before hydration", async ({ page }) => {
     { source: "/", selector: 'a[href*="asks=1"]', url: /asks=1/ },
     { source: "/a/en", selector: 'a[href*="asks=1"]', url: /asks=1/ },
     { source: "/following?all=1", selector: 'a[href*="asks=1"]', url: /asks=1/ },
-    { source: "/following?all=1", selector: `#q-${topicId} > a`, url: new RegExp(`/t/${topicId}`) },
+    { source: "/following?all=1", selector: `#q-${topicId} a.topic-title`, url: new RegExp(`/t/${topicId}`) },
     { source: "/notifications", selector: `#n-${notificationId} > div > a`, url: new RegExp(`#c-${replyId}$`) },
     { source: `/t/${topicId}?lang=en`, selector: 'a[href*="orig="]', url: /orig=/ },
     { source: `/t/${topicId}?lang=en`, selector: 'nav a[href*="lang=ja"]', url: /lang=ja/ },

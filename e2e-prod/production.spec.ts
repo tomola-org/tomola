@@ -344,7 +344,7 @@ test("home rows show translated titles and times under the CSP without body cont
   await waitForClientRoute(mika);
   await expect.poll(() => mika.evaluate(() => navigator.serviceWorker.controller?.scriptURL ?? null)).toBe(`${state().baseURL}/sw.js`);
   const row = mika.locator(`#q-${topicId}`);
-  await expect(row.locator(":scope > a")).toHaveAttribute("lang", "en");
+  await expect(row.locator("a.topic-title")).toHaveAttribute("lang", "en");
   await expect(row.locator(".longread, button")).toHaveCount(0);
   await expect(mika.locator("main textarea")).toHaveCount(0);
   expectOnlyShell(await readCaches(mika));
@@ -407,7 +407,7 @@ test("following and language lists use rows, with following controls on the topi
   const row = mika.locator(`#q-${topicId}`);
   await expect(row).toBeVisible();
   await expect(row.getByRole("button", { name: enMessages.follow_unfollow, exact: true })).toHaveCount(0);
-  await row.locator(":scope > a").click();
+  await row.locator("a.topic-title").click();
   // The button shows the new state while the request is still on its way; a navigation before the answer would drop it.
   const followAnswer = () => mika.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname.startsWith("/follow"));
   let answered = followAnswer();

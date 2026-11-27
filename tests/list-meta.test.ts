@@ -35,17 +35,25 @@ for (const rich of [false, true]) for (const badges of [false, true]) {
       ...base, asksStance: badges, hidden: badges,
       ...(rich ? {
         replyCount: 2, latestReply: { id: 4, page: 2 }, newReplies: { count: 1, href: "/t/1#c-4" },
-        village: { slug: "sample", name: "Sample village" }, insightful: { total: 3, langs: 2 },
+        village: { slug: "sample", name: "Sample village" }, insightful: { total: 3, langs: 2 }, nushiCountLabel: "1 AI reply",
         title: { ...base.title, kind: "primary" as const, engine: "fake", pending: true, unavailable: true },
       } : {}),
     };
     const html = await renderInRouter(() => createElement(TopicList, { topics: [topic], compactMeta: true, langParam: null, empty: "none" }));
-    const row = html.split('data-list-meta="">')[1].split("</div>")[0];
-    const items = [...row.matchAll(/data-meta-item="(text|badge)">([\s\S]*?)(?=<span [^>]*data-meta-item=|$)/g)];
-    expect(items.length).toBe(rich ? (badges ? 10 : 8) : (badges ? 4 : 2));
-    items.forEach(([markup], index) => {
-      expect((markup.match(/class="sr-only"> <\/span>/g) ?? []).length).toBe(index + 1 < items.length ? 1 : 0);
-    });
+    const row = html.split('<li id="q-1"')[1].split("</li>")[0];
+    const items = [...row.matchAll(/data-meta-item="([^"]+)"[^>]*>(<span class="sr-only"> <\/span>)?/g)];
+    expect(items.map(([, name]) => name)).toEqual([
+      ...(badges ? ["question", "hidden"] : []), "author", "date",
+      ...(rich ? ["village", "translation", "pending", "unavailable", "replies", "new-replies", "nushi", "insightful"] : ["language"]),
+    ]);
+    for (const [, name, separator] of items) {
+      if (name !== "question" && name !== "hidden") expect(separator).toBeDefined();
+    }
+    const messages = jsonMessages();
+    const heading = badges ? `Title ${messages.question_badge()} ${messages.entry_hidden_mark_short()}` : "Title";
+    const text = row.slice(row.indexOf(">") + 1).replace(/<[^>]+>/g, "");
+    expect(text.startsWith(`${heading} @writer `)).toBe(true);
+    expect(row.match(/<a [^>]*class="topic-title link-ui"[^>]*>Title<\/a>/)).not.toBeNull();
     expect(html).toContain(`dateTime="${base.lastActivityAt}"`);
     if (rich) {
       expect(row).toContain("Sample village");

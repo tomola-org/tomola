@@ -53,7 +53,7 @@ test("a public reader opens posts and originals and logs in with a return path",
     await expect(guest.getByText(enMessages.passkey_prompt, { exact: true })).toHaveCount(0);
     await expect(guest.getByRole("button", { name: enMessages.passkey_prompt_register, exact: true })).toHaveCount(0);
     await expect(card.getByRole("button", { name: enMessages.insightful_give, exact: true })).toHaveCount(0);
-    await card.locator(":scope > a").click();
+    await card.locator("a.topic-title").click();
     await expect(guest).toHaveURL(new RegExp(`${threadPath}\\?lang=en$`));
     await expect(guest.locator('meta[property="og:title"]')).toHaveCount(1);
     await expect(guest.locator("#reply")).toContainText(enMessages.public_reading_reply);

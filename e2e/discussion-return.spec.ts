@@ -94,7 +94,7 @@ test("home and language rows open the topic to manage following", async ({ brows
   await waitForClientRoute(reader);
   const row = reader.locator(`#q-${id}`);
   await expect(row.getByRole("button", { name: en.follow_button, exact: true })).toHaveCount(0);
-  await row.locator(":scope > a").click();
+  await row.locator("a.topic-title").click();
   await Promise.all([reader.waitForResponse(r => /\/follow(?:\.data)?$/.test(new URL(r.url()).pathname) && r.request().method() === "POST"), reader.getByRole("button", { name: en.follow_button, exact: true }).click()]);
   await expect(reader.getByRole("button", { name: en.follow_unfollow, exact: true })).toBeVisible();
   await noOverflow(reader);
@@ -103,7 +103,7 @@ test("home and language rows open the topic to manage following", async ({ brows
   try {
     await page.goto("/a/en");
     await waitForClientRoute(page);
-    await page.locator(`#q-${id}`).locator(":scope > a").click();
+    await page.locator(`#q-${id}`).locator("a.topic-title").click();
     await page.getByRole("button", { name: en.follow_unfollow, exact: true }).click();
     await expect(page.getByRole("button", { name: en.follow_button, exact: true })).toBeVisible();
     await page.getByRole("button", { name: en.follow_button, exact: true }).click();

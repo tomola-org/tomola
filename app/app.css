@@ -886,6 +886,101 @@ form[action="/save"] button[aria-pressed="true"] svg { fill: currentColor; }
   .topic-row:has(> .topic-date) > [data-list-meta] { grid-column: 1; grid-row: 2; }
 }
 
+.topic-row-heading-badges {
+  /* The title and badges supply their own line heights inside the shared line box. */
+  line-height: 0;
+  text-wrap: pretty;
+}
+.topic-row-heading-badges > .topic-title:not([data-remark]) { display: inline; }
+
+.topic-row-meta,
+.topic-row-meta-start,
+.topic-row-meta-end,
+.topic-row-status,
+.topic-row-replies {
+  display: flex;
+  align-items: baseline;
+  column-gap: .75rem;
+  row-gap: .125rem;
+  min-inline-size: 0;
+}
+.topic-row-meta,
+.topic-row-meta-start,
+.topic-row-meta-end,
+.topic-row-status { flex-wrap: wrap; }
+.topic-row-meta-end {
+  margin-inline-start: auto;
+  justify-content: end;
+}
+.topic-row-status:empty,
+.topic-row-replies:empty { display: none; }
+.topic-row-status { overflow-wrap: break-word; }
+.topic-row-meta [data-meta-item] {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+.topic-row-meta [data-meta-item="village"] { max-inline-size: min(100%, 10rem); }
+.topic-row-meta [data-meta-item="translation"] {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: .125rem .5rem;
+}
+.topic-row-meta [data-meta-item="translation"] [data-slot="badge"] {
+  block-size: auto;
+  min-block-size: 1.25rem;
+  max-inline-size: 100%;
+  white-space: normal;
+}
+.topic-row-replies,
+.topic-row-meta [data-meta-item="insightful"] { white-space: nowrap; }
+
+/* The same author appears after the title in the DOM and moves into its own column when the list can share tracks. */
+@media not all and (min-width: 40em) {
+  .topic-row-meta [data-meta-item="author"] { font: inherit; }
+}
+@supports not (grid-template-columns: subgrid) {
+  .topic-row-meta [data-meta-item="author"] { font: inherit; }
+}
+@supports (grid-template-columns: subgrid) {
+  @media (min-width: 40em) {
+    .topic-list {
+      --topic-author-width: 8rem;
+      --topic-author-gap: 1.5rem;
+      display: grid;
+      /* Reserve space for a whole status word when the other tracks are crowded. */
+      grid-template-columns: max-content fit-content(10rem) minmax(min-content, 1fr) max-content max-content;
+      column-gap: .75rem;
+    }
+    .topic-list > li { grid-column: 1 / -1; }
+    .topic-list > .topic-row {
+      display: grid;
+      grid-template-columns: subgrid;
+      align-items: baseline;
+    }
+    .topic-row-meta,
+    .topic-row-meta-start,
+    .topic-row-meta-end { display: contents; }
+    .topic-row-heading {
+      grid-area: 1 / 1 / 2 / -1;
+      justify-self: start;
+      inline-size: calc(100% - var(--topic-author-width) - var(--topic-author-gap));
+    }
+    .topic-row-meta [data-meta-item="author"] {
+      grid-area: 1 / 1 / 2 / -1;
+      justify-self: end;
+      inline-size: var(--topic-author-width);
+      text-align: end;
+    }
+    .topic-row-meta [data-meta-item="date"] { grid-area: 2 / 1; }
+    .topic-row-meta [data-meta-item="village"] { grid-area: 2 / 2; }
+    .topic-row-status { grid-area: 2 / 3; }
+    .topic-row-replies { grid-area: 2 / 4; justify-content: end; }
+    .topic-row-meta [data-meta-item="insightful"] { grid-area: 2 / 5; text-align: end; }
+    .topic-row-extra { grid-column: 1 / -1; }
+  }
+}
+
 .longread details { margin-block: 1em; padding-inline-start: 1em; border-inline-start: 2px solid var(--border); }
 .longread details > summary { cursor: pointer; font-weight: 600; }
 .longread details[open] > summary { margin-block-end: .75em; }

@@ -47,7 +47,7 @@ for (const width of [1280, 390]) {
       expect(colours[1]).toBe(colours[2]);
       expect(colours[1]).not.toBe(colours[0]);
       // Compare with the existing supplementary text, rather than freezing a theme colour.
-      const supplementary = provisional.locator("..").locator("time").first();
+      const supplementary = provisional.locator("xpath=ancestor::li[1]").locator("time").first();
       await expect(supplementary).toBeVisible();
       expect(colours[1]).toBe(await supplementary.evaluate(el => getComputedStyle(el).color));
       const contrast = await provisional.evaluate(el => {

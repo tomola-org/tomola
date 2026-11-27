@@ -8,7 +8,6 @@ import { StancePanel } from "~/components/stance-panel";
 import { TranslationLabel } from "~/components/translation-label";
 import { AuthorLink } from "~/components/author-link";
 import { LocalTime } from "~/components/local-time";
-import { ListMeta } from "~/components/list-meta";
 import { afterInitialActivation } from "~/lib/initial-activation";
 import { remarkLine } from "~/lib/remark-line";
 import type { PostsView } from "~/lib/list-seen";
@@ -56,36 +55,46 @@ export function TopicList({
   const marks = useNewPostMarks(trackNew ? seenScope ?? location.pathname : undefined, topics, readingVisitKey(location));
   if (topics.length === 0) return <p className="ui-help text-muted-foreground">{empty}</p>;
   return (
-    <ul className="divide-y">
+    <ul className="topic-list divide-y">
       {topics.map((t) => (
         <Fragment key={t.id}>
         <li id={`q-${t.id}`} className="topic-row relative min-w-0 [overflow-wrap:anywhere]">
           {marks?.ids.has(t.id) && <UnreadDot label={m.list_new_post()} className="absolute start-[-0.875rem] top-[1.15rem]" />}
-          <Link to={`/t/${t.id}${langParam ? `?lang=${langParam}` : ""}`} dir="auto" lang={t.title.lang} className="topic-title link-ui" data-remark={t.title.fromBody || undefined} data-translation-pending={t.title.pending || undefined}>
-            {t.title.text ? (t.title.fromBody ? remarkLine(t.title.text) : t.title.text) : m.headline_empty()}
-          </Link>
-          {" "}<LocalTime iso={order === "activity" ? t.lastActivityAt : t.createdAt} className="topic-date ui-meta text-muted-foreground" />
-          <ListMeta items={[
-            { key: "author", content: <AuthorLink handle={t.authorHandle} name={t.authorName} reader={reader} /> },
-            showOriginalLanguage && !(compactMeta && t.title.kind) && (!compactMeta || t.lang !== t.displayLang) && { key: "language", content: <span>{languageLabel(t.lang, t.langCode)}</span> },
-            t.replyCount > 0 && { key: "replies", content: t.latestReply ? (
-              <Link to={`/t/${t.id}${pageSearch(langParam ? `?lang=${langParam}` : "", t.latestReply.page)}#c-${t.latestReply.id}`} className="link-ui">
-                {m.home_replies({ count: t.replyCount })}
-              </Link>
-            ) : <span>{m.home_replies({ count: t.replyCount })}</span> },
-            !!t.nushiCountLabel && { key: "nushi", content: t.nushiCountLabel },
-            t.newReplies && { key: "new-replies", content: <Link to={t.newReplies.href} className="link-ui inline-flex items-center gap-1"><UnreadDot />{m.following_new_replies({ count: t.newReplies.count })}</Link> },
-            t.village && { key: "village", content: <Link to={`/v/${t.village.slug}`} title={villageNameTitle(t.village)} className="link-ui">{t.village.name}</Link> },
-            t.asksStance && { key: "question", badge: true, content: <Badge variant="secondary" className="bg-info text-info-foreground">{m.question_badge()}</Badge> },
-            t.hidden && { key: "hidden", badge: true, content: <Badge variant="secondary" title={m.entry_hidden_mark()} className="bg-notice text-notice-foreground">{m.entry_hidden_mark_short()}</Badge> },
-            t.title.kind && { key: "translation", badge: !compactMeta, content: <TranslationLabel kind={t.title.kind} engine={t.title.engine} fallback={t.title.fallback} stale={t.title.stale} structureMismatch={t.title.structureMismatch} concise={compactMeta} fromLang={compactMeta && showOriginalLanguage ? languageLabel(t.lang, t.langCode) : undefined} plain={compactMeta && !showOriginalLanguage} /> },
-            t.title.pending && { key: "pending", content: <span className="ui-meta"><PendingText short wait={t.title.wait} /></span> },
-            t.title.unavailable && { key: "unavailable", content: <span role="status" className="ui-meta">{m.translation_unavailable()}</span> },
-            t.insightful.total > 0 && { key: "insightful", content: <CountWithLanguages count={t.insightful} kind="insightful" /> },
-          ]} />
-          {actions && <div className="mt-1">{actions(t)}</div>}
+          <div className={t.asksStance || t.hidden ? "topic-row-heading topic-row-heading-badges" : "topic-row-heading"} dir="auto">
+            <Link to={`/t/${t.id}${langParam ? `?lang=${langParam}` : ""}`} lang={t.title.lang} className="topic-title link-ui" data-remark={t.title.fromBody || undefined} data-translation-pending={t.title.pending || undefined}>
+              {t.title.text ? (t.title.fromBody ? remarkLine(t.title.text) : t.title.text) : m.headline_empty()}
+            </Link>
+            {t.asksStance && <> <Badge data-meta-item="question" variant="secondary" className="bg-info text-info-foreground">{m.question_badge()}</Badge></>}
+            {t.hidden && <> <Badge data-meta-item="hidden" variant="secondary" title={m.entry_hidden_mark()} className="bg-notice text-notice-foreground">{m.entry_hidden_mark_short()}</Badge></>}
+          </div>
+          <div className="topic-row-meta ui-meta text-muted-foreground">
+            <div className="topic-row-meta-start">
+              <TopicMetaItem name="author" className="ui-help text-foreground"><AuthorLink handle={t.authorHandle} name={t.authorName} reader={reader} /></TopicMetaItem>
+              <TopicMetaItem name="date"><LocalTime iso={order === "activity" ? t.lastActivityAt : t.createdAt} className="topic-date" /></TopicMetaItem>
+              {t.village && <TopicMetaItem name="village"><Link to={`/v/${t.village.slug}`} title={villageNameTitle(t.village) ?? t.village.name} className="link-ui block truncate">{t.village.name}</Link></TopicMetaItem>}
+              <div className="topic-row-status">
+                {showOriginalLanguage && !(compactMeta && t.title.kind) && (!compactMeta || t.lang !== t.displayLang) && <TopicMetaItem name="language">{languageLabel(t.lang, t.langCode)}</TopicMetaItem>}
+                {t.title.kind && <TopicMetaItem name="translation"><TranslationLabel kind={t.title.kind} engine={t.title.engine} fallback={t.title.fallback} stale={t.title.stale} structureMismatch={t.title.structureMismatch} concise={compactMeta} fromLang={compactMeta && showOriginalLanguage ? languageLabel(t.lang, t.langCode) : undefined} plain={compactMeta && !showOriginalLanguage} /></TopicMetaItem>}
+                {t.title.pending && <TopicMetaItem name="pending"><PendingText short wait={t.title.wait} /></TopicMetaItem>}
+                {t.title.unavailable && <TopicMetaItem name="unavailable"><span role="status">{m.translation_unavailable()}</span></TopicMetaItem>}
+              </div>
+            </div>
+            {(t.replyCount > 0 || t.newReplies || t.nushiCountLabel || t.insightful.total > 0) && <div className="topic-row-meta-end">
+              <div className="topic-row-replies">
+                {t.replyCount > 0 && <TopicMetaItem name="replies" className="text-foreground">{t.latestReply ? (
+                  <Link to={`/t/${t.id}${pageSearch(langParam ? `?lang=${langParam}` : "", t.latestReply.page)}#c-${t.latestReply.id}`} className="link-ui">
+                    {m.home_replies({ count: t.replyCount })}
+                  </Link>
+                ) : m.home_replies({ count: t.replyCount })}</TopicMetaItem>}
+                {t.newReplies && <TopicMetaItem name="new-replies" className="text-foreground"><Link to={t.newReplies.href} className="link-ui inline-flex items-center gap-1"><UnreadDot />{m.following_new_replies({ count: t.newReplies.count })}</Link></TopicMetaItem>}
+                {!!t.nushiCountLabel && <TopicMetaItem name="nushi">{t.nushiCountLabel}</TopicMetaItem>}
+              </div>
+              {t.insightful.total > 0 && <TopicMetaItem name="insightful"><CountWithLanguages count={t.insightful} kind="insightful" /></TopicMetaItem>}
+            </div>}
+          </div>
+          {actions && <div className="topic-row-extra mt-1">{actions(t)}</div>}
           {t.asksStance && t.stance && (
-            <div className="mt-2">
+            <div className="topic-row-extra mt-2">
               <StancePanel
                 questionId={t.id}
                 questionSourceHash={t.questionSourceHash ?? null}
@@ -109,6 +118,11 @@ export function TopicList({
       ))}
     </ul>
   );
+}
+
+function TopicMetaItem({ name, className, children }: { name: string; className?: string; children: ReactNode }) {
+  // Keep the preceding space available to assistive technology and copying, even across layout groups.
+  return <span data-meta-item={name} className={className}><span className="sr-only"> </span>{children}</span>;
 }
 
 // The rows that are new since the reader last saw this list (see lib/list-seen.ts). Null until the page is live, and for a list that is not tracked.
