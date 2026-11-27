@@ -1,6 +1,6 @@
 import { FIGURE_SPACE, background, figureEraseMask, figureInkIsRemovable, figureSpaceWindow, inside, surfaceColor, type FigureBackground, type FigureBox, type FigureInk } from "./figure-space.server";
 
-export const FIGURE_OVERLAP = { maxRatio: .1, maxErasureDeviationRatio: .1, treatment: "halo" as "halo" | "backing" };
+export const FIGURE_OVERLAP = { maxRatio: 0, maxErasureDeviationRatio: .1, treatment: "halo" as "halo" | "backing" };
 
 const intersects = (a: FigureBox, b: FigureBox) => a.left < b.left + b.width && b.left < a.left + a.width && a.top < b.top + b.height && b.top < a.top + a.height;
 

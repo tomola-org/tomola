@@ -80,49 +80,66 @@ it("keeps the halo within its checked footprint and hides fewer pixels than the 
   for (let p = 0; p < 81; p++) if (glyphs[p * 4 + 3]) expect(halo.subarray(p * 4, p * 4 + 4)).toEqual(glyphs.subarray(p * 4, p * 4 + 4));
 });
 
-it("applies the ceiling to actual fallback rendering while preserving a neighbouring text box", async () => {
-  const w = 320, h = 180, text = "H".repeat(5);
+async function fallbackFigure(graphic: (x: number, y: number, glyphWidth: number, glyphHeight: number) => boolean) {
+  const w = 440, h = 180, text = "H".repeat(5);
   const glyph = await sharp({ text: { text: `<span foreground="white">${text}</span>`, font: "Noto Sans 18", rgba: true } }).png().toBuffer({ resolveWithObject: true });
   const pixels = Buffer.alloc(w * h * 4);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const own = x >= 112 && x < 128 + glyph.info.width && y >= 67 && y < 83 + glyph.info.height;
-    pixels.set(!own && y % 7 === 0 ? [80, 65, 100, 255] : [20, 30, 40, 255], (y * w + x) * 4);
+    pixels.set(graphic(x, y, glyph.info.width, glyph.info.height) ? [80, 65, 100, 255] : [20, 30, 40, 255], (y * w + x) * 4);
   }
-  const source = await sharp(pixels, { raw: { width: w, height: h, channels: 4 } }).composite([{ input: glyph.data, left: 120, top: 75 }]).png().toBuffer();
-  const reading: FigureReading = { lang: "en", confidence: 1, regions: [{ text, lang: "en", confidence: 1, orientation: "horizontal", x: 120 / w, y: 75 / h, width: glyph.info.width / w, height: glyph.info.height / h }],
-    protectedBoxes: [{ x: 210 / w, y: 0, width: 40 / w, height: 1 }] };
-  const saved = FIGURE_OVERLAP.maxRatio, prepare = vi.spyOn(overlap, "prepareFigureOverlap"), position = vi.spyOn(overlap, "figureOverlapPosition");
+  const positions = [{ left: 120, top: 75 }, { left: 315, top: 135 }];
+  const source = await sharp(pixels, { raw: { width: w, height: h, channels: 4 } })
+    .composite(positions.map(position => ({ input: glyph.data, ...position }))).png().toBuffer();
+  const reading: FigureReading = { lang: "en", confidence: 1, regions: positions.map(({ left, top }) => ({
+    text, lang: "en", confidence: 1, orientation: "horizontal", x: left / w, y: top / h, width: glyph.info.width / w, height: glyph.info.height / h,
+  })) };
+  return { source, reading };
+}
+
+function forceFirstLabelToFallback() {
   const ordinary = space.figureSpace;
-  vi.spyOn(space, "figureSpace").mockImplementation((...args) => ({ ...ordinary(...args), rectangles: [] }));
+  vi.spyOn(space, "figureSpace").mockImplementation((...args) => {
+    const layout = ordinary(...args);
+    return args[3] === 0 ? { ...layout, rectangles: [] } : layout;
+  });
   vi.spyOn(space, "figureSurfaceSpace").mockReturnValue(undefined);
-  const context = space.prepareFigureSpace;
-  vi.spyOn(space, "prepareFigureSpace").mockImplementation((...args) => ({ ...context(...args), surfaces: [{
-    box: args[2][0].box, channels: [[20, 0, 0], [30, 0, 0], [40, 0, 0], [255, 0, 0]],
-  }] }));
-  vi.spyOn(space, "figureBackgroundPatchAgrees").mockReturnValue(false);
-  try {
-    FIGURE_OVERLAP.maxRatio = 0;
-    const rejected = await renderFigureLabels(source, reading, ["W".repeat(14)], "en");
-    expect(rejected.results[0]).toMatchObject({ status: "external", reason: "does_not_fit" });
-    FIGURE_OVERLAP.maxRatio = .2;
-    const render = await createFigureRenderer(source, reading, "en");
-    const deferred = await render(["W".repeat(14)], { final: false });
-    expect(deferred.results[0].status).toBe("external");
-    expect(prepare).toHaveBeenCalledTimes(1);
-    const accepted = await render(["W".repeat(14)], { final: true });
-    expect(accepted.results[0].status).toBe("rendered");
-    expect(prepare).toHaveBeenCalledTimes(2);
-    expect(prepare.mock.calls[1][5]).toContainEqual({ left: 208, top: -2, width: 44, height: 184 });
-    const placements = position.mock.results.filter(r => r.type === "return" && r.value).map(r => r.value);
-    expect(placements.length).toBeGreaterThan(0);
-    for (const p of placements) {
-      expect(p.ratio).toBeLessThanOrEqual(.2);
-      expect(p.position.left + p.position.width).toBeLessThanOrEqual(210);
-    }
-    const rendered = await sharp(accepted.bytes!).ensureAlpha().raw().toBuffer();
-    const original = await sharp(source).ensureAlpha().raw().toBuffer();
-    for (let y = 0; y < h; y++) expect(rendered.subarray((y * w + 210) * 4, (y * w + 250) * 4)).toEqual(original.subarray((y * w + 210) * 4, (y * w + 250) * 4));
-  } finally { FIGURE_OVERLAP.maxRatio = saved; }
+}
+
+it("rescues a label on clean background after a wider fallback meets artwork", async () => {
+  const { source, reading } = await fallbackFigure(x => x === 210);
+  forceFirstLabelToFallback();
+  const position = vi.spyOn(overlap, "figureOverlapPosition");
+  const labels = ["W".repeat(14), "Data"];
+  const render = await createFigureRenderer(source, reading, "en");
+  const deferred = await render(labels, { final: false });
+  expect(deferred.results.map(r => r.status)).toEqual(["external", "rendered"]);
+  expect(position).not.toHaveBeenCalled();
+
+  const result = await render(labels);
+  expect(result.results.map(r => r.status)).toEqual(["rendered", "rendered"]);
+  expect(position.mock.results[0]?.value).toBeNull();
+  const [prepared, width, height, , align] = position.mock.calls[0];
+  expect(figureOverlapPosition(prepared, width, height, .1, align)?.pixels).toBeGreaterThan(0);
+  expect(position.mock.results).toContainEqual(expect.objectContaining({ value: expect.objectContaining({ pixels: 0 }) }));
+});
+
+it("retains the original artwork when all fallback placements meet it", async () => {
+  const { source, reading } = await fallbackFigure((x, y, glyphWidth, glyphHeight) => {
+    const nearGlyph = x >= 112 && x < 128 + glyphWidth && y >= 67 && y < 83 + glyphHeight;
+    return x < 290 && y % 7 === 0 && !nearGlyph;
+  });
+  forceFirstLabelToFallback();
+  const position = vi.spyOn(overlap, "figureOverlapPosition");
+  const result = await renderFigureLabels(source, reading, ["W".repeat(14), "Data"], "en");
+  expect(result.results[0]).toMatchObject({ status: "external", reason: "does_not_fit" });
+  expect(result.results[1].status).toBe("rendered");
+  expect(position).toHaveBeenCalled();
+  expect(position.mock.results.every(r => r.type === "return" && r.value === null)).toBe(true);
+
+  // Decode the output with the other label painted and compare the entire artwork area.
+  const artwork = { left: 0, top: 0, width: 290, height: 180 };
+  const decoded = (bytes: Buffer) => sharp(bytes).extract(artwork).ensureAlpha().raw().toBuffer();
+  expect(await decoded(result.bytes!)).toEqual(await decoded(source));
 });
 
 it("prefers a source edge over a lower-overlap shifted placement and keeps the source margin", () => {
