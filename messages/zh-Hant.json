@@ -1654,6 +1654,8 @@
   "reauth_for_tokens": "建立 API 權杖前，請先確認您是 {who}。",
   "reauth_for_mcp": "在將 AI 應用程式連接至您的帳戶之前，請先確認您是 {who}。",
   "reauth_for_moderation": "若要繼續執行此操作，請確認您是 {who}。返回後，請重新輸入所有詳細資訊並再次提交。",
+  "reauth_for_open_page": "開啟此頁面前，請確認您就是 {who}。",
+  "reauth_action_pending": "身分已確認。您先前的操作尚未完成。請重新填寫必要資訊並再次送出。",
   "reauth_submit": "傳送確認電子郵件",
   "welcome_label": "歡迎",
   "welcome_joined": "您已以 @{handle} 的身分加入。您可以回覆這篇貼文。",

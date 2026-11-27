@@ -2336,6 +2336,8 @@
   "reauth_for_tokens": "Antes de crear un token de API, confirmamos que usted es {who}.",
   "reauth_for_mcp": "Antes de conectar la aplicación de IA a su cuenta, confirme que usted es {who}.",
   "reauth_for_moderation": "Para continuar con esta operación, confirme que usted es {who}. Después de regresar, vuelva a ingresar los detalles y envíelos de nuevo.",
+  "reauth_for_open_page": "Antes de abrir esta página, confirme que usted es {who}.",
+  "reauth_action_pending": "Identidad confirmada. Su acción anterior no se ha llevado a cabo. Vuelva a introducir los datos requeridos y envíe de nuevo.",
   "reauth_submit": "Enviar un correo de confirmación",
   "welcome_label": "Bienvenido",
   "welcome_joined": "Se ha unido como @{handle}. Puede responder a esta publicación.",

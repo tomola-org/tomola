@@ -2336,6 +2336,8 @@
   "reauth_for_tokens": "Avant de créer un jeton d’API, nous confirmons que vous êtes bien {who}.",
   "reauth_for_mcp": "Avant de connecter l’application d’IA à votre compte, confirmez que vous êtes {who}.",
   "reauth_for_moderation": "Pour poursuivre cette opération, confirmez que vous êtes bien {who}. À votre retour, saisissez à nouveau les informations nécessaires et soumettez-les à nouveau.",
+  "reauth_for_open_page": "Avant d’ouvrir cette page, confirmez que vous êtes bien {who}.",
+  "reauth_action_pending": "Identité confirmée. Votre action précédente n’a pas été effectuée. Renseignez à nouveau les informations requises et envoyez-les de nouveau.",
   "reauth_submit": "Envoyer un e-mail de confirmation",
   "welcome_label": "Bienvenue",
   "welcome_joined": "Vous avez rejoint la communauté sous le nom de @{handle}. Vous pouvez répondre à cette publication.",

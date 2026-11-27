@@ -2172,6 +2172,8 @@
   "reauth_for_tokens": "API 토큰을 만들기 전에 본인이 {who}님인지 확인합니다.",
   "reauth_for_mcp": "AI 앱을 계정에 연결하기 전에 {who} 님이 맞는지 확인하세요.",
   "reauth_for_moderation": "이 작업을 계속하려면 {who} 본인인지 확인해 주십시오. 다시 돌아온 후 필요한 항목을 다시 입력하고 다시 제출해 주십시오.",
+  "reauth_for_open_page": "이 페이지를 열기 전에 {who} 본인인지 확인해 주십시오.",
+  "reauth_action_pending": "본인 확인이 완료되었습니다. 이전 작업은 아직 처리되지 않았습니다. 필요한 내용을 다시 입력하고 다시 제출해 주십시오.",
   "reauth_submit": "확인 이메일 보내기",
   "welcome_label": "환영합니다",
   "welcome_joined": "@{handle}(으)로 가입했습니다. 이 게시물에 답글을 달 수 있습니다.",

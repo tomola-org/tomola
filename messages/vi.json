@@ -2232,6 +2232,8 @@
   "reauth_for_tokens": "Trước khi tạo API token, chúng tôi cần xác nhận bạn là {who}.",
   "reauth_for_mcp": "Trước khi kết nối ứng dụng AI với tài khoản của bạn, hãy xác nhận bạn là {who}.",
   "reauth_for_moderation": "Để tiếp tục thao tác này, hãy xác nhận bạn là {who}. Sau khi quay lại, hãy nhập lại các thông tin chi tiết và gửi lại.",
+  "reauth_for_open_page": "Trước khi mở trang này, hãy xác nhận bạn là {who}.",
+  "reauth_action_pending": "Đã xác nhận danh tính. Thao tác trước đó của bạn chưa được thực hiện. Hãy nhập lại các thông tin cần thiết và gửi lại.",
   "reauth_submit": "Gửi email xác nhận",
   "welcome_label": "Chào mừng",
   "welcome_joined": "Bạn đã tham gia với tư cách @{handle}. Bạn có thể trả lời bài đăng này.",

@@ -1654,6 +1654,8 @@
   "reauth_for_tokens": "在创建 API 令牌之前，我们需要确认你就是 {who}。",
   "reauth_for_mcp": "在将 AI 应用连接到您的账户之前，请确认您是 {who}。",
   "reauth_for_moderation": "要继续执行此操作，请确认您是 {who}。返回后，请重新输入相关信息并再次提交。",
+  "reauth_for_open_page": "打开此页面之前，请确认您是 {who}。",
+  "reauth_action_pending": "身份已确认。您之前的操作尚未执行。请重新输入所需信息并再次提交。",
   "reauth_submit": "发送确认邮件",
   "welcome_label": "欢迎",
   "welcome_joined": "你已作为 @{handle} 加入。你可以回复此帖子。",

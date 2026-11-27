@@ -2232,6 +2232,8 @@
   "reauth_for_tokens": "Sebelum membuat token API, kami mengonfirmasi bahwa Anda adalah {who}.",
   "reauth_for_mcp": "Sebelum menghubungkan aplikasi AI ke akun Anda, konfirmasikan bahwa Anda adalah {who}.",
   "reauth_for_moderation": "Untuk melanjutkan operasi ini, konfirmasikan bahwa Anda adalah {who}. Setelah kembali, masukkan kembali rincian yang diperlukan dan kirimkan lagi.",
+  "reauth_for_open_page": "Sebelum membuka halaman ini, konfirmasikan bahwa Anda adalah {who}.",
+  "reauth_action_pending": "Identitas telah dikonfirmasi. Tindakan Anda sebelumnya belum dilakukan. Masukkan kembali detail yang diperlukan dan kirim lagi.",
   "reauth_submit": "Kirim email konfirmasi",
   "welcome_label": "Selamat datang",
   "welcome_joined": "Anda bergabung sebagai @{handle}. Anda dapat membalas unggahan ini.",
