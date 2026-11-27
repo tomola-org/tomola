@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useState } from "react";
 import { useLocation, useRevalidator } from "react-router";
 import { PendingText } from "~/components/pending-text";
-import { BODY_TRANSLATION_WAIT_MS, bodyTranslationPollDelay } from "~/lib/body-translation-poll";
+import { BODY_TRANSLATION_POLL_MIN_MS, BODY_TRANSLATION_WAIT_MS, bodyTranslationPollDelay } from "~/lib/body-translation-poll";
 import { languageLabel } from "~/lib/language-label";
 import type { Lang, SourceLang } from "~/lib/languages";
 import { topicPageKey } from "~/lib/topic-page";
@@ -18,6 +18,9 @@ type Batch = {
   controller: AbortController;
   until: number;
   round: number;
+  inFlight: boolean;
+  lastStartedAt: number;
+  removeVisibilityListener: () => void;
   timer?: ReturnType<typeof setTimeout>;
   deadline?: ReturnType<typeof setTimeout>;
 };
@@ -30,6 +33,7 @@ const isCurrent = (current: Batch) => batch === current && !current.controller.s
 function stop(current: Batch) {
   clearTimeout(current.timer);
   clearTimeout(current.deadline);
+  current.removeVisibilityListener();
   current.controller.abort();
   if (batch === current) batch = undefined;
 }
@@ -90,6 +94,7 @@ async function requestTranslations(current: Batch) {
   const fresh = ids.filter(id => !current.requested.has(id));
   current.round++;
   try {
+    current.lastStartedAt = Date.now();
     const response = await fetch(`${location.pathname}/translations${location.search}`, {
       method: "POST", credentials: "same-origin", redirect: "error", signal,
       headers: { "Content-Type": "application/json" },
@@ -115,31 +120,63 @@ async function requestTranslations(current: Batch) {
   }
 }
 
-async function poll(current: Batch) {
+function schedule(current: Batch, delay: number) {
+  clearTimeout(current.timer);
+  current.timer = setTimeout(() => { void poll(current); }, delay);
+}
+
+function onVisibilityChange(current: Batch) {
   if (!isCurrent(current) || !current.listeners.size) return;
+  if (document.visibilityState !== "visible") {
+    clearTimeout(current.timer);
+    return;
+  }
+  const now = Date.now();
+  const remaining = current.until - now;
+  if (remaining <= 0) { finish(current); return; }
+  if (current.inFlight) return;
+  const delay = Math.max(0, BODY_TRANSLATION_POLL_MIN_MS - (now - current.lastStartedAt));
+  schedule(current, Math.min(remaining, delay));
+}
+
+async function poll(current: Batch) {
+  if (!isCurrent(current) || !current.listeners.size || current.inFlight || document.visibilityState !== "visible") return;
   const now = Date.now();
   if (now >= current.until) { finish(current); return; }
-  if (document.visibilityState === "visible") {
-    if (current.until === Number.POSITIVE_INFINITY) {
-      current.until = now + BODY_TRANSLATION_WAIT_MS;
-      current.deadline = setTimeout(() => finish(current), BODY_TRANSLATION_WAIT_MS);
+  if (current.until === Number.POSITIVE_INFINITY) {
+    current.until = now + BODY_TRANSLATION_WAIT_MS;
+    current.deadline = setTimeout(() => finish(current), BODY_TRANSLATION_WAIT_MS);
+  }
+  // A history traversal can change the address before the loader commits.
+  if (pageAddress() === current.page) {
+    current.inFlight = true;
+    try {
+      await requestTranslations(current);
+    } finally {
+      current.inFlight = false;
     }
-    // A history traversal can change the address before the loader commits.
-    if (pageAddress() === current.page) await requestTranslations(current);
   }
 
   if (!isCurrent(current)) return;
   if (!current.listeners.size) { stop(current); return; }
-  const round = Math.max(0, current.round - 1);
-  current.timer = setTimeout(() => { void poll(current); }, bodyTranslationPollDelay(round, current.until - Date.now()));
+  if (document.visibilityState === "visible") {
+    const round = Math.max(0, current.round - 1);
+    schedule(current, bodyTranslationPollDelay(round, current.until - Date.now()));
+  }
 }
 
 function join(page: string, entryId: number, listener: Listener): () => void {
   if (batch?.page !== page) {
     // A background tab has not begun its wait until the first visible check.
-    const current: Batch = { page, listeners: new Map(), requested: new Set(), controller: new AbortController(), until: Number.POSITIVE_INFINITY, round: 0 };
-    current.timer = setTimeout(() => { void poll(current); }, 0);
+    const visibilityChanged = () => onVisibilityChange(current);
+    const current: Batch = {
+      page, listeners: new Map(), requested: new Set(), controller: new AbortController(),
+      until: Number.POSITIVE_INFINITY, round: 0, inFlight: false, lastStartedAt: Number.NEGATIVE_INFINITY,
+      removeVisibilityListener: () => document.removeEventListener("visibilitychange", visibilityChanged),
+    };
     batch = current;
+    document.addEventListener("visibilitychange", visibilityChanged);
+    if (document.visibilityState === "visible") schedule(current, 0);
   }
   const current = batch;
   current.listeners.set(entryId, listener);

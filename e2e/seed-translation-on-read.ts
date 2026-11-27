@@ -7,7 +7,7 @@ import { createTopic } from "../app/lib/entries.server";
 
 export async function seedTranslationOnRead(db: Db, dir: string) {
   const fixtures: Record<string, { id: number; body: string }> = {};
-  for (const name of ["member", "timeout", "public", "notice", "sourceNotice", "limited", "watch", "edited", "share", "navigate"]) {
+  for (const name of ["member", "timeout", "public", "notice", "sourceNotice", "limited", "watch", "edited", "share", "navigate", "return", "inflight", "expired", "hidden"]) {
     const [member] = await db.select().from(user).where(eq(user.email, `ondemand_${name === "sourceNotice" ? "notice" : name}@example.com`));
     const body = Array.from({ length: name === "member" ? 260 : 30 }, (_, n) => `段落 ${n + 1}。これは翻訳が完了するまで表示される、試験用の記事の原文です。（${name}）`).join("\n\n");
     const result = await createTopic(db, member.id, { lang: "ja", title: `訳を読む ${name}`, body }, { now: new Date("2025-11-01T00:00:00Z") });

@@ -34,6 +34,26 @@ async function waitForFakeBody(page: Page, url: string, body: string) {
   await expect.poll(async () => (await page.request.get(url)).text(), { timeout: 20_000 }).toContain(translatedFirstParagraph);
 }
 
+async function setVisibility(page: Page, visibility: DocumentVisibilityState) {
+  await page.evaluate(value => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, visibility);
+}
+
+async function mockPendingBody(page: Page, id: number, beforeResponse?: (intent: string) => Promise<void>) {
+  const intents: string[] = [];
+  await page.route(`**/t/${id}/translations*`, async route => {
+    const request = route.request();
+    if (!isBodyPoll(request)) return route.fulfill({ json: { ok: true } });
+    const intent = request.postDataJSON().intent;
+    intents.push(intent);
+    await beforeResponse?.(intent);
+    return route.fulfill({ json: { ready: [], unavailable: [], paused: [], stopped: false } });
+  });
+  return intents;
+}
+
 test("the author's language watch keeps its polling limit through loader revalidation", async ({ page }) => {
   const { id, body } = fixtures().watch;
   const hold = path.join(state().dir, "fake-body-translation-hold");
@@ -348,11 +368,11 @@ test("waiting continues after two minutes, skips hidden pages and shows an unava
   await page.clock.fastForward(121_000);
   await expect.poll(() => calls).toBeGreaterThan(initialCalls);
   await expect(waiting).toBeVisible();
-  await page.evaluate(() => Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" }));
+  await setVisibility(page, "hidden");
   const visibleCalls = calls;
   await page.clock.fastForward(30_001);
   expect(calls).toBe(visibleCalls);
-  await page.evaluate(() => Reflect.deleteProperty(document, "visibilityState"));
+  await setVisibility(page, "visible");
   await page.clock.fastForward(30_001);
   await expect.poll(() => calls).toBeGreaterThan(visibleCalls);
   await page.clock.fastForward(BODY_TRANSLATION_WAIT_MS);
@@ -362,6 +382,88 @@ test("waiting continues after two minutes, skips hidden pages and shows an unava
   await page.clock.fastForward(30_000);
   expect(calls).toBe(finalCalls);
   await expect(page.locator(`#p-${id} .longread`)).toHaveAttribute("lang", "ja");
+});
+
+test("returning to the tab checks for a ready translation during a long polling interval", async ({ page }) => {
+  const { id, body } = fixtures().return;
+  const hold = path.join(state().dir, "fake-body-translation-hold");
+  const address = `/t/${id}?lang=fr&rl=1`;
+  fs.writeFileSync(hold, body);
+  try {
+    await page.clock.install();
+    await openWaitingBody(page, "return", id, address);
+    for (const delay of [3_500, 6_500, 12_500, 24_500]) {
+      const [response] = await Promise.all([waitForBodyPoll(page, id), page.clock.fastForward(delay)]);
+      expect(response.ok()).toBe(true);
+      await waitForClientRoute(page);
+    }
+    await setVisibility(page, "hidden");
+    await page.clock.fastForward(3_500);
+    fs.unlinkSync(hold);
+    await waitForFakeBody(page, address, body);
+    const [returned] = await Promise.all([waitForBodyPoll(page, id), setVisibility(page, "visible")]);
+    expect(returned.status()).toBe(200);
+    await expect(page.locator(`#p-${id} [data-reading-body]`)).toHaveAttribute("lang", "fr");
+  } finally { fs.rmSync(hold, { force: true }); }
+});
+
+test("returning to the tab respects the minimum interval and an in-flight poll", async ({ page }) => {
+  const { id } = fixtures().inflight;
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const intents = await mockPendingBody(page, id, async intent => { if (intent === "status") await held; });
+  try {
+    await page.clock.install();
+    await openWaitingBody(page, "inflight", id, `/t/${id}?lang=fr&rl=1`);
+    await setVisibility(page, "hidden");
+    await setVisibility(page, "visible");
+    await page.clock.fastForward(2_000);
+    expect(intents).toEqual(["request"]);
+    await page.clock.fastForward(1_500);
+    await expect.poll(() => intents.slice()).toEqual(["request", "status"]);
+
+    await setVisibility(page, "hidden");
+    await page.clock.fastForward(4_000);
+    await setVisibility(page, "visible");
+    await page.clock.fastForward(4_000);
+    expect(intents).toEqual(["request", "status"]);
+    const finished = waitForBodyPoll(page, id);
+    release();
+    expect((await finished).ok()).toBe(true);
+    await expect(page.locator("[data-article-translation-waiting]")).toBeVisible();
+  } finally { release(); }
+});
+
+test("returning after the deadline ends the wait before a throttled timer fires", async ({ page }) => {
+  const { id } = fixtures().expired;
+  const intents = await mockPendingBody(page, id);
+  await page.clock.install();
+  await openWaitingBody(page, "expired", id, `/t/${id}?lang=fr&rl=1`);
+  const m = await uiMessages(page);
+  await setVisibility(page, "hidden");
+  const now = await page.evaluate(() => Date.now());
+  await page.clock.setSystemTime(now + BODY_TRANSLATION_WAIT_MS + 1);
+  await expect(page.locator("[data-article-translation-waiting]")).toBeVisible();
+  await setVisibility(page, "visible");
+  await expect(page.getByText(m.label_no_translation, { exact: true })).toBeVisible();
+  expect(intents).toEqual(["request"]);
+});
+
+test("a topic opened in a hidden tab first polls when the tab becomes visible", async ({ page }) => {
+  const { id } = fixtures().hidden;
+  const intents = await mockPendingBody(page, id);
+  await page.clock.install();
+  await page.addInitScript(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+  });
+  await useMember(page, "ondemand_hidden@example.com", `/t/${id}?lang=fr&rl=1`);
+  await waitForClientRoute(page);
+  await page.clock.fastForward(BODY_TRANSLATION_WAIT_MS + 1);
+  expect(intents).toEqual([]);
+  const [first] = await Promise.all([waitForBodyPoll(page, id), setVisibility(page, "visible")]);
+  expect(first.ok()).toBe(true);
+  await expect(page.locator("[data-article-translation-waiting]")).toBeVisible();
+  expect(intents).toEqual(["request"]);
 });
 
 test("a failed translation replaces the waiting message with the existing failure notice", async ({ page }) => {
