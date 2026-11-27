@@ -15,6 +15,8 @@ import { publicReading } from "~/lib/public-reading.server";
 import { readerLoginHref } from "~/lib/public-reading";
 import { setMarkdownMember } from "~/lib/markdown-budget.server";
 import { parseIdOrNull } from "~/lib/params.server";
+import { REAUTH_RETURN_PARAM } from "~/lib/notice-params";
+import { reauthenticationPath } from "~/lib/reauth";
 
 export type SessionUser = { id: string; email: string; name: string };
 
@@ -134,6 +136,12 @@ function isDraftPreviewRead(request: Request): boolean {
 
 type PrivilegedWriteReturn = { preserveFormAnchor?: boolean; fallbackPath?: string };
 
+export async function requireFreshSessionToOpen(request: Request): Promise<void> {
+  if (await getCredentialSessionFresh(request)) return;
+  const target = documentUrl(request);
+  throw redirect(reauthenticationUrl(target.pathname + target.search, "open-page"));
+}
+
 export async function requirePrivilegedWriteSession(request: Request, options: PrivilegedWriteReturn = {}): Promise<void> {
   if (request.method === "GET" || request.method === "HEAD" || await getCredentialSessionFresh(request)) return;
   const target = documentUrl(request);
@@ -147,7 +155,9 @@ export async function requirePrivilegedWriteSession(request: Request, options: P
     const fromForm = typeof raw === "string" ? safeLocalPath(raw) : "";
     if (fromForm.includes("#")) back = fromForm;
   }
-  throw redirect(reauthenticationUrl(back, "moderation"), 303);
+  const returnUrl = new URL(safeLocalPath(back), target.origin);
+  returnUrl.searchParams.set(REAUTH_RETURN_PARAM, "1");
+  throw redirect(reauthenticationPath(returnUrl.pathname + returnUrl.search + returnUrl.hash, "moderation"), 303);
 }
 
 // For operator-only screens and operations (addresses in OPERATOR_EMAILS; getModScope in roles.server.ts). Send logged-out users to login.

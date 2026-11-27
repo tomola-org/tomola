@@ -8,7 +8,7 @@ import { SharedInvitationsTable } from "~/components/shared-invitations-table";
 import { Button } from "~/components/ui/button";
 import { Field, FieldLabel } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
-import { requireMember, requirePrivilegedWriteSession, requireWriter } from "~/lib/auth/session.server";
+import { requireFreshSessionToOpen, requireMember, requirePrivilegedWriteSession, requireWriter } from "~/lib/auth/session.server";
 import { assertSameOrigin } from "~/lib/http/csrf.server";
 import { withMarkdownRead } from "~/lib/markdown-budget.server";
 import { isOperatorEmail } from "~/lib/operators.server";
@@ -26,6 +26,7 @@ export function loader({ request }: Route.LoaderArgs) {
   return withMarkdownRead(async () => {
     const { db, user } = await requireMember(request);
     if (!isOperatorEmail(user.email)) throw data("Not found", { status: 404 });
+    await requireFreshSessionToOpen(request);
     const scope = { createdBy: user.id };
     const sharedInvitations = await listSharedInvitations(db, scope);
     const sharedInvitationUses = await listSharedInvitationUses(db, scope);

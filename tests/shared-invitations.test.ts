@@ -14,7 +14,7 @@ import { action as sharedAction, headers as sharedHeaders, loader as sharedLoade
 import { action as adminAction, loader as adminLoader } from "~/routes/admin-invitations";
 import { seedRateLimit } from "./helpers/fixtures";
 import { setupRouteHarness } from "./helpers/route-harness";
-import { expectModerationReauthentication, withStaleSession } from "./helpers/reauth";
+import { expectModerationReauthentication, expectOpenPageReauthentication, withStaleSession } from "./helpers/reauth";
 
 afterEach(() => { vi.unstubAllEnvs(); });
 
@@ -78,6 +78,11 @@ it("loads only the operator's registrations on the shared page and all registrat
     const request = (path: string) => h.args(h.request(path, { as: issuer.id }));
     const own = await sharedLoader(request("/invites/shared"));
     expect(own).toMatchObject({ sharedInvitationUses: [{ label: issuer.id, usedByHandle: "shared_recipient" }] });
+    await withStaleSession(h, issuer.id, async () => {
+      for (const path of ["/invites/shared?lang=en", "/invites/shared.data?lang=en&_routes=routes%2Finvites-shared"]) {
+        expectOpenPageReauthentication(await h.outcome(() => sharedLoader(request(path))), "/invites/shared?lang=en");
+      }
+    });
     const all = await adminLoader(request("/admin/invitations"));
     expect(all.sharedInvitationUses.map(row => row.label).sort()).toEqual([issuer.id, other.id]);
   } finally { h.restore(); }

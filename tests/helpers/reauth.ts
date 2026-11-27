@@ -18,5 +18,18 @@ export function expectModerationReauthentication(result: Outcome, next: string) 
   expect(login.origin).toBe(BASE);
   expect(login.pathname).toBe("/login");
   expect(login.searchParams.get("reauth")).toBe("moderation");
+  const destination = new URL(login.searchParams.get("next")!, BASE);
+  expect(destination.origin).toBe(BASE);
+  expect(destination.searchParams.getAll("reverified")).toEqual(["1"]);
+  destination.searchParams.delete("reverified");
+  expect(destination.pathname + destination.search + destination.hash).toBe(next);
+}
+
+export function expectOpenPageReauthentication(result: Outcome, next: string) {
+  expect(result.status).toBe(302);
+  const login = new URL(result.location ?? "", BASE);
+  expect(login.origin).toBe(BASE);
+  expect(login.pathname).toBe("/login");
+  expect(login.searchParams.get("reauth")).toBe("open-page");
   expect(login.searchParams.get("next")).toBe(next);
 }

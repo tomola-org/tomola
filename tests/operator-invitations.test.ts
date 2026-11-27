@@ -13,7 +13,7 @@ import InvitesNew, { action, loader } from "~/routes/invites-new";
 import { m } from "~/paraglide/messages.js";
 import { setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
 import { renderInRouter } from "./helpers/render-in-router";
-import { expectModerationReauthentication, withStaleSession } from "./helpers/reauth";
+import { expectModerationReauthentication, expectOpenPageReauthentication, withStaleSession } from "./helpers/reauth";
 import { createVillage } from "~/lib/village-management.server";
 import { routeElement } from "./helpers/route-fixtures";
 
@@ -41,6 +41,17 @@ afterAll(() => { h.restore(); globalMail.__tomolaMailer = savedMailer; });
 const post = (form: Record<string, string | string[]>, as = "bulk_operator") => action(h.args(h.request("/invites/new", { as, form })));
 const pending = () => h.db.select().from(invitations).where(and(eq(invitations.createdBy, h.ids.bulk_operator), isNull(invitations.usedAt)));
 const allowance = async () => (await h.db.select().from(rateLimits).where(eq(rateLimits.key, `member:invitation:${h.ids.bulk_operator}`)))[0]?.count ?? 0;
+
+it.each(["/invites/new?lang=en", "/invites/new.data?lang=en&_routes=routes%2Finvites-new"])("requires a fresh operator session to open %s", async path => {
+  const load = (as: string) => loader(h.args(h.request(path, { as })));
+  expect(await load("bulk_operator")).toMatchObject({ operator: true });
+  await withStaleSession(h, "bulk_operator", async () => {
+    expectOpenPageReauthentication(await h.outcome(() => load("bulk_operator")), "/invites/new?lang=en");
+  });
+  await withStaleSession(h, "bulk_member", async () => {
+    expect(await load("bulk_member")).toMatchObject({ operator: false });
+  });
+});
 
 it("requires a recent sign-in before sending a batch of operator invitations", async () => {
   const form = { email: "reauth_invite_a@example.com\nreauth_invite_b@example.com", sendEmail: "1", mailLocale: "en" };

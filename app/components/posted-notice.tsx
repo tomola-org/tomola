@@ -1,17 +1,16 @@
 import { useEffect } from "react";
+import { POST_NOTICE_PARAMS } from "~/lib/notice-params";
 
-// The address that carried the notice (?posted=, ?edited=, ?followed=) is cleaned a few seconds after the notice appears, so that the address copied from the bar does not say "just posted".
-export function useDropNoticeParams(active: boolean) {
+// Clean the address a few seconds after the notice appears so copied links omit it.
+export function useDropNoticeParams(active: boolean, params: readonly string[] = POST_NOTICE_PARAMS) {
   useEffect(() => {
     if (!active) return;
     const timer = setTimeout(() => {
       const url = new URL(window.location.href);
-      if (!url.searchParams.has("posted") && !url.searchParams.has("edited") && !url.searchParams.has("followed")) return;
-      url.searchParams.delete("posted");
-      url.searchParams.delete("edited");
-      url.searchParams.delete("followed");
+      if (!params.some(name => url.searchParams.has(name))) return;
+      for (const name of params) url.searchParams.delete(name);
       window.history.replaceState(window.history.state, "", url);
     }, 6000);
     return () => clearTimeout(timer);
-  }, [active]);
+  }, [active, params]);
 }

@@ -1,4 +1,5 @@
 import type { Lang, SourceLang } from "~/lib/languages";
+import { NOTICE_PARAMS } from "~/lib/notice-params";
 
 // ui: the language of the screen when it comes from the address (a shared ?lang= link, or an earlier choice that pinned it), otherwise null (cookie, browser language, default).
 export type ReadingLanguageChoice = { current: Lang; usual: Lang; enabled: readonly Lang[]; ui?: Lang | null };
@@ -19,9 +20,7 @@ export function readingLangSearch(search: string, target: Lang, usual: Lang | nu
   const params = new URLSearchParams(search);
   params.delete("page");
   params.delete("manage");
-  params.delete("posted");
-  params.delete("edited");
-  params.delete("followed");
+  for (const name of NOTICE_PARAMS) params.delete(name);
   if (ui) {
     params.set("lang", target);
     params.set(READING_ONLY_PARAM, ui);

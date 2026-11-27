@@ -1,12 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createAppAuth } from "~/lib/auth/auth.server";
-import { requireUser } from "~/lib/auth/session.server";
+import { requirePrivilegedWriteSession, requireUser } from "~/lib/auth/session.server";
 import { settleMagicLinkMail } from "~/lib/auth/magic-link.server";
 import { createMailer } from "~/lib/mail/mail.server";
 import { createMemoryMailbox } from "~/lib/mail/transports.server";
 import { action, loader } from "~/routes/login";
 import { action as confirmAction, loader as confirmLoader } from "~/routes/auth-confirm";
 import { BASE, setupRouteHarness, type RouteHarness } from "./helpers/route-harness";
+import { expectModerationReauthentication, withStaleSession } from "./helpers/reauth";
 
 vi.mock("~/paraglide/messages.js", () => ({ m: new Proxy({}, {
   get: (_target, key) => (params?: { url?: string }) => key === "mail_magic_link_body" ? params?.url ?? "" : "",
@@ -67,10 +68,29 @@ describe("login return destination", () => {
 
   it("takes the moderation purpose from the re-verification address", async () => {
     const as = "returner";
-    const next = "/t/123?page=2#c-456";
-    expect(await loader(h.args(h.request(`/login?reauth=moderation&next=${encodeURIComponent(next)}`, { as })))).toMatchObject({ next, verifying: { purpose: "moderation" } });
+    const next = "/t/123?page=2&reverified=1#c-456";
+    expect(await loader(h.args(h.request(`/login?reauth=moderation&next=${encodeURIComponent(next)}`, { as })))).toMatchObject({ next, verifying: { purpose: "moderation" }, cancelTo: "/t/123?page=2#c-456" });
     expect(await loader(h.args(h.request("/login?reauth=moderation&next=%2F%2Fevil.example", { as })))).toMatchObject({ next: "/", verifying: { purpose: "moderation" } });
     expect(await loader(h.args(h.request("/login?reauth=1&next=%2Fmod", { as })))).toMatchObject({ verifying: { purpose: "passkey" } });
+  });
+
+  it("uses a separate purpose for opening a page and lets the member cancel without requesting verification again", async () => {
+    const next = "/invites/shared?lang=ja";
+    const path = `/login?${new URLSearchParams({ reauth: "open-page", next })}`;
+    expect(await loader(h.args(h.request(path, { as: "returner" })))).toMatchObject({
+      next, reauth: true, reauthMode: "open-page", verifying: { purpose: "open-page" }, cancelTo: "/",
+    });
+  });
+
+  it.each([
+    [undefined, "/v/orchard?tab=about#members", "/v/orchard?tab=about#members"],
+    ["https://elsewhere.example/other", "/v/orchard#members", "/v/orchard#members"],
+    [`${BASE}/admin/roles?q=orchard`, "/v/orchard", "/admin/roles?q=orchard"],
+  ])("adds the write notice to a fallback or same-origin referrer", async (referer, fallbackPath, next) => {
+    await withStaleSession(h, "returner", async () => {
+      const request = h.request("/mod", { as: "returner", form: { intent: "hide" }, headers: referer ? { referer } : {} });
+      expectModerationReauthentication(await h.outcome(() => requirePrivilegedWriteSession(request, { fallbackPath })), next);
+    });
   });
 
   it.each(["//evil.example", "https://evil.example", "/\\evil.example", "/a/..//evil.example"])("rejects an unsafe destination %s", async (next) => {

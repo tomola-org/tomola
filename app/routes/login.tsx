@@ -30,7 +30,7 @@ import { m } from "~/paraglide/messages.js";
 import { getLocale } from "~/paraglide/runtime.js";
 import { hasLogoutNotice } from "~/lib/auth/logout-notice.server";
 import { safeLocalPath } from "~/lib/display-lang.server";
-import { isLoginMethodReturn, isReauthentication, loginMethodPurpose } from "~/lib/reauth";
+import { isLoginMethodReturn, isReauthentication, loginMethodPurpose, reauthenticationCancelPath } from "~/lib/reauth";
 import { googleLoginConfig } from "~/lib/auth/google-config.server";
 import { googleBrowserFromRequest } from "~/lib/auth/google-browser";
 import { startGoogleSignIn } from "~/lib/auth/google-flow.server";
@@ -47,6 +47,7 @@ const reauthMessages = {
   google: m.google_reauth_for,
   mcp: m.reauth_for_mcp,
   moderation: m.reauth_for_moderation,
+  "open-page": m.reauth_for_open_page,
   passkey: m.reauth_for_passkey,
   "add-passkey": m.reauth_for_passkey,
   "remove-passkey": m.reauth_for_remove_passkey,
@@ -59,7 +60,7 @@ const reauthMessages = {
 };
 
 // Account and AI connection flows still identify their purpose by the return page.
-function reauthPurpose(next: string): Exclude<keyof typeof reauthMessages, "moderation"> {
+function reauthPurpose(next: string): "google" | "tokens" | "mcp" | "passkey" {
   if (next.includes("#settings-google")) return "google";
   const path = next.split(/[?#]/)[0];
   if (path === "/settings/tokens") return "tokens";
@@ -86,7 +87,7 @@ async function loaderImplementation({ request }: Route.LoaderArgs) {
     email: member.email,
     handle: profile?.handle ?? null,
     passkeyOnly, remaining,
-    purpose: mode === "moderation" ? mode : (loginMethodChange ? loginMethodPurpose(url.searchParams.get("purpose")) : undefined) ?? reauthPurpose(next),
+    purpose: mode === "1" ? (loginMethodChange ? loginMethodPurpose(url.searchParams.get("purpose")) : undefined) ?? reauthPurpose(next) : mode,
     // During an AI connection the check is for the account that is logged in; someone who wants another account can leave and return to the same request (the logout screen allows only /mcp/login).
     ...(next.startsWith("/mcp/consent?") ? { switchNext: `/mcp/login?${next.slice("/mcp/consent?".length)}` } : {}),
     hasPasskey: (await db.select({ id: passkey.id }).from(passkey).where(eq(passkey.userId, member.id)).limit(1)).length > 0,
@@ -94,6 +95,7 @@ async function loaderImplementation({ request }: Route.LoaderArgs) {
   // The extra fields are present only when they apply, so an ordinary login screen carries nothing more than before.
   return {
     next, reauth, codePending: passkeyOnly ? null : codePending, loggedOut: hasLogoutNotice(request),
+    ...(reauth ? { reauthMode: mode, cancelTo: reauthenticationCancelPath(next, mode) } : {}),
     ...(reauth && googleError === "google_reauth" ? { googleReauthenticationFailed: true } : {}),
     ...(googleLoginConfig() && (!reauth || loginMethodChange && googleError !== "google_reauth" && !passkeyOnly && !!member && await linkedGoogle(db, member.id)) ? { google: { browser: googleBrowserFromRequest(request), error: googleError } } : {}),
     ...(verifying ? { verifying } : {}),
@@ -214,7 +216,7 @@ export default function Login({ loaderData, actionData }: Route.ComponentProps) 
     };
   }, [revalidator]);
   const verifying = "verifying" in loaderData ? loaderData.verifying : null;
-  const reauthValue = verifying?.purpose === "moderation" ? "moderation" : "1";
+  const reauthValue = loaderData.reauthMode;
   const heading = verifying ? m.reauth_title() : loaderData.codePending ? m.login_code_heading() : m.login_title();
   return (
     <>
@@ -258,8 +260,7 @@ export default function Login({ loaderData, actionData }: Route.ComponentProps) 
       </>}
       </>}
       {verifying?.switchNext && <Form method="post" action="/logout" className="ui-help text-muted-foreground"><input type="hidden" name="next" value={verifying.switchNext} /><p>{m.mcp_switch_account({ who: verifying.handle ? `@${verifying.handle}` : verifying.email })} <Button type="submit" variant="link" className="h-auto p-0 align-baseline">{m.mcp_switch_account_button()}</Button></p></Form>}
-      {/* Leaving without confirming: back to the screen that asked. */}
-      {loaderData.reauth && <p><Link to={loaderData.next} className="underline ui-help">{m.reauth_cancel()}</Link></p>}
+      {loaderData.cancelTo && <p><Link to={loaderData.cancelTo} className="underline ui-help">{m.reauth_cancel()}</Link></p>}
     </main>
     </>
   );

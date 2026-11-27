@@ -9,7 +9,7 @@ import { LocalTime } from "~/components/local-time";
 import { Button } from "~/components/ui/button";
 import { data, Form, redirect, useNavigation } from "react-router";
 import type { Route } from "./+types/invites-new";
-import { requireMember, requirePrivilegedWriteSession, requireWriter } from "~/lib/auth/session.server";
+import { requireFreshSessionToOpen, requireMember, requirePrivilegedWriteSession, requireWriter } from "~/lib/auth/session.server";
 import { parseEmail } from "~/lib/email";
 import { INVITATION_TTL_DAYS, listInvitations, normalizeEmail, revokeInvitation } from "~/lib/invitations.server";
 import { assertSameOrigin } from "~/lib/http/csrf.server";
@@ -36,6 +36,7 @@ async function loaderImplementation({ request }: Route.LoaderArgs) {
   const { db, user } = await requireMember(request);
   const operator = isOperatorEmail(user.email);
   if (!canCreateInvitations(operator)) throw data("Not found", { status: 404 });
+  if (operator) await requireFreshSessionToOpen(request);
   const rows = await listInvitations(db, { createdBy: user.id });
   // Account identities linked to recipient addresses are operator-only data.
   return { operator, mailLanguages: operator ? enabledLangs() : [], locale: getLocale(), batchMax: OPERATOR_INVITATION_BATCH_MAX,

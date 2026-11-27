@@ -19,6 +19,7 @@ import { eq } from "drizzle-orm";
 import { passkey } from "~/lib/db/schema";
 import type { PasskeyPrompt } from "~/components/passkey-prompt";
 import { WelcomeNotice } from "~/components/welcome-notice";
+import { ReauthReturnNotice } from "~/components/reauth-return-notice";
 import { welcomeFor } from "~/lib/auth/welcome.server";
 import { hasLogoutNotice } from "~/lib/auth/logout-notice.server";
 import { passkeyPromptPreference } from "~/lib/passkey-prompt.server";
@@ -118,6 +119,7 @@ export default function MemberLayout({ loaderData }: Route.ComponentProps) {
       {loaderData.welcome && <WelcomeNotice welcome={loaderData.welcome} handle={loaderData.handle} passkeyOffer={!loaderData.hasPasskey && location.pathname !== "/" && location.pathname !== "/settings"} villages={"villages" in loaderData} />}
       {Prompt && <Prompt key={location.pathname} eligible={!loaderData.hasPasskey && loaderData.passkeyEnrollmentAllowed} preference={loaderData.passkeyPrompt} fresh={loaderData.passkeyEnrollmentFresh} />}
       <MemberHeader data={navigation as Exclude<typeof navigation, { reader: true }>} sideNavigation={sideNavigation} />
+      <ReauthReturnNotice key={location.key} />
       {sideNavigation ? <SiteNavigation><Outlet /></SiteNavigation> : <Outlet />}
     </TooltipProvider></NavigationDataContext.Provider></NavigationUnreadContext.Provider>
   );

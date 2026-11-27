@@ -49,7 +49,7 @@ async function advanceClockUntil(page: Page, ready: Promise<unknown>) {
     expect.poll(async () => {
       if (!finished) await page.clock.runFor(32);
       return finished;
-    }).toBe(true),
+    }, { intervals: [25, 50, 100] }).toBe(true),
   ]);
 }
 
@@ -144,20 +144,21 @@ test("the author's notice finishes after source confirmation without polling for
   } finally { if (fs.existsSync(hold)) fs.unlinkSync(hold); }
 });
 
-test("body polling continues after the edit notice clears from the address", async ({ page }) => {
+test("body polling continues after the edit and re-verification notices clear from the address", async ({ page }) => {
   const { id, body } = repeatedFixture("edited");
   const hold = path.join(state().dir, "fake-body-translation-hold");
   const clean = `/t/${id}?lang=fr&rl=1`;
   fs.writeFileSync(hold, body);
   try {
     await pauseBrowserClock(page);
-    const first = await openWaitingBody(page, "edited", id, `/t/${id}?edited=${id}&lang=fr&rl=1`);
+    const first = await openWaitingBody(page, "edited", id, `/t/${id}?edited=${id}&lang=fr&rl=1&reverified=1`);
     expect(new URL(first.url()).searchParams.get("edited")).toBe(String(id));
+    expect(new URL(first.url()).searchParams.get("reverified")).toBe("1");
     await Promise.all([waitForBodyPoll(page, id), page.clock.fastForward(6_100)]);
     await expect(page).toHaveURL(clean);
     await advanceClockUntil(page, waitForClientRoute(page));
     const [afterCleanup] = await Promise.all([
-      waitForBodyPoll(page, id, url => !url.searchParams.has("edited")),
+      waitForBodyPoll(page, id, url => !url.searchParams.has("edited") && !url.searchParams.has("reverified")),
       page.clock.fastForward(7_000),
     ]);
     expect(afterCleanup.status()).toBe(200);

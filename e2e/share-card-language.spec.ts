@@ -29,7 +29,7 @@ function anonymousGet(pathname: string): Promise<{ status: number; body: string;
 test("public preview requests use source or hinted language and serve the fallback image anonymously", async ({ page }, info) => {
   const { topicId } = fixture().guest;
   for (const suffix of ["", "?sl=en"]) {
-    const response = await anonymousGet(`/t/${topicId}${suffix}`);
+    const response = await anonymousGet(`/t/${topicId}${suffix}${suffix ? "&" : "?"}reverified=1`);
     expect(response.status).toBe(200);
     const og = response.body.match(/<meta\b[^>]*(?:property="og:|name="twitter:)[^>]*>/g) ?? [];
     await info.attach(suffix ? "hinted-og" : "bare-og", { body: og.join("\n"), contentType: "text/plain" });
@@ -41,12 +41,13 @@ test("public preview requests use source or hinted language and serve the fallba
   const image = await anonymousGet("/icons/share-default.png");
   expect(image.status).toBe(200);
   expect(image.headers["content-type"]).toContain("image/png");
-  await page.goto(`/t/${topicId}`);
+  await page.goto(`/t/${topicId}?reverified=1`);
   const preview = await page.evaluate(() => {
     const read = (property: string) => document.querySelector<HTMLMetaElement>(`meta[property="og:${property}"]`)!.content;
     return { title: read("title"), description: read("description"), image: read("image") };
   });
   await waitForHydration(page);
+  await expect(page.getByRole("status").filter({ hasText: en.reauth_action_pending })).toHaveCount(0);
   await captureScreenshot(page, { path: "share-source-article.png", fullPage: true }, "logomark");
   await captureLogomarkPreviews(page, preview);
 });
