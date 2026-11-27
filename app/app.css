@@ -968,11 +968,14 @@ form[action="/save"] button[aria-pressed="true"] svg { fill: currentColor; }
       justify-self: end;
       inline-size: var(--topic-author-width);
       text-align: end;
+    }
+    .topic-row-meta [data-meta-item="author"] > a { display: block; }
+    .topic-row-meta [data-meta-item="author"]:not(:has(> a)),
+    .topic-row-meta [data-meta-item="author"] > a {
       overflow: hidden;
       text-overflow: ellipsis;
+      overflow-wrap: normal;
     }
-    .topic-row-meta [data-meta-item="author"],
-    .topic-row-meta [data-meta-item="author"] > a { overflow-wrap: normal; }
     /* Put spacing on present items so an empty track leaves no gap. */
     .topic-row-meta :is([data-meta-item="date"], [data-meta-item="village"]) { padding-inline-end: .75rem; }
     .topic-row-meta [data-meta-item="date"] { grid-area: 2 / 1; }

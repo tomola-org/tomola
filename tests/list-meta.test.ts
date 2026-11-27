@@ -54,8 +54,9 @@ for (const rich of [false, true]) for (const badges of [false, true]) {
     const text = row.slice(row.indexOf(">") + 1).replace(/<[^>]+>/g, "");
     const author = topic.authorName ?? "@writer";
     expect(text.startsWith(`${heading} ${author} `)).toBe(true);
-    expect(row.match(/<span [^>]*data-meta-item="author"[^>]*>/)?.[0]).toContain(`title="${author}"`);
-    expect(row.match(/<a [^>]*href="\/u\/writer"[^>]*>/)?.[0]).toContain(`title="${author}"`);
+    const authorTitle = rich ? "Example Writer (@writer)" : "@writer";
+    expect(row.match(/<span [^>]*data-meta-item="author"[^>]*>/)?.[0]).toContain(`title="${authorTitle}"`);
+    expect(row.match(/<a [^>]*href="\/u\/writer"[^>]*>/)?.[0]).toContain(`title="${authorTitle}"`);
     expect(row.match(/<a [^>]*class="topic-title link-ui"[^>]*>Title<\/a>/)).not.toBeNull();
     expect(html).toContain(`dateTime="${base.lastActivityAt}"`);
     if (rich) {

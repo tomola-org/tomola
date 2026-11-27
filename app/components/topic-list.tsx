@@ -122,7 +122,8 @@ export function TopicList({
 }
 
 function TopicAuthor({ handle, name, reader }: { handle: string; name: TopicItem["authorName"]; reader: boolean }) {
-  const title = handle === DELETED_MEMBER_HANDLE ? m.account_delete_member() : name || `@${handle}`;
+  const username = `@${handle}`;
+  const title = handle === DELETED_MEMBER_HANDLE ? m.account_delete_member() : name ? `${name} (${username})` : username;
   return (
     <TopicMetaItem name="author" className="ui-help text-foreground" title={title}>
       <AuthorLink handle={handle} name={name} reader={reader} title={title} />
