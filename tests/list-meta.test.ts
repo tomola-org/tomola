@@ -34,7 +34,7 @@ for (const rich of [false, true]) for (const badges of [false, true]) {
     const topic: TopicItem = {
       ...base, asksStance: badges, hidden: badges,
       ...(rich ? {
-        replyCount: 2, latestReply: { id: 4, page: 2 }, newReplies: { count: 1, href: "/t/1#c-4" },
+        authorName: "Example Writer", replyCount: 2, latestReply: { id: 4, page: 2 }, newReplies: { count: 1, href: "/t/1#c-4" },
         village: { slug: "sample", name: "Sample village" }, insightful: { total: 3, langs: 2 }, nushiCountLabel: "1 AI reply",
         title: { ...base.title, kind: "primary" as const, engine: "fake", pending: true, unavailable: true },
       } : {}),
@@ -52,7 +52,10 @@ for (const rich of [false, true]) for (const badges of [false, true]) {
     const messages = jsonMessages();
     const heading = badges ? `Title ${messages.question_badge()} ${messages.entry_hidden_mark_short()}` : "Title";
     const text = row.slice(row.indexOf(">") + 1).replace(/<[^>]+>/g, "");
-    expect(text.startsWith(`${heading} @writer `)).toBe(true);
+    const author = topic.authorName ?? "@writer";
+    expect(text.startsWith(`${heading} ${author} `)).toBe(true);
+    expect(row.match(/<span [^>]*data-meta-item="author"[^>]*>/)?.[0]).toContain(`title="${author}"`);
+    expect(row.match(/<a [^>]*href="\/u\/writer"[^>]*>/)?.[0]).toContain(`title="${author}"`);
     expect(row.match(/<a [^>]*class="topic-title link-ui"[^>]*>Title<\/a>/)).not.toBeNull();
     expect(html).toContain(`dateTime="${base.lastActivityAt}"`);
     if (rich) {

@@ -61,6 +61,7 @@ async function expectNarrowOrder(row: Locator) {
 }
 
 test("list metadata separates optional items and stays readable when it wraps", async ({ page }) => {
+  test.skip(!process.env.E2E_PUBLIC_READING && process.env.E2E_VILLAGES !== "1", "The rich metadata fixture requires villages.");
   const fixture: { rich: number; plain: number } = JSON.parse(fs.readFileSync(path.join(state().dir, "meta-separators.json"), "utf8"));
   await useMember(page, "listmeta_reader@example.com");
   let richHome = "";
@@ -119,4 +120,19 @@ test("list metadata separates optional items and stays readable when it wraps", 
       }
     }
   }
+});
+
+test("replies reach the author column edge when the list has no insightful counts", async ({ page }) => {
+  const id: number = JSON.parse(fs.readFileSync(path.join(state().dir, "meta-end.json"), "utf8"));
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await useMember(page, "listmeta_edge_writer@example.com", "/saved?lang=en");
+  const row = page.locator(`#q-${id}`);
+  const author = row.locator('[data-meta-item="author"]');
+  const replies = row.locator('[data-meta-item="replies"]');
+  await expect(row).toBeVisible();
+  await expect(row.locator("..").locator('[data-meta-item="insightful"]')).toHaveCount(0);
+  await expect(replies).toBeVisible();
+  await expect(author).toBeVisible();
+  const [replyBox, authorBox] = await Promise.all([replies.boundingBox(), author.boundingBox()]);
+  expect(replyBox!.x + replyBox!.width).toBeCloseTo(authorBox!.x + authorBox!.width, 0);
 });

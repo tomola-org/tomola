@@ -4,17 +4,27 @@ import { eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../app/lib/db/client.server";
 import { entries, jobs, translations, user, villageMembers, villages } from "../app/lib/db/schema";
 import { createReply, createTopic } from "../app/lib/entries.server";
+import { setTopicSaved } from "../app/lib/saved-topics.server";
 import { setVote } from "../app/lib/votes.server";
 import { villagesEnabled } from "../app/lib/villages-enabled.server";
 
 export async function seedMetaSeparators(db: Db, dir: string) {
-  if (!villagesEnabled()) return;
   const member = async (role: string) => (await db.select({ id: user.id }).from(user).where(eq(user.email, `listmeta_${role}@example.com`)))[0].id;
+  // Old activity keeps these fixtures from displacing other scenarios' home rows.
+  const now = new Date("2014-01-01T12:00:00Z");
+  const edgeWriter = await member("edge_writer");
+  const edge = await createTopic(db, edgeWriter, { lang: "en", title: "Metadata at the end of a saved row", body: "A saved topic with a reply." }, { now });
+  if (!edge.ok) throw new Error("saved metadata topic failed");
+  const edgeReply = await createReply(db, edgeWriter, edge.id, { lang: "en", body: "A reply on the saved topic." }, { now });
+  const saved = await setTopicSaved(db, edgeWriter, edge.id, true, { now });
+  if (!edgeReply.ok || !saved.ok) throw new Error("saved metadata fixture failed");
+  await db.delete(jobs).where(inArray(sql<number>`(${jobs.payload}->>'entryId')::bigint`, [edge.id, edgeReply.id]));
+  fs.writeFileSync(path.join(dir, "meta-end.json"), JSON.stringify(edge.id));
+
+  if (!villagesEnabled()) return;
   const writer = await member("writer"), reader = await member("reader");
   const [village] = await db.insert(villages).values({ slug: "meta-separators", name: "The Village for Examples and Shared Reading Notes", kind: "open" }).returning();
   await db.insert(villageMembers).values([writer, reader].map(userId => ({ villageId: village.id, userId })));
-  // Old activity keeps these fixtures from displacing other scenarios' home rows.
-  const now = new Date("2014-01-01T12:00:00Z");
   const rich = await createTopic(db, writer, { lang: "ja", title: "属性の区切りの見本", body: "項目を区切る表示の確認。", village: village.slug }, { now });
   const plain = await createTopic(db, writer, { lang: "en", title: "A plain metadata example", body: "A row with replies and without translation metadata." }, { now });
   if (!rich.ok || !plain.ok) throw new Error("metadata topics failed");

@@ -14,7 +14,6 @@ export const publicOnly = [
   ["village-roster", ".*"],
   ["village-invite-suggest", ".*"],
   ["list-seen-sync", "signed-out boundaries"],
-  ["meta-separators", ".*"],
   ["read-later", "anonymous readers"],
   ["village-icons", ".*"],
   ["edit-history", "anonymous history"],
@@ -65,6 +64,7 @@ export const publicOnly = [
   ["return-reading", ".*"],
 ] as const;
 export const bothModes = [
+  ["meta-separators", ".*"],
   ["auth", "the emailed link opens a confirm page|a member signs in with a passkey and confirms its removal"],
   ["draft-preview", ".*"],
   ["ai-draft", "AI draft confirmation|imported text stays private"],

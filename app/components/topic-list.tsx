@@ -16,6 +16,7 @@ import type { TopicOrder } from "~/lib/entries.server";
 import { pageSearch } from "~/lib/pagination";
 import { peekHrefFor, stanceReturnTo, type StanceMessageParam } from "~/lib/stance-ui";
 import type { TopicItem } from "~/lib/topic-list.server";
+import { DELETED_MEMBER_HANDLE } from "~/lib/deleted-member";
 import { languageLabel } from "~/lib/language-label";
 import { villageNameTitle } from "~/lib/village-translation-view";
 import { m } from "~/paraglide/messages.js";
@@ -69,7 +70,7 @@ export function TopicList({
           </div>
           <div className="topic-row-meta ui-meta text-muted-foreground">
             <div className="topic-row-meta-start">
-              <TopicMetaItem name="author" className="ui-help text-foreground"><AuthorLink handle={t.authorHandle} name={t.authorName} reader={reader} /></TopicMetaItem>
+              <TopicAuthor handle={t.authorHandle} name={t.authorName} reader={reader} />
               <TopicMetaItem name="date"><LocalTime iso={order === "activity" ? t.lastActivityAt : t.createdAt} className="topic-date" /></TopicMetaItem>
               {t.village && <TopicMetaItem name="village"><Link to={`/v/${t.village.slug}`} title={villageNameTitle(t.village) ?? t.village.name} className="link-ui block truncate">{t.village.name}</Link></TopicMetaItem>}
               <div className="topic-row-status">
@@ -120,9 +121,18 @@ export function TopicList({
   );
 }
 
-function TopicMetaItem({ name, className, children }: { name: string; className?: string; children: ReactNode }) {
+function TopicAuthor({ handle, name, reader }: { handle: string; name: TopicItem["authorName"]; reader: boolean }) {
+  const title = handle === DELETED_MEMBER_HANDLE ? m.account_delete_member() : name || `@${handle}`;
+  return (
+    <TopicMetaItem name="author" className="ui-help text-foreground" title={title}>
+      <AuthorLink handle={handle} name={name} reader={reader} title={title} />
+    </TopicMetaItem>
+  );
+}
+
+function TopicMetaItem({ name, className, title, children }: { name: string; className?: string; title?: string; children: ReactNode }) {
   // Keep the preceding space available to assistive technology and copying, even across layout groups.
-  return <span data-meta-item={name} className={className}><span className="sr-only"> </span>{children}</span>;
+  return <span data-meta-item={name} className={className} title={title}><span className="sr-only"> </span>{children}</span>;
 }
 
 // The rows that are new since the reader last saw this list (see lib/list-seen.ts). Null until the page is live, and for a list that is not tracked.

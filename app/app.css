@@ -894,7 +894,6 @@ form[action="/save"] button[aria-pressed="true"] svg { fill: currentColor; }
 .topic-row-heading-badges > .topic-title:not([data-remark]) { display: inline; }
 
 .topic-row-meta,
-.topic-row-meta-start,
 .topic-row-meta-end,
 .topic-row-status,
 .topic-row-replies {
@@ -904,14 +903,14 @@ form[action="/save"] button[aria-pressed="true"] svg { fill: currentColor; }
   row-gap: .125rem;
   min-inline-size: 0;
 }
+.topic-row-meta-start { display: contents; }
 .topic-row-meta,
-.topic-row-meta-start,
 .topic-row-meta-end,
-.topic-row-status { flex-wrap: wrap; }
-.topic-row-meta-end {
-  margin-inline-start: auto;
-  justify-content: end;
-}
+.topic-row-status,
+.topic-row-replies { flex-wrap: wrap; }
+.topic-row-meta-end { margin-inline-start: auto; }
+.topic-row-meta-end,
+.topic-row-replies { justify-content: end; }
 .topic-row-status:empty,
 .topic-row-replies:empty { display: none; }
 .topic-row-status { overflow-wrap: break-word; }
@@ -947,10 +946,9 @@ form[action="/save"] button[aria-pressed="true"] svg { fill: currentColor; }
     .topic-list {
       --topic-author-width: 8rem;
       --topic-author-gap: 1.5rem;
+      --topic-village-track-limit: calc(10rem + .75rem);
       display: grid;
-      /* Reserve space for a whole status word when the other tracks are crowded. */
-      grid-template-columns: max-content fit-content(10rem) minmax(min-content, 1fr) max-content max-content;
-      column-gap: .75rem;
+      grid-template-columns: max-content fit-content(var(--topic-village-track-limit)) minmax(min-content, 1fr) minmax(min-content, max-content) max-content;
     }
     .topic-list > li { grid-column: 1 / -1; }
     .topic-list > .topic-row {
@@ -959,7 +957,6 @@ form[action="/save"] button[aria-pressed="true"] svg { fill: currentColor; }
       align-items: baseline;
     }
     .topic-row-meta,
-    .topic-row-meta-start,
     .topic-row-meta-end { display: contents; }
     .topic-row-heading {
       grid-area: 1 / 1 / 2 / -1;
@@ -971,12 +968,31 @@ form[action="/save"] button[aria-pressed="true"] svg { fill: currentColor; }
       justify-self: end;
       inline-size: var(--topic-author-width);
       text-align: end;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
+    .topic-row-meta [data-meta-item="author"],
+    .topic-row-meta [data-meta-item="author"] > a { overflow-wrap: normal; }
+    /* Put spacing on present items so an empty track leaves no gap. */
+    .topic-row-meta :is([data-meta-item="date"], [data-meta-item="village"]) { padding-inline-end: .75rem; }
     .topic-row-meta [data-meta-item="date"] { grid-area: 2 / 1; }
-    .topic-row-meta [data-meta-item="village"] { grid-area: 2 / 2; }
-    .topic-row-status { grid-area: 2 / 3; }
-    .topic-row-replies { grid-area: 2 / 4; justify-content: end; }
-    .topic-row-meta [data-meta-item="insightful"] { grid-area: 2 / 5; text-align: end; }
+    .topic-row-meta [data-meta-item="village"] {
+      grid-area: 2 / 2;
+      max-inline-size: var(--topic-village-track-limit);
+    }
+    .topic-row-status {
+      grid-area: 2 / 3;
+      min-inline-size: 8rem;
+    }
+    .topic-row-replies {
+      grid-area: 2 / 4;
+      padding-inline-start: .75rem;
+    }
+    .topic-row-meta [data-meta-item="insightful"] {
+      grid-area: 2 / 5;
+      padding-inline-start: .75rem;
+      text-align: end;
+    }
     .topic-row-extra { grid-column: 1 / -1; }
   }
 }
