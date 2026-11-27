@@ -1,4 +1,5 @@
 import type { FigureReading, FigureRegion } from "./figure";
+import { figurePixelDelta, findFigureGraphics } from "./figure-graphics.server";
 
 export type FigureBox = { left: number; top: number; width: number; height: number };
 export const FIGURE_SPACE = { adjacentDelta: 6, backgroundNoise: 16, faintLineContrast: 32, faintLineWidth: 3, faintLineLength: 24, contrast: 40, glyphFringe: 4, guard: 2, maxSpeckPixels: 9, maxSpeckDiameter: 3, maxWindowWidth: 2048, maxWindowHeight: 512, maxWindowPixels: 1048576, horizontalMargin: 192, verticalMargin: 96 } as const;
@@ -10,28 +11,24 @@ export function figureBox(region: Pick<FigureRegion, "x" | "y" | "width" | "heig
 }
 const median = (values: number[]) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
 const luminance = (color: ArrayLike<number>) => color[0] * .299 + color[1] * .587 + color[2] * .114;
-export function background(data: Buffer, width: number, height: number, box: FigureBox): number[] {
+export function background(data: Buffer, width: number, height: number, box: FigureBox, graphics?: ReadonlySet<number>): number[] {
   const samples: number[][] = [[], [], [], []];
   for (let y = Math.max(0, box.top - 2); y < Math.min(height, box.top + box.height + 2); y++) for (let x = Math.max(0, box.left - 2); x < Math.min(width, box.left + box.width + 2); x++) {
-    if (!inside(box, x, y)) for (let c = 0; c < 4; c++) samples[c].push(data[(y * width + x) * 4 + c]);
+    const p = y * width + x;
+    if (!inside(box, x, y) && !graphics?.has(p)) for (let c = 0; c < 4; c++) samples[c].push(data[p * 4 + c]);
   }
   return samples.map((values, c) => values.length ? median(values) : data[c]);
-}
-function difference(data: Buffer, p: number, q: number): number {
-  let d = Math.abs(data[p * 4 + 3] - data[q * 4 + 3]);
-  if (data[p * 4 + 3] > 16 || data[q * 4 + 3] > 16) for (let c = 0; c < 3; c++) d = Math.max(d, Math.abs(data[p * 4 + c] - data[q * 4 + c]));
-  return d;
 }
 const padded = (box: FigureBox, amount: number, width: number, height: number): FigureBox => ({
   left: Math.max(0, box.left - amount), top: Math.max(0, box.top - amount),
   width: Math.min(width, box.left + box.width + amount) - Math.max(0, box.left - amount),
   height: Math.min(height, box.top + box.height + amount) - Math.max(0, box.top - amount),
 });
-export type FigureInk = { box: FigureBox; points: number[]; protectedPoints?: number[]; lineCount: number; lineHeights: number[]; uncertain: boolean; original?: FigureInk };
+export type FigureInk = { box: FigureBox; points: number[]; protectedPoints?: number[]; graphics?: ReadonlySet<number>; fringe?: number[]; keepOut?: FigureBox; unsafe?: boolean; lineCount: number; lineHeights: number[]; uncertain: boolean; original?: FigureInk };
 type InkComponent = { box: FigureBox; points: number[]; touches: boolean };
 const maxInkPadding = 64, maxLetterGap = 6;
 
-function extendInkLine(chosen: InkComponent[], eligible: InkComponent[], box: FigureBox, search: FigureBox, characterHeight: number): void {
+function extendInkLine(chosen: InkComponent[], eligible: InkComponent[], box: FigureBox, search: FigureBox, characterHeight: number, matchesColor?: (c: InkComponent) => boolean): void {
   // Use a fraction of the glyph height to cross letter spacing in tight OCR
   // boxes. Cap the gap so larger text does not bridge to nearby diagram marks.
   const maxGap = Math.min(maxLetterGap, Math.ceil(characterHeight / 3));
@@ -43,7 +40,7 @@ function extendInkLine(chosen: InkComponent[], eligible: InkComponent[], box: Fi
     const start = (b: FigureBox) => direction === 1 ? b.left : -(b.left + b.width);
     const candidates = eligible.filter(c => {
       const b = c.box;
-      return !measured.has(c) && start(b) >= start(box) + box.width &&
+      return !measured.has(c) && (!matchesColor || matchesColor(c)) && start(b) >= start(box) + box.width &&
         b.left > search.left && b.left + b.width < search.left + search.width &&
         b.width <= characterHeight * 1.5 && b.height >= characterHeight * .5 && b.height <= characterHeight * 1.5 &&
         seeds.some(s => sameLine(s.box, b));
@@ -57,46 +54,63 @@ function extendInkLine(chosen: InkComponent[], eligible: InkComponent[], box: Fi
   }
 }
 
-// Keep components touching the OCR box, nearby fragments and a continuing row.
-// Other components remain obstacles.
-export function measureFigureInk(data: Buffer, width: number, height: number, box: FigureBox, others: FigureBox[]): FigureInk {
-  return measureInk(data, width, height, box, others, FIGURE_SPACE.contrast);
+// Pango's raster has only glyphs. Keep its measurement independent of artwork.
+export function measureGlyphInk(data: Buffer, width: number, height: number, box: FigureBox): FigureInk {
+  return measureInk(data, width, height, box, [], FIGURE_SPACE.contrast);
 }
 
-function measureInk(data: Buffer, width: number, height: number, box: FigureBox, others: FigureBox[], threshold: number, original?: FigureInk): FigureInk {
-  const color = background(data, width, height, box), light = luminance(color) > 128;
-  let final: FigureInk = original ?? { box, points: [], lineCount: 0, lineHeights: [], uncertain: false };
+function inkComponents(data: Buffer, width: number, box: FigureBox, search: FigureBox, others: FigureBox[], color: number[], threshold: number, graphics?: ReadonlySet<number>) {
+  const light = luminance(color) > 128, ground = luminance(color);
+  const n = boxArea(search), mask = new Uint8Array(n), seen = new Uint8Array(n);
+  for (let y = 0; y < search.height; y++) for (let x = 0; x < search.width; x++) {
+    const gx = x + search.left, gy = y + search.top, pixel = gy * width + gx, p = pixel * 4;
+    if (graphics?.has(pixel) || others.some(b => inside(b, gx, gy))) continue;
+    const contrast = color[3] <= 16 ? data[p + 3] - color[3] : (light ? 1 : -1) * (ground - (data[p] * .299 + data[p + 1] * .587 + data[p + 2] * .114));
+    if (contrast > threshold) mask[y * search.width + x] = 1;
+  }
+  const components: InkComponent[] = [], tinyPoints = new Set<number>();
+  for (let p = 0; p < n; p++) {
+    if (!mask[p] || seen[p]) continue;
+    const queue = [p]; seen[p] = 1;
+    let left = search.width, right = 0, top = search.height, bottom = 0, touches = false;
+    for (let k = 0; k < queue.length; k++) {
+      const at = queue[k], x = at % search.width, y = Math.floor(at / search.width);
+      left = Math.min(left, x); right = Math.max(right, x); top = Math.min(top, y); bottom = Math.max(bottom, y);
+      touches ||= inside(box, x + search.left, y + search.top);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx, ny = y + dy, q = ny * search.width + nx;
+        if (nx >= 0 && nx < search.width && ny >= 0 && ny < search.height && mask[q] && !seen[q]) { seen[q] = 1; queue.push(q); }
+      }
+    }
+    const b = { left: left + search.left, top: top + search.top, width: right - left + 1, height: bottom - top + 1 };
+    const points = queue.map(at => (Math.floor(at / search.width) + search.top) * width + at % search.width + search.left);
+    if (points.length < 4) for (const at of points) tinyPoints.add(at);
+    else components.push({ box: b, points, touches });
+  }
+  return { components, tinyPoints, mask };
+}
+
+function measureInk(data: Buffer, width: number, height: number, box: FigureBox, others: FigureBox[], threshold: number, original?: FigureInk, graphics?: ReadonlySet<number>): FigureInk {
+  const color = background(data, width, height, box, graphics), light = luminance(color) > 128;
+  let final: FigureInk = original ?? { box, points: [], lineCount: 0, lineHeights: [], uncertain: false, graphics };
   for (let padding = 8; padding <= maxInkPadding; padding *= 2) {
     const local = padded(box, padding, width, height);
     const wide = original ? padded(box, maxInkPadding, width, height) : local;
     const search = { ...local, left: wide.left, width: wide.width };
-    const n = boxArea(search), mask = new Uint8Array(n), seen = new Uint8Array(n);
-    for (let y = 0; y < search.height; y++) for (let x = 0; x < search.width; x++) {
-      const gx = x + search.left, gy = y + search.top, p = (gy * width + gx) * 4;
-      if (others.some(b => inside(b, gx, gy))) continue;
-      const contrast = color[3] <= 16 ? data[p + 3] - color[3] : (light ? 1 : -1) * (luminance(color) - (data[p] * .299 + data[p + 1] * .587 + data[p + 2] * .114));
-      if (contrast > threshold) mask[y * search.width + x] = 1;
-    }
-    const components: InkComponent[] = [], tinyPoints = new Set<number>();
-    for (let p = 0; p < n; p++) {
-      if (!mask[p] || seen[p]) continue;
-      const queue = [p]; seen[p] = 1;
-      let left = search.width, right = 0, top = search.height, bottom = 0, touches = false;
-      for (let k = 0; k < queue.length; k++) {
-        const at = queue[k], x = at % search.width, y = Math.floor(at / search.width);
-        left = Math.min(left, x); right = Math.max(right, x); top = Math.min(top, y); bottom = Math.max(bottom, y);
-        touches ||= inside(box, x + search.left, y + search.top);
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-          const nx = x + dx, ny = y + dy, q = ny * search.width + nx;
-          if (nx >= 0 && nx < search.width && ny >= 0 && ny < search.height && mask[q] && !seen[q]) { seen[q] = 1; queue.push(q); }
-        }
+    if (search.width > FIGURE_SPACE.maxWindowWidth || search.height > FIGURE_SPACE.maxWindowHeight) return { ...final, uncertain: true };
+    const { components: found, tinyPoints, mask } = inkComponents(data, width, box, search, others, color, threshold, graphics);
+    const components = found.filter(({ box: b }) => {
+      const narrowUpright = b.height > box.height * .8 && b.width <= 2;
+      const atSide = b.left <= box.left || b.left + b.width >= box.left + box.width;
+      const outsideRow = b.top < box.top || b.top + b.height > box.top + box.height;
+      if (graphics) {
+        // A narrow upright such as an I or a numeral can protrude a pixel
+        // beyond the OCR row. Exclude a possible rule at the side or running
+        // substantially beyond the row after the artwork pass.
+        return !narrowUpright || !atSide && b.height <= box.height + 4;
       }
-      const b = { left: left + search.left, top: top + search.top, width: right - left + 1, height: bottom - top + 1 };
-      if (queue.length < 4) for (const at of queue) tinyPoints.add((Math.floor(at / search.width) + search.top) * width + at % search.width + search.left);
-      if (queue.length >= 4 && !(b.width > box.width * .8 && b.height <= 3) && !(b.height > box.height * .8 && b.width <= 2 && (b.left <= box.left || b.left + b.width >= box.left + box.width || b.top < box.top || b.top + b.height > box.top + box.height))) {
-        components.push({ box: b, points: queue.map(at => (Math.floor(at / search.width) + search.top) * width + at % search.width + search.left), touches });
-      }
-    }
+      return !(b.width > box.width * .8 && b.height <= 3) && !(narrowUpright && (atSide || outsideRow));
+    });
     const recovery = padded(box, 8, width, height);
     const eligible = components.filter(c => {
       const b = c.box;
@@ -124,10 +138,12 @@ function measureInk(data: Buffer, width: number, height: number, box: FigureBox,
       }
       contrasts.sort((a, b) => a - b);
       const stronger = (contrasts[Math.floor(contrasts.length * .95)] ?? 0) * .5;
-      if (stronger > FIGURE_SPACE.contrast) return measureInk(data, width, height, box, others, stronger, original);
+      if (stronger > FIGURE_SPACE.contrast) return measureInk(data, width, height, box, others, stronger, original, graphics);
     }
     const primary = eligible.filter(c => c.touches);
-    const characterHeight = primary.length ? median(primary.map(c => c.box.height)) : box.height;
+    const letters = graphics ? primary.filter(c => c.box.height >= 4 && c.box.width <= c.box.height * 3) : primary;
+    const characterHeight = letters.length ? median(letters.map(c => c.box.height)) : box.height;
+    const matchesColor = graphics && letters.length >= 2 ? sourceColorMatcher(data, letters.map(c => c.points), color) : undefined;
     const chosen = eligible.filter(c => c.touches ||
       c.box.left >= recovery.left && c.box.top >= recovery.top && c.box.left + c.box.width <= recovery.left + recovery.width && c.box.top + c.box.height <= recovery.top + recovery.height &&
       c.box.width <= characterHeight * 1.5 && c.box.height <= characterHeight * 1.5 &&
@@ -139,7 +155,7 @@ function measureInk(data: Buffer, width: number, height: number, box: FigureBox,
       const core = chosen.flatMap(c => c.points), originalPoints = new Set(original.points);
       if (core.length !== original.points.length || core.some(p => !originalPoints.has(p))) return original;
       const count = chosen.length;
-      extendInkLine(chosen, eligible, box, search, characterHeight);
+      extendInkLine(chosen, eligible, box, search, characterHeight, matchesColor && (c => matchesColor(c.points)));
       if (chosen.length === count) return original;
     }
     const points = chosen.flatMap(c => c.points), rows = new Uint32Array(height);
@@ -167,7 +183,7 @@ function measureInk(data: Buffer, width: number, height: number, box: FigureBox,
     const tight = { left, top, width: right - left + 1, height: bottom - top + 1 };
     const clipped = left === search.left && left > 0 || top === search.top && top > 0 || right + 1 === search.left + search.width && right + 1 < width || bottom + 1 === search.top + search.height && bottom + 1 < height;
     const own = new Set(points), protectedPoints: number[] = [], protection = padded(tight, FIGURE_SPACE.glyphFringe, width, height);
-    for (let p = 0; p < n; p++) if (mask[p]) {
+    for (let p = 0; p < mask.length; p++) if (mask[p]) {
       const x = p % search.width + search.left, y = Math.floor(p / search.width) + search.top;
       if (!inside(local, x, y) && !inside(protection, x, y)) continue;
       const global = y * width + x;
@@ -183,19 +199,242 @@ function measureInk(data: Buffer, width: number, height: number, box: FigureBox,
       }
       if (!fringe) protectedPoints.push(global);
     }
-    final = { box: tight, points, protectedPoints, lineCount: measuredLines.length, lineHeights: measuredLines, uncertain: clipped, ...(original && { original }) };
+    final = { box: tight, points, protectedPoints, graphics, lineCount: measuredLines.length, lineHeights: measuredLines, uncertain: clipped, ...(original && { original }) };
     if (!clipped) break;
   }
   const right = box.left + box.width, inkRight = final.box.left + final.box.width;
   const nearSide = box.left >= 8 && final.box.left - box.left <= maxLetterGap ||
     width - right >= 8 && right - inkRight <= maxLetterGap;
   return !original && !final.uncertain && nearSide
-    ? measureInk(data, width, height, box, others, threshold, final) : final;
+    ? measureInk(data, width, height, box, others, threshold, final, graphics) : final;
+}
+
+function sourceColorMatcher(data: Buffer, components: number[][], ground: number[]) {
+  const samples = components.map(points => {
+    let peak = points[0], contrast = 0;
+    for (const p of points) {
+      const delta = Math.abs(luminance(data.subarray(p * 4, p * 4 + 3)) - luminance(ground));
+      if (delta > contrast) { contrast = delta; peak = p; }
+    }
+    return peak * 4;
+  });
+  const color = [0, 1, 2, 3].map(c => median(samples.map(p => data[p + c])));
+  return (points: number[]) => points.some(p => {
+    const q = p * 4;
+    if (ground[3] <= 16) return data[q + 3] >= Math.max(40, color[3] - 64);
+    return color.slice(0, 3).every((c, channel) => Math.abs(data[q + channel] - c) <= 56);
+  });
+}
+
+function boundsOf(points: readonly number[], width: number): FigureBox {
+  let left = width, right = 0, top = Infinity, bottom = 0;
+  for (const p of points) {
+    const x = p % width, y = Math.floor(p / width);
+    left = Math.min(left, x); right = Math.max(right, x); top = Math.min(top, y); bottom = Math.max(bottom, y);
+  }
+  return { left, top, width: right - left + 1, height: bottom - top + 1 };
+}
+
+function enclosingBox(a: FigureBox, b: FigureBox): FigureBox {
+  const left = Math.min(a.left, b.left), top = Math.min(a.top, b.top);
+  return { left, top, width: Math.max(a.left + a.width, b.left + b.width) - left,
+    height: Math.max(a.top + a.height, b.top + b.height) - top };
+}
+
+function recoverFigureRows(data: Buffer, width: number, height: number, box: FigureBox, others: FigureBox[], ink: FigureInk) {
+  const original = ink.original ?? ink, ground = background(data, width, height, box, ink.graphics);
+  const characterHeight = median(ink.lineHeights.slice()) || Math.min(32, ink.box.height);
+  const distance = Math.min(48, Math.max(12, Math.ceil(characterHeight * 2.5)));
+  const near = padded(ink.box, distance, width, height), across = padded(ink.box, 8, width, height);
+  const search = { ...near, left: across.left, width: across.width };
+  if (boxArea(search) > FIGURE_SPACE.maxWindowPixels || search.height > FIGURE_SPACE.maxWindowHeight || search.width > FIGURE_SPACE.maxWindowWidth) return { ...ink, unsafe: true };
+  const { components } = inkComponents(data, width, ink.box, search, others, ground, FIGURE_SPACE.contrast, ink.graphics);
+  const own = new Set(ink.points);
+  const letter = (c: InkComponent) => c.box.height >= Math.max(4, characterHeight * .45) &&
+    c.box.height <= characterHeight * 1.6 && c.box.width <= characterHeight * 2.5;
+  const primary = components.filter(c => letter(c) && c.points.some(p => own.has(p)));
+  if (primary.length < 2) return ink;
+  const sameColor = sourceColorMatcher(data, primary.map(c => c.points), ground);
+  const bottom = (b: FigureBox) => b.top + b.height;
+  // Leave vertical continuation to the bounded row search even when the
+  // initial OCR window never clipped any of the measured glyphs.
+  const candidates = components.filter(c => letter(c) && !c.touches &&
+    (bottom(c.box) <= ink.box.top || c.box.top >= bottom(ink.box)) && sameColor(c.points));
+  const consumed = new Set<InkComponent>();
+  const rows: InkComponent[][] = [];
+  for (const seed of candidates) {
+    if (consumed.has(seed)) continue;
+    const centre = seed.box.top + seed.box.height / 2;
+    const row = candidates.filter(c => !consumed.has(c) && Math.abs(c.box.top + c.box.height / 2 - centre) <= characterHeight * .38)
+      .sort((a, b) => a.box.left - b.box.left);
+    for (const c of row) consumed.add(c);
+    let word: InkComponent[] = [];
+    for (const c of row) {
+      const previous = word.at(-1)?.box;
+      if (previous && c.box.left - previous.left - previous.width > characterHeight * .85) {
+        if (word.length >= 2) rows.push(word);
+        word = [];
+      }
+      word.push(c);
+    }
+    if (word.length >= 2) rows.push(word);
+  }
+  const rowsWithBounds = rows.map(row => ({ row, box: boundsOf(row.flatMap(c => c.points), width) }));
+  const selected: typeof rowsWithBounds = [];
+  let unsafe = false;
+  for (const side of [-1, 1]) {
+    let anchor = ink.box;
+    const adjacent = rowsWithBounds.filter(r => side === 1 ? r.box.top >= bottom(ink.box) : bottom(r.box) <= ink.box.top)
+      .sort((a, b) => side * (a.box.top - b.box.top));
+    for (const entry of adjacent) {
+      const b = entry.box, gap = side === 1 ? b.top - bottom(anchor) : anchor.top - bottom(b);
+      const right = b.left + b.width, anchorRight = anchor.left + anchor.width;
+      const overlap = Math.min(right, anchorRight) - Math.max(b.left, anchor.left);
+      const align = Math.min(Math.abs(b.left - anchor.left), Math.abs(right - anchorRight),
+        Math.abs(b.left + right - anchor.left - anchorRight) / 2);
+      if (gap < -characterHeight * .5 || gap > Math.max(4, characterHeight * .85) ||
+          overlap < Math.min(b.width, anchor.width) * .62 || align > Math.max(5, characterHeight * .8)) continue;
+      const competingBox = padded(b, 2, width, height);
+      unsafe ||= gap < 0 || selected.length >= 2 ||
+        b.top <= search.top + 1 || bottom(b) >= bottom(search) - 1 ||
+        b.left <= search.left && search.left > 0 || right >= search.left + search.width && right < width ||
+        others.some(o => o.left < competingBox.left + competingBox.width && competingBox.left < o.left + o.width &&
+          o.top < bottom(competingBox) && competingBox.top < bottom(o));
+      selected.push(entry);
+      anchor = b;
+      if (unsafe) break;
+    }
+  }
+  if (!selected.length) return ink;
+  const recovered = selected.flatMap(({ row, box: b }) => {
+    const line = padded(b, 3, width, height);
+    return components.filter(c => row.includes(c) || !c.touches && c.box.height <= characterHeight * .55 &&
+      inside(line, c.box.left, c.box.top) && inside(line, c.box.left + c.box.width - 1, bottom(c.box) - 1) && sameColor(c.points))
+      .flatMap(c => c.points);
+  });
+  const points = [...new Set([...ink.points, ...recovered])], tight = boundsOf(points, width);
+  const extra = new Set(recovered), protectedPoints = ink.protectedPoints?.filter(p => !extra.has(p));
+  const lineHeights = [...selected.filter(r => r.box.top < ink.box.top).reverse().map(r => r.box.height),
+    ...ink.lineHeights, ...selected.filter(r => r.box.top >= ink.box.top).map(r => r.box.height)];
+  return { ...ink, box: tight, points, protectedPoints, lineCount: lineHeights.length, lineHeights, keepOut: tight, original, unsafe };
+}
+
+function figureSourceFringe(data: Buffer, width: number, height: number, ink: FigureInk, others: FigureBox[], source: FigureBox): number[] {
+  const { points, graphics, protectedPoints } = ink;
+  const ground = background(data, width, height, source, graphics);
+  const excluded = new Set(protectedPoints), core = new Set(points), fringe = new Set<number>();
+  for (const p of points) {
+    const x = p % width, y = Math.floor(p / width);
+    if (x > 0 && x + 1 < width && core.has(p - 1) && core.has(p + 1) && core.has(p - width) && core.has(p + width)) continue;
+    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+      const sx = x + dx, sy = y + dy, q = sy * width + sx;
+      if (sx < 0 || sx >= width || sy < 0 || sy >= height || core.has(q) || fringe.has(q) ||
+          graphics?.has(q) || excluded.has(q) || others.some(b => inside(b, sx, sy))) continue;
+      const rx = sx + Math.sign(dx) * 3, ry = sy + Math.sign(dy) * 3;
+      if (rx >= 0 && rx < width && ry >= 0 && ry < height && figurePixelDelta(data, q, ry * width + rx) < 4) continue;
+      const ref = [];
+      for (const offset of [-1, 0, 1]) {
+        const tx = rx + Math.sign(dy) * offset, ty = ry - Math.sign(dx) * offset, at = ty * width + tx;
+        if (tx >= 0 && tx < width && ty >= 0 && ty < height && !core.has(at) && !graphics?.has(at) && !excluded.has(at)) ref.push(at * 4);
+      }
+      if (ref.length < 2) continue;
+      const alpha = ground[3] <= 16;
+      let dot = 0, sourceLength = 0, length = 0, contrast = 0, texture = 0;
+      for (let c = alpha ? 3 : 0; c < (alpha ? 4 : 3); c++) {
+        const samples = ref.map(at => data[at + c]).sort((a, b) => a - b), color = samples[Math.floor(samples.length / 2)];
+        const a = data[p * 4 + c] - color, b = data[q * 4 + c] - color;
+        dot += a * b; sourceLength += a * a; length += b * b; contrast = Math.max(contrast, Math.abs(b));
+        texture = Math.max(texture, samples.at(-1)! - samples[0]);
+      }
+      if (sourceLength <= 0 || contrast < 8 + texture || dot <= 0 || dot > sourceLength * 1.1) continue;
+      const error = Math.sqrt(Math.max(0, length - dot * dot / sourceLength));
+      if (error <= Math.max(5, contrast * .16)) fringe.add(q);
+    }
+  }
+  return [...fringe];
+}
+
+export function measureFigureInk(data: Buffer, width: number, height: number, box: FigureBox, others: FigureBox[], graphics = figureGraphics(data, width, height, [box, ...others])): FigureInk {
+  const ink = measureInk(data, width, height, box, others, FIGURE_SPACE.contrast, undefined, graphics);
+  if (!ink.points.length) {
+    // A clear OCR box still supplies an anchor. If the raster contains
+    // unclassified foreground there, keep the source for an external note.
+    const ground = background(data, width, height, box, graphics);
+    let unsafe = ink.uncertain;
+    for (let y = box.top; !unsafe && y < box.top + box.height; y++) for (let x = box.left; x < box.left + box.width; x++) {
+      const p = y * width + x, q = p * 4;
+      if (graphics.has(p) || Math.abs(data[q + 3] - ground[3]) > 8 ||
+          ground[3] > 16 && ground.slice(0, 3).some((value, c) => Math.abs(value - data[q + c]) > 12)) { unsafe = true; break; }
+    }
+    return { ...ink, keepOut: box, unsafe };
+  }
+  const recovered = recoverFigureRows(data, width, height, box, others, ink);
+  let unsafe = recovered.unsafe || recovered.uncertain;
+  // A solid connection at the cut between source ink and a path cannot be
+  // erased as text alone. Check both color and adjacency on the original raster.
+  for (const p of recovered.points) {
+    if (unsafe || !graphics.size) break;
+    const x = p % width;
+    for (const q of [p - width, p + width, ...(x ? [p - 1] : []), ...(x + 1 < width ? [p + 1] : [])]) {
+      if (graphics.has(q) && figurePixelDelta(data, p, q) <= 56) { unsafe = true; break; }
+    }
+  }
+  const fringe = figureSourceFringe(data, width, height, recovered, others, box);
+  const tight = boundsOf([...recovered.points, ...fringe], width);
+  // The layout can still use the unexpanded measurement. Both layouts carry
+  // the safety decision and the complete source extent for neighbouring labels.
+  const keepOut = unsafe ? enclosingBox(tight, box) : tight;
+  return { ...recovered, unsafe, fringe, keepOut, ...(recovered.original && {
+    original: { ...recovered.original, unsafe, keepOut },
+  }) };
+}
+
+export function figureGraphics(data: Buffer, width: number, height: number, boxes: FigureBox[]): Set<number> {
+  const graphics = new Set<number>(), windows = new Map<string, { window: FigureBox; characterHeight: number }>();
+  const sourceExtents = boxes.map(box => {
+    const search = padded(box, 8, width, height), window = figureSpaceWindow(box, width, height);
+    let characterHeight = box.height, extent = box;
+    if (search.width <= FIGURE_SPACE.maxWindowWidth && search.height <= FIGURE_SPACE.maxWindowHeight) {
+      const color = background(data, width, height, box);
+      const { components } = inkComponents(data, width, box, search, [], color, FIGURE_SPACE.contrast);
+      const glyph = (c: InkComponent) => c.box.height >= 4 && c.box.height <= box.height && c.box.width <= 2.5 * c.box.height;
+      const core = components.filter(c => c.touches && glyph(c));
+      if (core.length >= 2) {
+        characterHeight = median(core.map(c => c.box.height));
+        extendInkLine(core, components.filter(glyph), box, search, characterHeight);
+        extent = enclosingBox(box, boundsOf(core.flatMap(c => c.points), width));
+      }
+    }
+    const key = [window.left, window.top, window.width, window.height].join(":");
+    const prior = windows.get(key);
+    if (!prior || prior.characterHeight > characterHeight) windows.set(key, { window, characterHeight });
+    return extent;
+  });
+  // Coalesce overlapping search windows if their union stays within the
+  // layout budget. Adjacent labels then share the same stroke search.
+  const searches: { window: FigureBox; characterHeight: number }[] = [];
+  for (const search of windows.values()) {
+    let { window, characterHeight } = search;
+    for (let i = searches.length - 1; i >= 0; i--) {
+      const previous = searches[i], bounds = enclosingBox(window, previous.window);
+      if (bounds.width <= FIGURE_SPACE.maxWindowWidth && bounds.height <= FIGURE_SPACE.maxWindowHeight &&
+          boxArea(bounds) <= FIGURE_SPACE.maxWindowPixels && boxArea(bounds) < boxArea(window) + boxArea(previous.window)) {
+        window = bounds;
+        characterHeight = Math.min(characterHeight, previous.characterHeight);
+        searches.splice(i, 1);
+      }
+    }
+    searches.push({ window, characterHeight });
+  }
+  for (const { window, characterHeight } of searches) findFigureGraphics(data, width, window, characterHeight, sourceExtents, graphics);
+  return graphics;
 }
 
 export function measureFigure(data: Buffer, width: number, height: number, reading: FigureReading): FigureInk[] {
   const boxes = reading.regions.map(r => figureBox(r, width, height));
-  return boxes.map((box, i) => measureFigureInk(data, width, height, box, boxes.filter((_, j) => i !== j)));
+  const retained = (reading.protectedBoxes ?? []).map(b => figureBox(b, width, height));
+  const graphics = figureGraphics(data, width, height, [...boxes, ...retained]);
+  return boxes.map((box, i) => measureFigureInk(data, width, height, box, [...boxes.filter((_, j) => i !== j), ...retained], graphics));
 }
 
 // Exact maximal rectangles containing the complete anchor, in O(width*height).
@@ -222,7 +461,7 @@ export function figureRectangles(mask: Uint8Array, width: number, height: number
 
 // Restore a local color field rather than painting a single median color. Ring
 // medians reject isolated ink; opposite edges preserve linear color gradients.
-export function figureBackgroundPatch(data: Buffer, width: number, height: number, box: FigureBox, ink?: FigureInk, surface?: FigureBackground): Buffer {
+export function figureBackgroundPatch(data: Buffer, width: number, height: number, box: FigureBox, ink?: FigureInk, surface?: FigureBackground, requireSurfaceMatch = false): Buffer {
   if (surface?.backing && ink) {
     const out = Buffer.alloc(boxArea(box) * 4);
     for (let y = 0; y < box.height; y++) for (let x = 0; x < box.width; x++) out.set(surfaceColor(surface, box.left + x, box.top + y), (y * box.width + x) * 4);
@@ -232,9 +471,14 @@ export function figureBackgroundPatch(data: Buffer, width: number, height: numbe
     // Fit geometry with the smooth model, but erase using nearby real colors.
     // The nearest agreeing pair preserves curved gradients and fill edges.
     const out = Buffer.alloc(boxArea(box) * 4), search = padded(box, 32, width, height), n = boxArea(search), excluded = new Uint8Array(n);
+    for (const p of figureGraphicsInBox(ink.graphics, width, search)) excluded[(Math.floor(p / width) - search.top) * search.width + p % width - search.left] = 1;
     for (const p of [...ink.points, ...ink.protectedPoints ?? []]) for (let dy = -FIGURE_SPACE.glyphFringe; dy <= FIGURE_SPACE.glyphFringe; dy++) for (let dx = -FIGURE_SPACE.glyphFringe; dx <= FIGURE_SPACE.glyphFringe; dx++) {
       const x = p % width + dx, y = Math.floor(p / width) + dy;
       if (inside(search, x, y)) excluded[(y - search.top) * search.width + x - search.left] = 1;
+    }
+    if (requireSurfaceMatch) for (let y = 0; y < search.height; y++) for (let x = 0; x < search.width; x++) {
+      const p = y * search.width + x, gx = search.left + x, gy = search.top + y;
+      if (!excluded[p] && !surfaceMatches(surface, data, gx, gy, (gy * width + gx) * 4)) excluded[p] = 1;
     }
     const nearest = Array.from({ length: 4 }, () => new Int32Array(n).fill(-1));
     for (let p = 0; p < n; p++) {
@@ -253,7 +497,7 @@ export function figureBackgroundPatch(data: Buffer, width: number, height: numbe
       let best = Infinity, a = -1, b = -1, fraction = .5;
       for (let axis = 0; axis < 4; axis += 2) {
         const l = nearest[axis][p], r = nearest[axis + 1][p]; if (l < 0 || r < 0) continue;
-        const span = (r - l) / (axis ? search.width : 1), delta = difference(data, global(l), global(r));
+        const span = (r - l) / (axis ? search.width : 1), delta = figurePixelDelta(data, global(l), global(r));
         const score = span + (delta > FIGURE_SPACE.backgroundNoise ? 64 : 0);
         if (score < best) { best = score; a = global(l); b = global(r); fraction = (p - l) / (r - l); }
       }
@@ -262,7 +506,7 @@ export function figureBackgroundPatch(data: Buffer, width: number, height: numbe
     }
     return out;
   }
-  const out = Buffer.alloc(boxArea(box) * 4), fallback = background(data, width, height, ink?.box ?? box);
+  const out = Buffer.alloc(boxArea(box) * 4), fallback = background(data, width, height, ink?.box ?? box, ink?.graphics);
   // Close outlines can cover the sampling edges around the erasure fringe.
   // Reject protected marks and color outliers before interpolating the field.
   const protectedPoints = new Set(ink?.protectedPoints);
@@ -272,7 +516,7 @@ export function figureBackgroundPatch(data: Buffer, width: number, height: numbe
       const sx = horizontal ? x : x + d, sy = horizontal ? y + d : y;
       if (sx < 0 || sx >= width || sy < 0 || sy >= height) continue;
       const p = sy * width + sx, q = p * 4;
-      if (protectedPoints.has(p) || Math.abs(data[q + 3] - fallback[3]) > FIGURE_SPACE.backgroundNoise) continue;
+      if (protectedPoints.has(p) || ink?.graphics?.has(p) || Math.abs(data[q + 3] - fallback[3]) > FIGURE_SPACE.backgroundNoise) continue;
       if ((fallback[3] > 16 || data[q + 3] > 16) && Math.max(Math.abs(data[q] - fallback[0]), Math.abs(data[q + 1] - fallback[1]), Math.abs(data[q + 2] - fallback[2])) > FIGURE_SPACE.backgroundNoise) continue;
       for (let c = 0; c < 4; c++) values[c].push(data[q + c]);
     }
@@ -322,7 +566,7 @@ export type FigureBackground = { box: FigureBox; channels: number[][]; bounds?: 
 // either end; color changes beneath a translucent backing do not enlarge it.
 function figureBacking(data: Buffer, width: number, height: number, ink: FigureInk): FigureBackground | undefined {
   const box = ink.box;
-  if (box.height > 32 || box.width > FIGURE_SPACE.maxWindowWidth || luminance(background(data, width, height, box)) > 128) return;
+  if (box.height > 32 || box.width > FIGURE_SPACE.maxWindowWidth || luminance(background(data, width, height, box, ink.graphics)) > 128) return;
   const sample = (x: number, y: number) => Array.from(data.subarray((y * width + x) * 4, (y * width + x + 1) * 4));
   const edges: number[] = [];
   for (const side of [-1, 1]) {
@@ -331,7 +575,10 @@ function figureBacking(data: Buffer, width: number, height: number, ink: FigureI
       const y = side < 0 ? box.top - d : box.top + box.height - 1 + d;
       if (y < 2 || y + 2 >= height) continue;
       const deltas: number[] = [];
-      for (let x = box.left + 3; x < box.left + box.width - 3; x++) deltas.push(luminance(sample(x, y + side * 2)) - luminance(sample(x, y - side * 2)));
+      for (let x = box.left + 3; x < box.left + box.width - 3; x++) {
+        if (ink.graphics?.has((y + side * 2) * width + x) || ink.graphics?.has((y - side * 2) * width + x)) continue;
+        deltas.push(luminance(sample(x, y + side * 2)) - luminance(sample(x, y - side * 2)));
+      }
       const score = median(deltas);
       if (deltas.filter(d => d > FIGURE_SPACE.adjacentDelta).length >= deltas.length * .85 && score > FIGURE_SPACE.backgroundNoise && score > best) { best = score; edge = y - side * 2; }
     }
@@ -340,13 +587,18 @@ function figureBacking(data: Buffer, width: number, height: number, ink: FigureI
   }
   const bounds = { left: Math.max(0, box.left - 4), top: edges[0], width: Math.min(width, box.left + box.width + 4) - Math.max(0, box.left - 4), height: edges[1] - edges[0] + 1 };
   if (bounds.top > box.top || bounds.top + bounds.height < box.top + box.height) return;
-  const colors = (y: number) => Array.from({ length: bounds.width }, (_, dx) => [0, 1, 2, 3].map(c => median([-1, 0, 1].map(d => sample(Math.max(0, Math.min(width - 1, bounds.left + dx + d)), y)[c]))));
+  const colors = (y: number) => Array.from({ length: bounds.width }, (_, dx) => {
+    const xs = [-2, -1, 0, 1, 2].map(d => Math.max(0, Math.min(width - 1, bounds.left + dx + d)));
+    const clear = xs.filter(x => !ink.graphics?.has(y * width + x));
+    return clear.length ? [0, 1, 2, 3].map(c => median(clear.map(x => sample(x, y)[c]))) : [];
+  });
   // Preserve established small-backing models. Wide banners sample inside the
   // existing clearance to avoid edge ringing, without enlarging the backing.
   const inset = box.width > 256 ? FIGURE_SPACE.guard : 0;
-  return { box, channels: [], bounds, backing: { box: bounds,
-    top: colors(Math.min(bounds.top + inset, box.top - 1)),
-    bottom: colors(Math.max(bounds.top + bounds.height - 1 - inset, box.top + box.height)) } };
+  const top = colors(Math.min(bounds.top + inset, box.top - 1));
+  const bottom = colors(Math.max(bounds.top + bounds.height - 1 - inset, box.top + box.height));
+  if (top.some(c => !c.length) || bottom.some(c => !c.length)) return;
+  return { box, channels: [], bounds, backing: { box: bounds, top, bottom } };
 }
 function surfaceMatches(surface: FigureBackground, color: ArrayLike<number>, x: number, y: number, offset = 0): boolean {
   const backing = surface.backing;
@@ -377,16 +629,16 @@ function figureBackgroundSurface(data: Buffer, width: number, height: number, in
   if (!ink.points.length) return;
   const backing = figureBacking(data, width, height, ink);
   if (backing) return backing;
-  const box = ink.box, excluded = new Set<number>([...ink.points, ...ink.protectedPoints ?? []]);
+  const box = ink.box, excluded = new Set<number>([...ink.points, ...ink.fringe ?? [], ...ink.protectedPoints ?? []]);
 
   const samples: { x: number; y: number; color: number[] }[] = [], step = Math.max(4, Math.ceil(Math.sqrt(boxArea(box) / 3000)));
-  const reference = luminance(background(data, width, height, box)), light = reference > 128;
+  const reference = luminance(background(data, width, height, box, ink.graphics)), light = reference > 128;
   for (let y = box.top; y < box.top + box.height; y += step) for (let x = box.left; x < box.left + box.width; x += step) {
     const pixels: number[][] = [];
     for (let sy = y; sy < Math.min(y + step, box.top + box.height); sy++) for (let sx = x; sx < Math.min(x + step, box.left + box.width); sx++) {
       const p = sy * width + sx;
       const color = Array.from(data.subarray(p * 4, p * 4 + 4));
-      if (!excluded.has(p) && (box.height > 32 || (light ? reference - luminance(color) : luminance(color) - reference) <= FIGURE_SPACE.contrast)) pixels.push(color);
+      if (!excluded.has(p) && !ink.graphics?.has(p) && (box.height > 32 || (light ? reference - luminance(color) : luminance(color) - reference) <= FIGURE_SPACE.contrast)) pixels.push(color);
     }
     if (!pixels.length) continue;
     pixels.sort((a, b) => luminance(a) - luminance(b));
@@ -421,7 +673,7 @@ export type FigureSpaceContext = { obstacles: FigureBox[]; speckGuards: FigureBo
 export function prepareFigureSpace(width: number, height: number, measured: FigureInk[], data?: Buffer): FigureSpaceContext {
   const surfaces: (FigureBackground | undefined)[] = [];
   const bounds = data ? measured.map(ink => {
-    const box = ink.box, color = background(data, width, height, box);
+    const box = ink.box, color = background(data, width, height, box, ink.graphics);
     if (box.height > 32 || box.width > 256 || luminance(color) > 128) { surfaces.push(undefined); return; }
     const surface = figureBackgroundSurface(data, width, height, ink);
     surfaces.push(surface);
@@ -431,13 +683,13 @@ export function prepareFigureSpace(width: number, height: number, measured: Figu
     const reference = surface ?? { box, channels: color.map(v => [v, 0, 0]) }, ring = padded(box, 16, width, height);
     let samples = 0, matches = 0;
     for (let y = ring.top; y < ring.top + ring.height; y += 2) for (let x = ring.left; x < ring.left + ring.width; x += 2) {
-      if (inside(box, x, y) || measured.some(other => other !== ink && inside(other.box, x, y))) continue;
+      if (inside(box, x, y) || ink.graphics?.has(y * width + x) || measured.some(other => other !== ink && inside(other.box, x, y))) continue;
       samples++;
       if (surfaceMatches(reference, data.subarray((y * width + x) * 4, (y * width + x + 1) * 4), x, y)) matches++;
     }
     return samples && matches >= samples * .85 ? undefined : box;
   }) : undefined;
-  return { obstacles: measured.map(m => padded(m.box, 2, width, height)), speckGuards: measured.map(m => padded(m.box, 4, width, height)), bounds, surfaces };
+  return { obstacles: measured.map(m => padded(m.keepOut ?? m.box, 2, width, height)), speckGuards: measured.map(m => padded(m.keepOut ?? m.box, 4, width, height)), bounds, surfaces };
 }
 
 // Bound all per-label raster work. A label larger than the window is left intact.
@@ -455,6 +707,7 @@ function allowFaintFigureLines(data: Buffer, width: number, height: number, near
   for (let p = 0; p < faint.length; p++) {
     let delta = Math.abs(data[p * 4 + 3] - color[3]);
     if (color[3] > 16 || data[p * 4 + 3] > 16) for (let c = 0; c < 3; c++) delta = Math.max(delta, Math.abs(data[p * 4 + c] - color[c]));
+    if (blocked[p]) nearBackground[p] = 0;
     faint[p] = !blocked[p] && delta <= FIGURE_SPACE.faintLineContrast ? 1 : 0;
   }
   for (const vertical of [true, false]) {
@@ -471,7 +724,7 @@ function allowFaintFigureLines(data: Buffer, width: number, height: number, near
       const before = start - 2, after = x + 1;
       if (!lowContrast || before < 0 || after >= across || x - start > FIGURE_SPACE.faintLineWidth ||
         !nearBackground[at(before, y)] || !nearBackground[at(after, y)] ||
-        blocked[at(before, y)] || blocked[at(after, y)] || difference(data, at(before, y), at(after, y)) > FIGURE_SPACE.adjacentDelta) continue;
+        blocked[at(before, y)] || blocked[at(after, y)] || figurePixelDelta(data, at(before, y), at(after, y)) > FIGURE_SPACE.adjacentDelta) continue;
       for (let k = start; k < x; k++) thin[at(k, y)] = 1;
     }
     for (let x = 0; x < across; x++) for (let y = 0; y < along;) {
@@ -491,14 +744,14 @@ function allowFaintFigureLines(data: Buffer, width: number, height: number, near
 }
 
 export function figureSpace(data: Buffer, width: number, height: number, index: number, measured: FigureInk[], occupied: FigureBox[] = [], context = prepareFigureSpace(width, height, measured), guard: number = FIGURE_SPACE.guard, surface?: FigureBackground): { anchor: FigureBox; erase: FigureBox; window: FigureBox; mask: Uint8Array; rectangles: FigureBox[]; seed: number; surface?: FigureBackground; bounds?: FigureBox } {
-  const anchor = measured[index].box, erase = padded(anchor, FIGURE_SPACE.glyphFringe, width, height);
+  const anchor = measured[index].box, erase = figureErasureBox(anchor, width, height);
   const window = figureSpaceWindow(anchor, width, height), w = window.width, h = window.height, count = w * h;
   const localAnchor = { ...anchor, left: anchor.left - window.left, top: anchor.top - window.top };
   if (anchor.width > w || anchor.height > h) return { anchor, erase, window, mask: new Uint8Array(count), rectangles: [] as FigureBox[], seed: -1 };
   const virtual = Buffer.alloc(count * 4);
   for (let y = 0; y < h; y++) data.copy(virtual, y * w * 4, ((window.top + y) * width + window.left) * 4, ((window.top + y) * width + window.left + w) * 4);
   const bounds = context.bounds?.[index] ?? surface?.bounds;
-  const removable = figureEraseMask(width, height, index, measured, window, bounds);
+  const removable = figureEraseMask(width, height, index, measured, window, bounds, FIGURE_SPACE.guard, occupied);
   const restored = surface ? Buffer.alloc(boxArea(erase) * 4) : figureBackgroundPatch(data, width, height, erase, measured[index]);
   if (surface) for (let y = 0; y < erase.height; y++) for (let x = 0; x < erase.width; x++) restored.set(surfaceColor(surface, erase.left + x, erase.top + y), (y * erase.width + x) * 4);
   for (let y = 0; y < erase.height; y++) for (let x = 0; x < erase.width; x++) {
@@ -511,9 +764,10 @@ export function figureSpace(data: Buffer, width: number, height: number, index: 
     const left = Math.max(0, b.left - window.left), right = Math.min(w, b.left + b.width - window.left);
     if (left < right) blocked.fill(1, y * w + left, y * w + right);
   }
+  for (const p of figureGraphicsInBox(measured[index].graphics, width, window)) blocked[(Math.floor(p / width) - window.top) * w + p % width - window.left] = 1;
   const reached = new Uint8Array(count), queue = new Int32Array(count), nearBackground = new Uint8Array(count);
   let head = 0, tail = 0, seed = -1, best = Infinity;
-  const color = background(data, width, height, anchor), ring = padded(localAnchor, 3, w, h);
+  const color = background(data, width, height, anchor, measured[index].graphics), ring = padded(localAnchor, 3, w, h);
   for (let p = 0; p < count; p++) {
     const q = p * 4;
     nearBackground[p] = surface ? (surfaceMatches(surface, virtual, p % w + window.left, Math.floor(p / w) + window.top, q) ? 1 : 0) : Math.abs(virtual[q + 3] - color[3]) <= FIGURE_SPACE.backgroundNoise &&
@@ -531,7 +785,7 @@ export function figureSpace(data: Buffer, width: number, height: number, index: 
   const visit = (p: number, q: number) => {
     // A soft edge can connect a broad fill to the background by tiny steps.
     // Fallback surfaces require agreement with the model at every new pixel.
-    if (!reached[q] && !blocked[q] && (surface ? nearBackground[q] : nearBackground[p] && nearBackground[q] || difference(virtual, p, q) <= FIGURE_SPACE.adjacentDelta)) { reached[q] = 1; queue[tail++] = q; }
+    if (!reached[q] && !blocked[q] && (surface ? nearBackground[q] : nearBackground[p] && nearBackground[q] || figurePixelDelta(virtual, p, q) <= FIGURE_SPACE.adjacentDelta)) { reached[q] = 1; queue[tail++] = q; }
   };
   if (seed >= 0) { reached[seed] = 1; queue[tail++] = seed; }
   while (head < tail) {
@@ -587,22 +841,69 @@ export function figureSurfaceSpace(data: Buffer, width: number, height: number, 
   return model ? figureSpace(data, width, height, index, measured, occupied, context, FIGURE_SPACE.guard, model) : undefined;
 }
 
-export function figureEraseMask(width: number, height: number, index: number, measured: FigureInk[], window: FigureBox = { left: 0, top: 0, width, height }, backing?: FigureBox, protectedGuard = 2): Uint8Array {
-  const mask = new Uint8Array(boxArea(window));
-  for (const p of measured[index].points) for (let dy = -FIGURE_SPACE.glyphFringe; dy <= FIGURE_SPACE.glyphFringe; dy++) for (let dx = -FIGURE_SPACE.glyphFringe; dx <= FIGURE_SPACE.glyphFringe; dx++) {
-    const x = p % width + dx, y = Math.floor(p / width) + dy;
-    if (inside(window, x, y) && (!backing || inside(backing, x, y)) && !measured.some((m, j) => j !== index && inside(m.box, x, y))) mask[(y - window.top) * window.width + x - window.left] = 1;
+export function* figureGraphicsInBox(graphics: ReadonlySet<number> | undefined, width: number, box: FigureBox): Iterable<number> {
+  if (!graphics?.size) return;
+  if (graphics.size < boxArea(box)) {
+    for (const p of graphics) if (inside(box, p % width, Math.floor(p / width))) yield p;
+    return;
   }
-  for (const p of measured[index].protectedPoints ?? []) for (let dy = -protectedGuard; dy <= protectedGuard; dy++) for (let dx = -protectedGuard; dx <= protectedGuard; dx++) {
+  for (let y = box.top; y < box.top + box.height; y++) for (let x = box.left; x < box.left + box.width; x++) {
+    const p = y * width + x;
+    if (graphics.has(p)) yield p;
+  }
+}
+
+export function figureErasureBox(box: FigureBox, width: number, height: number): FigureBox {
+  return padded(box, FIGURE_SPACE.glyphFringe, width, height);
+}
+
+export function figureEraseMask(width: number, height: number, index: number, measured: FigureInk[], window: FigureBox = { left: 0, top: 0, width, height }, backing?: FigureBox, protectedGuard = 2, occupied: FigureBox[] = []): Uint8Array {
+  const ink = measured[index], mask = new Uint8Array(boxArea(window));
+  const obstacles = [...measured.flatMap((m, j) => j === index ? [] : [m.keepOut ?? m.box]), ...occupied];
+  for (const p of ink.points) for (let dy = -FIGURE_SPACE.glyphFringe; dy <= FIGURE_SPACE.glyphFringe; dy++) for (let dx = -FIGURE_SPACE.glyphFringe; dx <= FIGURE_SPACE.glyphFringe; dx++) {
+    const x = p % width + dx, y = Math.floor(p / width) + dy;
+    if (inside(window, x, y) && (!backing || inside(backing, x, y))) mask[(y - window.top) * window.width + x - window.left] = 1;
+  }
+  for (const box of obstacles) {
+    const left = Math.max(box.left, window.left) - window.left;
+    const right = Math.min(box.left + box.width, window.left + window.width) - window.left;
+    if (left >= right) continue;
+    for (let y = Math.max(box.top, window.top) - window.top; y < Math.min(box.top + box.height, window.top + window.height) - window.top; y++) {
+      mask.fill(0, y * window.width + left, y * window.width + right);
+    }
+  }
+  for (const p of ink.protectedPoints ?? []) for (let dy = -protectedGuard; dy <= protectedGuard; dy++) for (let dx = -protectedGuard; dx <= protectedGuard; dx++) {
     const x = p % width + dx, y = Math.floor(p / width) + dy;
     if (inside(window, x, y)) mask[(y - window.top) * window.width + x - window.left] = 0;
   }
+  for (const p of figureGraphicsInBox(ink.graphics, width, window)) mask[(Math.floor(p / width) - window.top) * window.width + p % width - window.left] = 0;
   return mask;
 }
 
 export function figureInkIsRemovable(ink: FigureInk, width: number, mask: Uint8Array, window: FigureBox): boolean {
-  return ink.points.every(p => {
+  const erased = (p: number) => {
     const x = p % width, y = Math.floor(p / width);
     return inside(window, x, y) && mask[(y - window.top) * window.width + x - window.left] !== 0;
-  });
+  };
+  return !ink.unsafe && ink.points.every(erased) && (ink.fringe?.every(erased) ?? true);
+}
+
+// Verify the patch at the source itself, before translated text can cover it.
+export function figureErasureHasResidue(data: Buffer, patch: Buffer, width: number, height: number, erase: FigureBox, ink: FigureInk, surface?: FigureBackground): boolean {
+  const ground = background(data, width, height, ink.box, ink.graphics);
+  const points = [...ink.points, ...ink.fringe ?? []];
+  for (const p of points) {
+    const x = p % width, y = Math.floor(p / width);
+    const q = ((y - erase.top) * erase.width + x - erase.left) * 4;
+    const expected = surface ? surfaceColor(surface, x, y) : ground;
+    let dot = 0, length = 0, residue = 0, contrast = 0;
+    const alpha = expected[3] <= 16;
+    for (let c = alpha ? 3 : 0; c < (alpha ? 4 : 3); c++) {
+      const source = data[p * 4 + c] - expected[c], after = patch[q + c] - expected[c];
+      dot += source * after; length += source * source; residue += after * after;
+      contrast = Math.max(contrast, Math.abs(after));
+    }
+    if (contrast >= (surface ? FIGURE_SPACE.backgroundNoise + 1 : 12) && dot >= length * .32 && dot * dot >= length * residue * .9 && length >= 64) return true;
+  }
+  return false;
 }

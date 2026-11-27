@@ -1,7 +1,7 @@
 import sharp from "sharp";
 import { expect, it } from "vitest";
 import type { FigureReading, FigureRegion } from "~/lib/figure";
-import { FIGURE_SPACE, figureBox, figureEraseMask, figureSpaceWindow, figureRectangles, figureSpace, measureFigure, restoreFigureBackground } from "~/lib/figure-space.server";
+import { FIGURE_SPACE, figureBox, figureEraseMask, figureErasureHasResidue, figureGraphics, figureSpaceWindow, figureRectangles, figureSpace, measureFigure, restoreFigureBackground } from "~/lib/figure-space.server";
 import { figureFontSize, renderFigureLabels } from "~/lib/figure-render.server";
 
 const label: FigureRegion = { text: "HHH", lang: "en", confidence: 1, x: .1, y: .2, width: .2, height: .2, orientation: "horizontal" };
@@ -76,28 +76,51 @@ it.each([
   expect(figureSpace(data, width, height, 0, measured).mask[20 * width + 80]).toBe(0);
 });
 
-it.each([1, 2, 3])("renders translated glyphs over %ipx grid lines near the source without painting a dark bar", async thickness => {
+it.each([1, 2, 3])("draws beside %ipx grid rules and preserves their pixels", async thickness => {
   const width = 600, height = 240, left = 120, top = 75;
-  const text = "H".repeat(5);
+  const text = "HHHHH";
   const glyph = await sharp({ text: { text, font: "Noto Sans 28", rgba: true } }).png().toBuffer({ resolveWithObject: true });
-  const rules = [145, 185, 225, 265, 305].map(x => `<rect x="${x}" width="${thickness}" height="240" fill="#e4e4e4"/>`).join("");
-  const marks = Buffer.from(`<svg width="${width}" height="${height}">${rules}<rect x="380" width="6" height="240"/><rect x="40" y="145" width="500" height="25"/></svg>`);
+  const rules = [103, 235, 275, 315];
+  const marks = Buffer.from(`<svg width="${width}" height="${height}">${rules.map(x => `<rect x="${x}" width="${thickness}" height="240" fill="#e4e4e4"/>`).join("")}</svg>`);
   const bytes = await image(width, height).composite([{ input: marks }, { input: glyph.data, left, top }]).png().toBuffer();
   const source = reading([{ ...label, text, x: left / width, y: top / height, width: glyph.info.width / width, height: glyph.info.height / height }]);
-  const out = await renderFigureLabels(bytes, source, ["M".repeat(8)], "en");
-  expect(out.results[0].status).toBe("rendered");
-  const raw = await sharp(out.bytes!).ensureAlpha().raw().toBuffer(), original = await sharp(bytes).ensureAlpha().raw().toBuffer();
-  const changed: number[] = [];
-  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+  const result = await renderFigureLabels(bytes, source, ["New data"], "en");
+  expect(result.results[0].status).toBe("rendered");
+  const original = await sharp(bytes).ensureAlpha().raw().toBuffer(), output = await sharp(result.bytes!).ensureAlpha().raw().toBuffer();
+  for (let y = 0; y < height; y++) for (const x of rules) {
     const p = (y * width + x) * 4;
-    if (!raw.subarray(p, p + 4).equals(original.subarray(p, p + 4))) changed.push(y * width + x);
-    if (x >= 380 && x < 386 || y >= 145 && y < 170) expect(raw.subarray(p, p + 4)).toEqual(original.subarray(p, p + 4));
+    expect(output.subarray(p, p + thickness * 4)).toEqual(original.subarray(p, p + thickness * 4));
   }
-  expect(changed.length).toBeGreaterThan(100);
-  expect(Math.min(...changed.map(p => p % width))).toBeGreaterThanOrEqual(left - 4);
-  expect(Math.min(...changed.map(p => p % width))).toBeLessThanOrEqual(left + 4);
-  expect(changed.some(p => p % width === 225 && raw[p * 4] < 100)).toBe(true);
-  expect(changed.every(p => Math.floor(p / width) >= top - 6 && Math.floor(p / width) <= top + glyph.info.height + 6)).toBe(true);
+});
+
+it("does not let weak graphical detail join the reachable ground or the erasure mask", () => {
+  const width = 180, height = 100, data = Buffer.alloc(width * height * 4, 255);
+  const box = { left: 30, top: 30, width: 24, height: 18 };
+  for (let y = 5; y < 95; y++) for (const [x, color] of [[54, 251], [55, 241], [56, 249]]) {
+    data.fill(color, (y * width + x) * 4, (y * width + x) * 4 + 3);
+  }
+  const graphics = figureGraphics(data, width, height, [box]);
+  const measured = [{ box, points: [40 * width + 52], lineCount: 1, lineHeights: [18], uncertain: false, graphics }];
+  const layout = figureSpace(data, width, height, 0, measured, [], undefined, 0);
+  expect(layout.rectangles.length).toBeGreaterThan(0);
+  const mask = figureEraseMask(width, height, 0, measured);
+  for (let x = 54; x <= 56; x++) {
+    expect(graphics.has(40 * width + x)).toBe(true);
+    expect(mask[40 * width + x]).toBe(0);
+    expect(layout.mask[40 * width + x]).toBe(0);
+  }
+});
+
+it("checks for low-contrast source-shaped residue before overlaying new text", () => {
+  const width = 30, height = 30, data = Buffer.alloc(width * height * 4, 255);
+  const box = { left: 10, top: 10, width: 8, height: 8 }, core = 12 * width + 12, edge = core + 1;
+  data.fill(0, core * 4, core * 4 + 3);
+  data.fill(228, edge * 4, edge * 4 + 3);
+  const ink = { box, points: [core], fringe: [edge], lineCount: 1, lineHeights: [8], uncertain: false };
+  const patch = Buffer.alloc(8 * 8 * 4, 255);
+  patch.fill(239, (2 * 8 + 3) * 4, (2 * 8 + 3) * 4 + 3);
+  expect(figureErasureHasResidue(data, patch, width, height, box, ink)).toBe(true);
+  expect(figureErasureHasResidue(data, Buffer.alloc(patch.length, 255), width, height, box, ink)).toBe(false);
 });
 
 it("measures shifted glyphs and pixel lines when OCR omitted a line break", async () => {
@@ -175,7 +198,7 @@ it.each([[2, false], [3, false], [2, true]] as const)("preserves a %ipx enclosur
   expect(ink[0].box.left).toBeGreaterThanOrEqual(left); expect(ink[0].box.top).toBeGreaterThanOrEqual(top);
   expect(ink[0].box.left + ink[0].box.width).toBeLessThanOrEqual(left + w);
   expect(ink[0].box.top + ink[0].box.height).toBeLessThanOrEqual(top + h);
-  expect(ink[0].protectedPoints!.length).toBeGreaterThan(100);
+  expect(ink[0].protectedPoints!.length + ink[0].graphics!.size).toBeGreaterThan(100);
   const mask = figureEraseMask(width, height, 0, ink), protectedPixels = await sharp(marks).ensureAlpha().raw().toBuffer();
   const rendered = await renderFigureLabels(bytes, source, ["I"], "en");
   expect(rendered.results[0].status).toBe("rendered");

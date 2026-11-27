@@ -1,4 +1,4 @@
-import { FIGURE_SPACE, background, figureEraseMask, figureInkIsRemovable, figureSpaceWindow, inside, surfaceColor, type FigureBackground, type FigureBox, type FigureInk } from "./figure-space.server";
+import { FIGURE_SPACE, background, figureEraseMask, figureGraphicsInBox, figureInkIsRemovable, figureSpaceWindow, inside, surfaceColor, type FigureBackground, type FigureBox, type FigureInk } from "./figure-space.server";
 
 export const FIGURE_OVERLAP = { maxRatio: 0, maxErasureDeviationRatio: .1, treatment: "halo" as "halo" | "backing" };
 
@@ -32,33 +32,42 @@ export function figureOverlapBackground(patch: Buffer, box: FigureBox, mask: Uin
 export function prepareFigureOverlap(data: Buffer, width: number, height: number, index: number, measured: FigureInk[], forbidden: FigureBox[], surface?: FigureBackground, bounds?: FigureBox) {
   const anchor = measured[index].box, window = figureSpaceWindow(anchor, width, height);
   const stride = window.width + 1;
-  const color = background(data, width, height, anchor);
+  const graphics = measured[index].graphics;
+  const color = background(data, width, height, anchor, graphics);
   const eraseGuard = figureOverlapEraseGuard(color);
   // Measure after source-text erasure, including its shadow and antialias
   // fringe. Protected artwork remains in the obstacle count.
-  const removable = figureEraseMask(width, height, index, measured, window, bounds, eraseGuard);
+  const removable = figureEraseMask(width, height, index, measured, window, bounds, eraseGuard, forbidden);
   if (!figureInkIsRemovable(measured[index], width, removable, window)) return null;
   const elements = new Uint32Array(stride * (window.height + 1));
+  const protectedPixels = new Uint32Array(elements.length);
+  for (const p of figureGraphicsInBox(graphics, width, window)) {
+    protectedPixels[(Math.floor(p / width) - window.top + 1) * stride + p % width - window.left + 1] = 1;
+  }
   const obstacles = forbidden.filter(b => intersects(b, window));
   for (let y = 0; y < window.height; y++) {
-    let row = 0;
+    let row = 0, protectedRow = 0;
     for (let x = 0; x < window.width; x++) {
       const gx = x + window.left, gy = y + window.top, q = (gy * width + gx) * 4;
       const expected = surface ? surfaceColor(surface, gx, gy) : color;
       let delta = Math.abs(data[q + 3] - expected[3]);
       if (data[q + 3] > 16 || expected[3] > 16) for (let c = 0; c < 3; c++) delta = Math.max(delta, Math.abs(data[q + c] - expected[c]));
-      row += !removable[y * window.width + x] && delta > FIGURE_SPACE.backgroundNoise ? 1 : 0;
-      elements[(y + 1) * stride + x + 1] = elements[y * stride + x + 1] + row;
+      const at = (y + 1) * stride + x + 1;
+      row += !protectedPixels[at] && !removable[y * window.width + x] && delta > FIGURE_SPACE.backgroundNoise ? 1 : 0;
+      elements[at] = elements[at - stride] + row;
+      protectedRow += protectedPixels[at];
+      protectedPixels[at] = protectedPixels[at - stride] + protectedRow;
     }
   }
-  const count = (box: FigureBox) => {
+  const integral = (pixels: Uint32Array, box: FigureBox) => {
     const l = box.left - window.left, t = box.top - window.top, r = l + box.width, b = t + box.height;
-    return elements[b * stride + r] - elements[t * stride + r] - elements[b * stride + l] + elements[t * stride + l];
+    return pixels[b * stride + r] - pixels[t * stride + r] - pixels[b * stride + l] + pixels[t * stride + l];
   };
-  return { anchor, window, elements, stride, count, obstacles, canvasWidth: width };
+  return { anchor, window, count: (box: FigureBox) => integral(elements, box),
+    containsGraphics: (box: FigureBox) => integral(protectedPixels, box) > 0, graphics, color, surface, obstacles, canvasWidth: width };
 }
 
-export function figureOverlapPosition(space: NonNullable<ReturnType<typeof prepareFigureOverlap>>, width: number, height: number, maxRatio: number, align: "left" | "centre" | "right" = "centre") {
+export function figureOverlapPosition(space: NonNullable<ReturnType<typeof prepareFigureOverlap>>, width: number, height: number, maxRatio: number, align: "left" | "centre" | "right" = "centre", hitsGraphics?: (position: FigureBox) => boolean) {
   const { anchor, window, obstacles } = space;
   const cx = anchor.left + anchor.width / 2, cy = anchor.top + anchor.height / 2;
   const preferredX = align === "left" ? anchor.left + 1 : align === "right" ? anchor.left + anchor.width - width - 1 : Math.round(cx - width / 2), preferredY = Math.round(cy - height / 2);
@@ -77,9 +86,20 @@ export function figureOverlapPosition(space: NonNullable<ReturnType<typeof prepa
     if (obstacles.some(b => intersects(position, b))) continue;
     const pixels = space.count(position), ratio = pixels / (width * height), distance = (x - preferredX) ** 2 + (y - preferredY) ** 2, aligned = x === preferredX;
     if (ratio > maxRatio || best && (Number(!aligned) > Number(!best.aligned) || aligned === best.aligned && (ratio > best.ratio || ratio === best.ratio && distance >= best.distance))) continue;
+    if (space.containsGraphics(position) && (!hitsGraphics || hitsGraphics(position))) continue;
     best = { position, pixels, ratio, distance, aligned };
   }
   return best;
+}
+
+function treatmentAlpha(glyphs: Buffer, width: number, height: number, x: number, y: number, treatment: "halo" | "backing"): number {
+  if (treatment === "backing") return 255;
+  let alpha = 0;
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const sx = x + dx, sy = y + dy;
+    if (sx >= 0 && sx < width && sy >= 0 && sy < height) alpha = Math.max(alpha, glyphs[(sy * width + sx) * 4 + 3]);
+  }
+  return alpha;
 }
 
 // A one-pixel local-color halo changes fewer pixels than an opaque rectangle.
@@ -87,15 +107,25 @@ export function figureOverlapPosition(space: NonNullable<ReturnType<typeof prepa
 export function figureOverlapTreatment(glyphs: Buffer, width: number, height: number, position: FigureBox, color: number[], surface?: FigureBackground, treatment = FIGURE_OVERLAP.treatment): Buffer {
   const out = Buffer.alloc(width * height * 4);
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-    let alpha = treatment === "backing" ? 255 : 0;
-    if (treatment === "halo") for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      const sx = x + dx, sy = y + dy;
-      if (sx >= 0 && sx < width && sy >= 0 && sy < height) alpha = Math.max(alpha, glyphs[(sy * width + sx) * 4 + 3]);
-    }
+    const alpha = treatmentAlpha(glyphs, width, height, x, y, treatment);
     const p = (y * width + x) * 4, bg = surface ? surfaceColor(surface, position.left + x, position.top + y) : color;
     const foreground = glyphs[p + 3] / 255, backing = alpha / 255 * bg[3] / 255, a = foreground + backing * (1 - foreground);
     for (let c = 0; c < 3; c++) out[p + c] = a ? Math.round((glyphs[p + c] * foreground + bg[c] * backing * (1 - foreground)) / a) : 0;
     out[p + 3] = Math.round(a * 255);
   }
   return out;
+}
+
+// Cache the foreground and halo coverage for all placements of this raster.
+// A surface can vary in alpha, so test the final rounded alpha at the destination.
+export function figureOverlapFootprint(glyphs: Buffer, width: number, height: number, color: number[], surface?: FigureBackground, treatment = FIGURE_OVERLAP.treatment) {
+  const alpha = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) alpha[y * width + x] = treatmentAlpha(glyphs, width, height, x, y, treatment);
+  return (x: number, y: number, left: number, top: number) => {
+    const p = y * width + x;
+    if (glyphs[p * 4 + 3]) return true;
+    if (!alpha[p]) return false;
+    const ground = surface ? surfaceColor(surface, left + x, top + y)[3] : color[3];
+    return Math.round(alpha[p] * ground / 255) > 0;
+  };
 }

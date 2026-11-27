@@ -538,3 +538,115 @@ it.each(["en", "ja", "ko", "zh-Hans"] as const)("reflows paragraph breaks only w
     expect(lines.bytes).not.toEqual(continuousTitle.bytes);
   }
 });
+
+it.each([
+  ["a one-sided bent line", '<path d="M 89 105 L 145 77 L 284 87" fill="none" stroke="#19612e" stroke-width="2"/>'],
+  ["same-color dashes", '<path d="M 88 101 L 285 64" fill="none" stroke="black" stroke-width="2" stroke-dasharray="10 7"/>'],
+  ["faint dots", Array.from({ length: 12 }, (_, i) => `<circle cx="${91 + i * 14}" cy="${103 - i * 2}" r="1.4" fill="#cfcfcf"/>`).join("")],
+])("draws safely beside %s touching the OCR box", async (_, path) => {
+  const glyph = await sharp({ text: { text: "HHH", font: figureFontDescription("en", 28), rgba: true } }).png().toBuffer({ resolveWithObject: true });
+  const marks = await blank().composite([{ input: Buffer.from(`<svg width="${width}" height="${height}">${path}</svg>`) }]).png().toBuffer();
+  const input = await sharp(marks).composite([{ input: glyph.data, left: 95, top: 118 }]).png().toBuffer();
+  const source = reading([{ ...region, x: 85 / width, y: 99 / height, width: (glyph.info.width + 12) / width, height: 43 / height }]);
+  const original = await raw(input), ink = measureFigure(original, width, height, source)[0];
+  const marksRaw = await raw(marks);
+  const protectedPoints = [...ink.graphics!].filter(p => marksRaw[p * 4] !== 255);
+  expect(protectedPoints.length).toBeGreaterThan(20);
+  const render = await createFigureRenderer(input, source, "en");
+  for (const final of [false, true]) {
+    const result = await render(["Data"], { final });
+    expect(result.results[0].status).toBe("rendered");
+    const output = await raw(result.bytes!);
+    for (let p = 0; p < width * height; p++) if (marksRaw[p * 4] !== 255) {
+      expect(output.subarray(p * 4, p * 4 + 4)).toEqual(original.subarray(p * 4, p * 4 + 4));
+    }
+  }
+});
+
+it("retains shared diagram and source pixels while translating a second label", async () => {
+  const glyph = await sharp({ text: { text: "HHH", font: figureFontDescription("en", 28), rgba: true } }).png().toBuffer({ resolveWithObject: true });
+  const box = (left: number, top: number) => ({ ...region, x: left / width, y: top / height, width: glyph.info.width / width, height: glyph.info.height / height });
+  const mid = 90 + Math.floor(glyph.info.height / 2);
+  const bytes = await blank().composite([
+    mark(32, mid, 190, 2), { input: glyph.data, left: 60, top: 90 }, { input: glyph.data, left: 275, top: 162 },
+  ]).png().toBuffer();
+  const source = reading([box(60, 90), box(275, 162)]);
+  const render = await createFigureRenderer(bytes, source, "en");
+  const original = await raw(bytes);
+  for (const final of [false, true]) {
+    const result = await render(["Data", "Plot"], { final });
+    expect(result.results.map(r => r.status)).toEqual(["external", "rendered"]);
+    const after = await raw(result.bytes!);
+    expect(after.subarray(0, 130 * width * 4)).toEqual(original.subarray(0, 130 * width * 4));
+  }
+});
+
+it("erases a detached lower row and preserves the chart rule beyond it", async () => {
+  const glyph = await sharp({ text: { text: "HHH", font: figureFontDescription("en", 24), rgba: true } }).png().toBuffer({ resolveWithObject: true });
+  const left = 125, top = 63, lower = top + glyph.info.height + 11, line = lower + glyph.info.height + 9;
+  const bytes = await blank().composite([
+    { input: glyph.data, left, top }, { input: glyph.data, left, top: lower }, mark(62, line, 265, 2),
+  ]).png().toBuffer();
+  const source = reading([{ ...region, text: "HHH HHH", x: left / width, y: top / height, width: glyph.info.width / width, height: glyph.info.height / height }]);
+  const original = await raw(bytes), ink = measureFigure(original, width, height, source)[0];
+  expect(ink.original?.box.height).toBeLessThan(ink.box.height);
+  expect(Math.min(...ink.points.filter(p => p >= lower * width).map(p => Math.floor(p / width)))).toBe(lower);
+  const result = await (await createFigureRenderer(bytes, source, "en"))(["Data"], { final: false });
+  expect(result.results[0].status).toBe("rendered");
+  const after = await raw(result.bytes!);
+  const from = (lower + glyph.info.height - 2) * width * 4, to = (lower + glyph.info.height) * width * 4;
+  expect(after.subarray(from, to)).toEqual(Buffer.alloc(to - from, 255));
+  expect(after.subarray(line * width * 4)).toEqual(original.subarray(line * width * 4));
+});
+
+it("retains punctuation and short mathematical rules in the source glyph measurement", async () => {
+  const text = "Rate: 2/3.", glyph = await sharp({ text: { text, font: figureFontDescription("en", 28), rgba: true } }).png().toBuffer({ resolveWithObject: true });
+  const left = 74, top = 110;
+  const rule = mark(left + 73, top + glyph.info.height + 2, 25, 1);
+  const bytes = await blank().composite([{ input: glyph.data, left, top }, rule]).png().toBuffer();
+  const source = reading([{ ...region, text, x: left / width, y: top / height, width: glyph.info.width / width, height: (glyph.info.height + 4) / height }]);
+  const ink = measureFigure(await raw(bytes), width, height, source)[0];
+  expect(ink.graphics!.size).toBe(0);
+  expect(ink.points.some(p => Math.floor(p / width) === top + glyph.info.height + 2)).toBe(true);
+  expect((await renderFigureLabels(bytes, source, ["Ratio: 2/3."], "en")).results[0].status).toBe("rendered");
+});
+
+it("keeps a recovered source row available as an external note beside a painted label", async () => {
+  const glyph = await sharp({ text: { text: "HHH", font: figureFontDescription("en", 24), rgba: true } }).png().toBuffer({ resolveWithObject: true });
+  const left = 120, top = 53, lower = top + glyph.info.height + 10, neighbour = 190;
+  const bytes = await blank().composite([
+    { input: glyph.data, left, top }, { input: glyph.data, left, top: lower }, { input: glyph.data, left: neighbour, top: lower },
+  ]).png().toBuffer();
+  const box = (x: number, y: number) => ({ ...region, x: x / width, y: y / height, width: glyph.info.width / width, height: glyph.info.height / height });
+  const source = reading([{ ...box(left, top), text: "HHH HHH" }, box(neighbour, lower)]);
+  const original = await raw(bytes), ink = measureFigure(original, width, height, source)[0];
+  expect(ink.lineCount).toBe(2);
+  const render = await createFigureRenderer(bytes, source, "en");
+  for (const final of [false, true]) {
+    const result = await render(["M".repeat(300), "New data"], { final });
+    expect(result.results.map(r => r.status)).toEqual(["external", "rendered"]);
+    const out = await raw(result.bytes!);
+    for (let y = lower; y < lower + glyph.info.height; y++) {
+      const p = (y * width + left) * 4;
+      expect(out.subarray(p, p + glyph.info.width * 4)).toEqual(original.subarray(p, p + glyph.info.width * 4));
+    }
+  }
+});
+
+it("erases narrow upright glyphs that extend a pixel above the OCR row", async () => {
+  const glyph = await sharp({ text: { text: "HHH", font: figureFontDescription("en", 20), rgba: true } }).png().toBuffer({ resolveWithObject: true });
+  const left = 97, top = 85, upright = left + 175;
+  const bytes = await blank().composite([
+    { input: glyph.data, left, top }, mark(upright, top - 1, 2, glyph.info.height + 1),
+  ]).png().toBuffer();
+  const source = reading([{ ...region, x: left / width, y: top / height, width: 191 / width, height: glyph.info.height / height }]);
+  const ink = measureFigure(await raw(bytes), width, height, source)[0];
+  expect(ink.points).toContain((top - 1) * width + upright);
+  const result = await renderFigureLabels(bytes, source, ["Data"], "en");
+  expect(result.results[0].status).toBe("rendered");
+  const out = await raw(result.bytes!);
+  for (let y = top - 1; y < top + glyph.info.height; y++) {
+    const p = (y * width + upright) * 4;
+    expect(out.subarray(p, p + 8)).toEqual(Buffer.alloc(8, 255));
+  }
+});

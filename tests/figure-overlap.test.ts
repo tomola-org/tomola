@@ -106,7 +106,7 @@ function forceFirstLabelToFallback() {
 }
 
 it("rescues a label on clean background after a wider fallback meets artwork", async () => {
-  const { source, reading } = await fallbackFigure(x => x === 210);
+  const { source, reading } = await fallbackFigure(x => x >= 210 && x < 218);
   forceFirstLabelToFallback();
   const position = vi.spyOn(overlap, "figureOverlapPosition");
   const labels = ["W".repeat(14), "Data"];
@@ -119,7 +119,7 @@ it("rescues a label on clean background after a wider fallback meets artwork", a
   expect(result.results.map(r => r.status)).toEqual(["rendered", "rendered"]);
   expect(position.mock.results[0]?.value).toBeNull();
   const [prepared, width, height, , align] = position.mock.calls[0];
-  expect(figureOverlapPosition(prepared, width, height, .1, align)?.pixels).toBeGreaterThan(0);
+  expect(figureOverlapPosition(prepared, width, height, .2, align, position.mock.calls[0][5])?.pixels).toBeGreaterThan(0);
   expect(position.mock.results).toContainEqual(expect.objectContaining({ value: expect.objectContaining({ pixels: 0 }) }));
 });
 
@@ -177,4 +177,37 @@ it("retains nearby shifted candidates when the source edge cannot accommodate a 
   const placed = figureOverlapPosition(prepared, 90, 24, .1, "left")!;
   expect(placed.aligned).toBe(false);
   expect(placed.position.left + placed.position.width).toBeLessThanOrEqual(130);
+});
+
+it("looks past the preferred placement when only its halo touches a line", () => {
+  const data = Buffer.alloc(width * height * 4, 255), w = 13, h = 11;
+  const glyphs = Buffer.alloc(w * h * 4);
+  glyphs[(5 * w + 6) * 4 + 3] = 1;
+  const preferred = figureOverlapPosition(prepareFigureOverlap(data, width, height, 0, measured, [])!, w, h, 0)!.position;
+  const gx = preferred.left + 7, gy = preferred.top + 5;
+  const guarded = [{ ...measured[0], graphics: new Set([gy * width + gx]) }];
+  const prepared = prepareFigureOverlap(data, width, height, 0, guarded, [])!;
+  const footprint = overlap.figureOverlapFootprint(glyphs, w, h, prepared.color);
+  expect(glyphs[(5 * w + 7) * 4 + 3]).toBe(0);
+  expect(footprint(7, 5, preferred.left, preferred.top)).toBe(true);
+  const hit = (position: typeof preferred) => footprint(gx - position.left, gy - position.top, position.left, position.top);
+  const alternate = figureOverlapPosition(prepared, w, h, 0, "centre", hit)!;
+  expect(alternate.position).not.toEqual(preferred);
+  expect(alternate.pixels).toBe(0);
+  expect(prepared.containsGraphics(alternate.position)).toBe(true);
+  const treated = figureOverlapTreatment(glyphs, w, h, alternate.position, prepared.color);
+  expect(treated[((gy - alternate.position.top) * w + gx - alternate.position.left) * 4 + 3]).toBe(0);
+});
+
+it("keeps the dropped OCR column and its two-pixel padding out of fallback placement", async () => {
+  const { source, reading } = await fallbackFigure(() => false);
+  reading.protectedBoxes = [{ x: 192 / 440, y: 64 / 180, width: 2 / 440, height: 58 / 180 }];
+  forceFirstLabelToFallback();
+  const prepare = vi.spyOn(overlap, "prepareFigureOverlap");
+  const result = await renderFigureLabels(source, reading, ["New data", "Plot"], "en");
+  expect(result.results.map(r => r.status)).toEqual(["rendered", "rendered"]);
+  expect(prepare.mock.calls[0][5]).toContainEqual({ left: 190, top: 62, width: 6, height: 62 });
+  const column = { left: 190, top: 62, width: 6, height: 62 };
+  const decode = (bytes: Buffer) => sharp(bytes).extract(column).ensureAlpha().raw().toBuffer();
+  expect(await decode(result.bytes!)).toEqual(await decode(source));
 });

@@ -2,7 +2,7 @@ import sharp from "sharp";
 import { expect, it } from "vitest";
 import type { FigureReading, FigureRegion } from "~/lib/figure";
 import { FIGURE_MIN_FONT_SCALE, figureCapacity, figureFontSize, renderFigureLabels } from "~/lib/figure-render.server";
-import { FIGURE_SPACE, figureSpace, figureSpaceWindow, figureSurfaceSpace, measureFigure, prepareFigureSpace } from "~/lib/figure-space.server";
+import { FIGURE_SPACE, figureBackgroundPatch, figureGraphics, figureSpace, figureSpaceWindow, figureSurfaceSpace, measureFigure, prepareFigureSpace } from "~/lib/figure-space.server";
 
 const reading = (text: string, box: { left: number; top: number; width: number; height: number }, width: number, height: number, lang: "en" | "ja" = "en"): FigureReading => ({
   lang, confidence: 1, regions: [{ text, lang, confidence: 1, orientation: "horizontal", x: box.left / width, y: box.top / height, width: box.width / width, height: box.height / height } satisfies FigureRegion],
@@ -175,4 +175,27 @@ it("retains a thin upright glyph and wraps inside its enclosure without changing
   const out = await renderFigureLabels(source, reading(text, { left: 75, top: 78, width: glyph.info.width, height: glyph.info.height }, width, height, "ja"), [`${"W".repeat(8)} ${"W".repeat(8)}`], "en");
   expect(out.results[0].status).toBe("rendered");
   for (const box of [{ left: 49, top: 59, width: 153, height: 3 }, { left: 49, top: 109, width: 153, height: 3 }, { left: 49, top: 59, width: 3, height: 53 }, { left: 199, top: 59, width: 3, height: 53 }, { left: 219, top: 64, width: 23, height: 43 }]) await unchanged(source, out.bytes!, width, box);
+});
+
+it("keeps a weak rule out of surface fitting, background sampling and the placement mask", () => {
+  const width = 240, height = 150, data = Buffer.alloc(width * height * 4, 255);
+  const box = { left: 50, top: 60, width: 52, height: 24 };
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const value = 190 + Math.floor(x / 8) - (x === 108 ? 13 : 0);
+    data.fill(value, (y * width + x) * 4, (y * width + x) * 4 + 3);
+  }
+  const points = [];
+  for (let y = 65; y < 78; y++) for (let x = 55; x < 71; x++) {
+    points.push(y * width + x);
+    data.fill(0, (y * width + x) * 4, (y * width + x) * 4 + 3);
+  }
+  const graphics = figureGraphics(data, width, height, [box]);
+  const ink = { box, points, lineCount: 1, lineHeights: [13], uncertain: false, graphics };
+  const model = figureSurfaceSpace(data, width, height, 0, [ink], [], prepareFigureSpace(width, height, [ink], data))!;
+  expect(model.surface).toBeDefined();
+  expect(model.rectangles.length).toBeGreaterThan(0);
+  expect(graphics.has(70 * width + 108)).toBe(true);
+  expect(model.mask[(70 - model.window.top) * model.window.width + 108 - model.window.left]).toBe(0);
+  const sample = figureBackgroundPatch(data, width, height, { left: 107, top: 70, width: 1, height: 1 }, ink);
+  expect(sample[0]).toBeGreaterThan(198);
 });
