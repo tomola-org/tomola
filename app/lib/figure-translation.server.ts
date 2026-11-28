@@ -21,10 +21,17 @@ export async function lockFigureMedia(db: Tx): Promise<void> {
 }
 export const readingKeyOf = (bytes: Buffer) => `${createHash("sha256").update(bytes).digest("hex")}:v${FIGURE_VERSION}`;
 
+// The oldest rendering generation whose readings can still be reused.
+const OLDEST_REUSABLE_FIGURE_VERSION = 4;
+const PREVIOUS_FIGURE_VERSIONS = Array.from(
+  { length: FIGURE_VERSION - OLDEST_REUSABLE_FIGURE_VERSION },
+  (_, offset) => FIGURE_VERSION - 1 - offset,
+);
+
 // Rendering generations reuse settled readings with the unchanged reading
 // prompt. Keep previous cache generations intact.
 export async function cachedFigureReadings(db: Db, keys: readonly string[]) {
-  const previousKeys = (key: string) => [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4].map(version => key.replace(/:v\d+$/, `:v${version}`));
+  const previousKeys = (key: string) => PREVIOUS_FIGURE_VERSIONS.map(version => key.replace(/:v\d+$/, `:v${version}`));
   const rows = keys.length ? await db.select().from(figureReadings).where(inArray(figureReadings.key, [...new Set(keys.flatMap(key => [key, ...previousKeys(key)]))])) : [];
   const byKey = new Map(rows.map(row => [row.key, row]));
   const reusable = new Map<string, typeof rows[number]>();

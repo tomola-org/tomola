@@ -9,7 +9,7 @@ import { createTopic, createReply } from "~/lib/entries.server";
 import { availableFigures, enqueuePublicFigures, readingKeyOf, readFigureTranslation } from "~/lib/figure-translation.server";
 import { FIGURE_VERSION, figurePath, type FigureReading } from "~/lib/figure";
 import { prepareEntryFigureDisplay } from "~/lib/figure-display.server";
-import { createFigureReader, parseFigureReading } from "~/lib/figure-reading.server";
+import { createFigureReader, FIGURE_READING_PROMPT_VERSION, parseFigureReading } from "~/lib/figure-reading.server";
 import { createFigureHandlers } from "~/lib/jobs/figure-jobs.server";
 import { createFakeEngine } from "~/lib/llm/engines/fake.server";
 import { runDueJobs } from "~/lib/jobs/queue.server";
@@ -180,12 +180,40 @@ it("promotes a current skipped reading with a vertical label and preserves saved
   expect(await db.select().from(figureTranslations).orderBy(figureTranslations.lang)).toEqual(variants);
 });
 
+it("reuses the previous rendering generation's reading when backfilling translated figures", async () => {
+  const { db, image, post } = await fixture();
+  const upload = await image(), id = upload.url.slice(7, 71);
+  await post(upload.url);
+  const [stored] = await db.select({ bytes: media.bytes }).from(media).where(eq(media.id, id));
+  const key = readingKeyOf(stored.bytes!), previousVersion = FIGURE_VERSION - 1;
+  const previousKey = key.replace(/:v\d+$/, `:v${previousVersion}`);
+  const reading: FigureReading = { lang: "ja", confidence: 1, regions: [
+    { text: "観測値", lang: "ja", confidence: 1, orientation: "horizontal", x: 0.1, y: 0.2, width: 0.8, height: 0.5 },
+  ] };
+  const cached = { state: "ready", reading, engine: "fake", model: "cached-reader", promptVersion: FIGURE_READING_PROMPT_VERSION } as const;
+  await db.insert(figureReadings).values({ key: previousKey, version: previousVersion, ...cached });
+  await db.insert(figureMedia).values({ mediaId: id, readingKey: previousKey });
+  await db.insert(figureTranslations).values({ mediaId: id, readingKey: previousKey, lang: "en", bytes: stored.bytes, labels: ["Observation"], engine: "fake", model: "cached", promptVersion: "test" });
+
+  const targets = ["en", "fr"];
+  const enabled = { ...env, FIGURE_TRANSLATION: "1", ENABLED_LANGS: ["ja", ...targets].join(",") };
+  expect(await backfillFigures(db, { env: enabled })).toMatchObject({ readingsNeeded: 0, translationCallsEstimated: targets.length });
+  const result = await captureCli(output => runFigureBackfill(["--enqueue"], enabled, async () => db, output));
+  expect(result.status).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({ registeredImages: 1, readingsNeeded: 0, translationCallsEstimated: targets.length });
+  expect(await db.select().from(jobs).where(eq(jobs.kind, "read_figure"))).toEqual([]);
+  const queued = await db.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.kind, "translate_figure"));
+  expect(queued).toHaveLength(targets.length);
+  expect(queued).toEqual(expect.arrayContaining(targets.map(lang => ({ payload: { mediaId: id, key, lang } }))));
+  const [current] = await db.select().from(figureReadings).where(eq(figureReadings.key, key));
+  expect(current).toMatchObject({ version: FIGURE_VERSION, ...cached });
+});
+
 it.each([1, 2, 3].flatMap(version => (["skipped", "ready"] as const).map(state => ({ version, state }))))("requeues a v$version $state reading, serves the original while pending and removes both versions on withdrawal", async ({ version, state }) => {
   const { db, image, post } = await fixture();
   const upload = await image(), id = upload.url.slice(7, 71), entryId = await post(upload.url);
   const [stored] = await db.select({ bytes: media.bytes }).from(media).where(eq(media.id, id));
   const currentKey = readingKeyOf(stored.bytes!), oldKey = currentKey.replace(/:v\d+$/, `:v${version}`);
-  expect(FIGURE_VERSION).toBe(17);
   expect(currentKey).toMatch(new RegExp(`:v${FIGURE_VERSION}$`));
   expect(currentKey).not.toBe(oldKey);
   const reader = createFigureReader({ TRANSLATION_PRIMARY: "fake" });
